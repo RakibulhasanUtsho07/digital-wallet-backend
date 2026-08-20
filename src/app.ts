@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import authRoutes from "./routes/authRoutes.js";
+import transactionRoutes from "./routes/transactionRoutes.js"; // <-- এই লাইনটি যুক্ত করা হয়েছে
 
 const app = express();
 
@@ -9,6 +10,7 @@ app.use(express.json());
 app.use(cors());
 
 // Routes
+app.use("/api/transactions", transactionRoutes);
 app.use("/api/auth", authRoutes);
 
 // Health Check Route
