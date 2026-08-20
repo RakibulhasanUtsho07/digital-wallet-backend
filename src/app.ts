@@ -6,6 +6,7 @@ import userRoutes from "./routes/userRoutes.js";
 import kycRoutes from "./routes/kycRoutes.js";
 import fundsRoutes from "./routes/fundsRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import aiRoutes from "./routes/aiRoutes.js"
 // Routes সেকশনে যোগ করুন:
 
 const app = express();
@@ -16,6 +17,7 @@ app.use(cors());
 app.use("/api/funds", fundsRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/kyc", kycRoutes);
+app.use("/api/ai", aiRoutes);
 // Routes
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/auth", authRoutes);
