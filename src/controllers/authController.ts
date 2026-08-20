@@ -1,31 +1,28 @@
+import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { Wallet } from "../models/Wallet";
-import { User } from "../models/User";
+import { User } from "../models/User.js";
+import { Wallet } from "../models/Wallet.js";
 
-
-// Token Generating Helper Function
-const generateToken = (id, role) => {
-  return jwt.sign({ id, role }, process.env.JWT_SECRET, {
+const generateToken = (id: string, role: string): string => {
+  return jwt.sign({ id, role }, process.env.JWT_SECRET as string, {
     expiresIn: "30d",
   });
 };
 
-// @desc    Register a new user & create initial wallet
-// @route   POST /api/auth/register
-export const registerUser = async (req, res) => {
+export const registerUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, email, phone, password } = req.body;
 
     const userExists = await User.findOne({ $or: [{ email }, { phone }] });
     if (userExists) {
-      return res.status(400).json({ message: "User with this email or phone already exists" });
+      res.status(400).json({ message: "User with this email or phone already exists" });
+      return;
     }
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create User
     const user = await User.create({
       name,
       email,
@@ -34,13 +31,12 @@ export const registerUser = async (req, res) => {
     });
 
     if (user) {
-      // Create initial wallet for user
       const wallet = await Wallet.create({
         userId: user._id,
-        balance: 500, // Welcome Bonus Balance
+        balance: 500, // Welcome Bonus
       });
 
-      user.walletId = wallet._id;
+      user.walletId = wallet._id as any;
       await user.save();
 
       res.status(201).json({
@@ -48,33 +44,31 @@ export const registerUser = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        token: generateToken(user._id, user.role),
+        token: generateToken(user._id.toString(), user.role),
       });
     }
-  } catch (error) {
+  } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Authenticate user & get token
-// @route   POST /api/auth/login
-export const loginUser = async (req, res) => {
+export const loginUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });
-    if (user && (await bcrypt.compare(password, user.password))) {
+    if (user && user.password && (await bcrypt.compare(password, user.password))) {
       res.json({
         _id: user._id,
         name: user.name,
         email: user.email,
         role: user.role,
-        token: generateToken(user._id, user.role),
+        token: generateToken(user._id.toString(), user.role),
       });
     } else {
       res.status(401).json({ message: "Invalid email or password" });
     }
-  } catch (error) {
+  } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
