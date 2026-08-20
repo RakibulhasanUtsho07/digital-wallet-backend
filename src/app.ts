@@ -7,6 +7,7 @@ import kycRoutes from "./routes/kycRoutes.js";
 import fundsRoutes from "./routes/fundsRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js"
+import notificationRoutes from "./routes/notificationRoutes.js";
 // Routes সেকশনে যোগ করুন:
 
 const app = express();
@@ -18,6 +19,7 @@ app.use("/api/funds", fundsRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/kyc", kycRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/notifications", notificationRoutes);
 // Routes
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/auth", authRoutes);
