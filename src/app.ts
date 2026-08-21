@@ -1,8 +1,8 @@
 import express from "express";
 import cors from "cors";
-import rateLimit from "express-rate-limit"; // <-- নতুন যুক্ত হলো
+import rateLimit from "express-rate-limit";
 
-// রাউট ইমপোর্টস
+// Routes
 import authRoutes from "./routes/authRoutes.js";
 import transactionRoutes from "./routes/transactionRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -17,26 +17,47 @@ import budgetRoutes from "./routes/budgetRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import receiptRoutes from "./routes/receiptRoutes.js";
 
-// মিডলওয়্যার ইমপোর্টস
-import { notFound, errorHandler } from "./middlewares/errorMiddleware.js"; // <-- নতুন যুক্ত হলো
+// Error middleware
+import {
+  notFound,
+  errorHandler,
+} from "./middlewares/errorMiddleware.js";
 
 const app = express();
 
-// Middlewares
-app.use(express.json());
-app.use(cors());
+/* =========================================================
+   GLOBAL MIDDLEWARE
+========================================================= */
 
-// Rate Limiting (SECURITY + RELIABILITY)
+app.use(
+  cors({
+    origin: "http://localhost:3000",
+    credentials: true,
+  })
+);
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+/* =========================================================
+   RATE LIMITING
+========================================================= */
+
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // ১৫ মিনিট
-  max: 100, // প্রতি ১৫ মিনিটে একটি IP থেকে সর্বোচ্চ ১০০টি রিকোয়েস্ট
-  message: { message: "Too many requests from this IP, please try again after 15 minutes" },
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: {
+    message:
+      "Too many requests from this IP, please try again after 15 minutes",
+  },
 });
 
-// সব /api/ রাউটের জন্য Rate Limiter অ্যাপ্লাই করা হলো
 app.use("/api/", apiLimiter);
 
-// Routes
+/* =========================================================
+   ROUTES
+========================================================= */
+
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/wallet", walletRoutes);
@@ -51,12 +72,22 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/budgets", budgetRoutes);
 app.use("/api/receipts", receiptRoutes);
 
-// Health Check Route
-app.get("/", (req, res) => {
-  res.status(200).json({ status: "Success", message: "Digital Wallet API is running" });
+/* =========================================================
+   HEALTH CHECK
+========================================================= */
+
+app.get("/", (_req, res) => {
+  res.status(200).json({
+    status: "Success",
+    message: "Digital Wallet API is running",
+  });
 });
 
-// Error Handling Middlewares (অবশ্যই রাউটগুলোর একদম শেষে দিতে হবে)
+/* =========================================================
+   ERROR HANDLING
+   Must stay at the bottom
+========================================================= */
+
 app.use(notFound);
 app.use(errorHandler);
 
