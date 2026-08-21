@@ -11,6 +11,8 @@ import notificationRoutes from "./routes/notificationRoutes.js";
 import walletRoutes from "./routes/walletRoutes.js";
 import budgetRoutes from "./routes/budgetRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
+import receiptRoutes from "./routes/receiptRoutes.js";
+
 
 // Routes সেকশনে যোগ করুন:
 
@@ -28,6 +30,8 @@ app.use("/api/budgets", budgetRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/admin/audit-logs", auditRoutes);
+
+app.use("/api/receipts", receiptRoutes);
 // Routes
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/auth", authRoutes);
