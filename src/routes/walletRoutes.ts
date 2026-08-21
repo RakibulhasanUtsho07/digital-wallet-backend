@@ -1,9 +1,9 @@
 import express from "express";
-import { getWalletBalance } from "../controllers/walletController.js";
+import { getMyWallet } from "../controllers/walletController.js";
 import { protect } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
-router.get("/balance", protect, getWalletBalance);
+router.get("/", protect, getMyWallet);
 
 export default router;
