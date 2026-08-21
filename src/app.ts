@@ -10,7 +10,7 @@ import aiRoutes from "./routes/aiRoutes.js"
 import notificationRoutes from "./routes/notificationRoutes.js";
 import walletRoutes from "./routes/walletRoutes.js";
 import budgetRoutes from "./routes/budgetRoutes.js";
-
+import auditRoutes from "./routes/auditRoutes.js";
 
 // Routes সেকশনে যোগ করুন:
 
@@ -27,6 +27,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/budgets", budgetRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/transactions", transactionRoutes);
+app.use("/api/admin/audit-logs", auditRoutes);
 // Routes
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/auth", authRoutes);
