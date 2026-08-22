@@ -1,54 +1,11 @@
 import multer from "multer";
-import path from "path";
-import fs from "fs";
 
 /* =========================================================
-   KYC UPLOAD DIRECTORY
+   STORAGE (Memory Storage for Cloudinary Upload)
 ========================================================= */
 
-const uploadDir = path.join(
-  process.cwd(),
-  "uploads",
-  "kyc"
-);
-
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, {
-    recursive: true,
-  });
-}
-
-/* =========================================================
-   STORAGE
-========================================================= */
-
-const storage = multer.diskStorage({
-  destination: (
-    _req,
-    _file,
-    cb
-  ) => {
-    cb(null, uploadDir);
-  },
-
-  filename: (
-    req,
-    file,
-    cb
-  ) => {
-    const userId =
-      (req as any).user?._id?.toString() ||
-      "unknown";
-
-    const extension =
-      path.extname(file.originalname);
-
-    const uniqueName =
-      `${userId}-${Date.now()}-${file.fieldname}${extension}`;
-
-    cb(null, uniqueName);
-  },
-});
+// diskStorage সরিয়ে memoryStorage দেওয়া হয়েছে যাতে লোকাল ফোল্ডারে ফাইল সেভ না হয়
+const storage = multer.memoryStorage();
 
 /* =========================================================
    FILE FILTER
@@ -66,11 +23,7 @@ const fileFilter: multer.Options["fileFilter"] = (
     "image/webp",
   ];
 
-  if (
-    allowedMimeTypes.includes(
-      file.mimetype
-    )
-  ) {
+  if (allowedMimeTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
     cb(
@@ -87,11 +40,8 @@ const fileFilter: multer.Options["fileFilter"] = (
 
 export const kycUpload = multer({
   storage,
-
   fileFilter,
-
   limits: {
-    fileSize:
-      5 * 1024 * 1024,
+    fileSize: 5 * 1024 * 1024, // 5MB limit
   },
 });
