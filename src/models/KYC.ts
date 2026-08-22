@@ -35,6 +35,18 @@ export interface IKYC extends Document {
 
   documentNumber?: string;
 
+  /*
+   * Cloudinary private asset IDs
+   */
+  frontImagePublicId?: string;
+
+  backImagePublicId?: string;
+
+  selfieImagePublicId?: string;
+
+  /*
+   * Keep these temporarily for backward compatibility.
+   */
   frontImageUrl?: string;
 
   backImageUrl?: string;
@@ -71,7 +83,6 @@ const kycSchema =
 
       documentType: {
         type: String,
-
         enum: [
           "nid",
           "passport",
@@ -83,6 +94,26 @@ const kycSchema =
         type: String,
         trim: true,
       },
+
+      /* =====================================================
+         CLOUDINARY PRIVATE ASSET IDS
+      ====================================================== */
+
+      frontImagePublicId: {
+        type: String,
+      },
+
+      backImagePublicId: {
+        type: String,
+      },
+
+      selfieImagePublicId: {
+        type: String,
+      },
+
+      /* =====================================================
+         LEGACY IMAGE URL FIELDS
+      ====================================================== */
 
       frontImageUrl: {
         type: String,
@@ -103,19 +134,16 @@ const kycSchema =
 
       provider: {
         type: String,
-
         enum: [
           "manual",
           "stripe",
           "other",
         ],
-
         default: "manual",
       },
 
       status: {
         type: String,
-
         enum: [
           "not_started",
           "pending",
@@ -123,7 +151,6 @@ const kycSchema =
           "verified",
           "rejected",
         ],
-
         default: "not_started",
       },
 

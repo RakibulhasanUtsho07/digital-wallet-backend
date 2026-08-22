@@ -90,9 +90,10 @@ export const depositFunds = async (
        WALLET STATUS
     ------------------------------------------------------- */
 
+    // 👉 FIX: Changed "active" to "ACTIVE"
     if (
       wallet.status &&
-      wallet.status !== "active"
+      wallet.status !== "ACTIVE" 
     ) {
       res.status(403).json({
         success: false,
@@ -225,9 +226,10 @@ export const withdrawFunds = async (
        WALLET STATUS
     ------------------------------------------------------- */
 
+    // 👉 FIX: Changed "active" to "ACTIVE"
     if (
       wallet.status &&
-      wallet.status !== "active"
+      wallet.status !== "ACTIVE"
     ) {
       res.status(403).json({
         success: false,
