@@ -10,7 +10,16 @@ import {
   protect,
 } from "../middlewares/authMiddleware.js";
 
-const router = express.Router();
+import {
+  kycUpload,
+} from "../middlewares/kycUploadMiddleware.js";
+
+const router =
+  express.Router();
+
+/* =========================================================
+   GET KYC STATUS
+========================================================= */
 
 router.get(
   "/status",
@@ -18,15 +27,41 @@ router.get(
   getKYCStatus
 );
 
+/* =========================================================
+   START KYC
+========================================================= */
+
 router.post(
   "/start",
   protect,
   startKYC
 );
 
+/* =========================================================
+   SUBMIT KYC
+========================================================= */
+
 router.put(
   "/submit",
   protect,
+
+  kycUpload.fields([
+    {
+      name: "frontImage",
+      maxCount: 1,
+    },
+
+    {
+      name: "backImage",
+      maxCount: 1,
+    },
+
+    {
+      name: "selfieImage",
+      maxCount: 1,
+    },
+  ]),
+
   submitKYC
 );
 

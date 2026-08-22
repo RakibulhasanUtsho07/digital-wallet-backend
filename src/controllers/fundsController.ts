@@ -1,119 +1,323 @@
-import { Response } from "express";
-import mongoose from "mongoose";
+import { Request, Response } from "express";
 import { AuthRequest } from "../middlewares/authMiddleware.js";
 import { Wallet } from "../models/Wallet.js";
-import { Transaction } from "../models/Transaction.js";
 
-// @desc    Deposit / Add Funds to Wallet
-// @route   POST /api/funds/deposit
-// @access  Private
-export const depositFunds = async (req: AuthRequest, res: Response): Promise<void> => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+/* =========================================================
+   HELPERS
+========================================================= */
 
+const getAmount = (value: unknown): number => {
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount)) {
+    return NaN;
+  }
+
+  return amount;
+};
+
+const validateAmount = (amount: number): string | null => {
+  if (!Number.isFinite(amount)) {
+    return "Amount must be a valid number";
+  }
+
+  if (amount <= 0) {
+    return "Amount must be greater than 0";
+  }
+
+  return null;
+};
+
+/* =========================================================
+   DEPOSIT FUNDS
+   POST /api/funds/deposit
+   Protected
+========================================================= */
+
+export const depositFunds = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
   try {
-    const { amount, reference } = req.body;
-    const userId = req.user?._id;
+    /* -------------------------------------------------------
+       AUTH CHECK
+    ------------------------------------------------------- */
 
-    const parsedAmount = Number(amount);
-    if (!parsedAmount || parsedAmount <= 0) {
-      await session.abortTransaction();
-      res.status(400).json({ message: "Invalid deposit amount" });
+    if (!req.user?._id) {
+      res.status(401).json({
+        success: false,
+        message: "Not authorized",
+      });
+
       return;
     }
 
-    const wallet = await Wallet.findOne({ userId }).session(session);
+    /* -------------------------------------------------------
+       GET AMOUNT
+    ------------------------------------------------------- */
+
+    const amount = getAmount(req.body?.amount);
+
+    const amountError = validateAmount(amount);
+
+    if (amountError) {
+      res.status(400).json({
+        success: false,
+        message: amountError,
+      });
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       FIND WALLET
+    ------------------------------------------------------- */
+
+    const wallet = await Wallet.findOne({
+      userId: req.user._id,
+    });
+
     if (!wallet) {
-      await session.abortTransaction();
-      res.status(404).json({ message: "Wallet not found" });
+      res.status(404).json({
+        success: false,
+        message: "Wallet not found",
+      });
+
       return;
     }
 
-    wallet.balance += parsedAmount;
-    await wallet.save({ session });
+    /* -------------------------------------------------------
+       WALLET STATUS
+    ------------------------------------------------------- */
 
-    const transaction = await Transaction.create(
-      [
+    if (
+      wallet.status &&
+      wallet.status !== "active"
+    ) {
+      res.status(403).json({
+        success: false,
+        message: "Wallet is not active",
+        walletStatus: wallet.status,
+      });
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       ATOMIC UPDATE
+    ------------------------------------------------------- */
+
+    const updatedWallet =
+      await Wallet.findOneAndUpdate(
         {
-          senderId: userId,
-          receiverId: userId,
-          amount: parsedAmount,
-          type: "DEPOSIT",
-          status: "COMPLETED",
-          reference: reference || "Add Funds / Deposit",
+          userId: req.user._id,
         },
-      ],
-      { session }
-    );
+        {
+          $inc: {
+            balance: amount,
+          },
+        },
+        {
+          new: true,
+        }
+      );
 
-    await session.commitTransaction();
-    session.endSession();
+    if (!updatedWallet) {
+      res.status(404).json({
+        success: false,
+        message: "Wallet not found",
+      });
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       RESPONSE
+    ------------------------------------------------------- */
 
     res.status(200).json({
-      message: "Funds added successfully",
-      balance: wallet.balance,
-      transaction: transaction[0],
+      success: true,
+      message: "Funds deposited successfully",
+
+      wallet: {
+        _id: updatedWallet._id,
+        balance: updatedWallet.balance,
+        status: updatedWallet.status,
+      },
+
+      transaction: {
+        type: "deposit",
+        amount,
+      },
     });
-  } catch (error: any) {
-    await session.abortTransaction();
-    session.endSession();
-    res.status(500).json({ message: error.message });
+  } catch (error: unknown) {
+    console.error(
+      "Deposit funds error:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to deposit funds",
+    });
   }
 };
 
-// @desc    Withdraw Funds from Wallet
-// @route   POST /api/funds/withdraw
-// @access  Private
-export const withdrawFunds = async (req: AuthRequest, res: Response): Promise<void> => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+/* =========================================================
+   WITHDRAW FUNDS
+   POST /api/funds/withdraw
+   Protected
+========================================================= */
 
+export const withdrawFunds = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
   try {
-    const { amount, reference } = req.body;
-    const userId = req.user?._id;
+    /* -------------------------------------------------------
+       AUTH CHECK
+    ------------------------------------------------------- */
 
-    const parsedAmount = Number(amount);
-    if (!parsedAmount || parsedAmount <= 0) {
-      await session.abortTransaction();
-      res.status(400).json({ message: "Invalid withdraw amount" });
+    if (!req.user?._id) {
+      res.status(401).json({
+        success: false,
+        message: "Not authorized",
+      });
+
       return;
     }
 
-    const wallet = await Wallet.findOne({ userId }).session(session);
-    if (!wallet || wallet.balance < parsedAmount) {
-      await session.abortTransaction();
-      res.status(400).json({ message: "Insufficient balance" });
+    /* -------------------------------------------------------
+       GET AMOUNT
+    ------------------------------------------------------- */
+
+    const amount = getAmount(req.body?.amount);
+
+    const amountError = validateAmount(amount);
+
+    if (amountError) {
+      res.status(400).json({
+        success: false,
+        message: amountError,
+      });
+
       return;
     }
 
-    wallet.balance -= parsedAmount;
-    await wallet.save({ session });
+    /* -------------------------------------------------------
+       CHECK WALLET
+    ------------------------------------------------------- */
 
-    const transaction = await Transaction.create(
-      [
-        {
-          senderId: userId,
-          receiverId: userId,
-          amount: parsedAmount,
-          type: "WITHDRAW",
-          status: "COMPLETED",
-          reference: reference || "Withdraw Funds",
+    const wallet = await Wallet.findOne({
+      userId: req.user._id,
+    });
+
+    if (!wallet) {
+      res.status(404).json({
+        success: false,
+        message: "Wallet not found",
+      });
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       WALLET STATUS
+    ------------------------------------------------------- */
+
+    if (
+      wallet.status &&
+      wallet.status !== "active"
+    ) {
+      res.status(403).json({
+        success: false,
+        message: "Wallet is not active",
+        walletStatus: wallet.status,
+      });
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       INSUFFICIENT BALANCE CHECK
+    ------------------------------------------------------- */
+
+    if (wallet.balance < amount) {
+      res.status(400).json({
+        success: false,
+        message: "Insufficient wallet balance",
+
+        wallet: {
+          balance: wallet.balance,
         },
-      ],
-      { session }
-    );
+      });
 
-    await session.commitTransaction();
-    session.endSession();
+      return;
+    }
+
+    /* -------------------------------------------------------
+       ATOMIC WITHDRAW
+       
+       balance >= amount ensures two concurrent
+       withdrawals cannot drive the balance below zero.
+    ------------------------------------------------------- */
+
+    const updatedWallet =
+      await Wallet.findOneAndUpdate(
+        {
+          userId: req.user._id,
+          balance: {
+            $gte: amount,
+          },
+        },
+        {
+          $inc: {
+            balance: -amount,
+          },
+        },
+        {
+          new: true,
+        }
+      );
+
+    if (!updatedWallet) {
+      res.status(400).json({
+        success: false,
+        message:
+          "Insufficient wallet balance or wallet unavailable",
+      });
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       RESPONSE
+    ------------------------------------------------------- */
 
     res.status(200).json({
-      message: "Withdrawal successful",
-      balance: wallet.balance,
-      transaction: transaction[0],
+      success: true,
+      message: "Funds withdrawn successfully",
+
+      wallet: {
+        _id: updatedWallet._id,
+        balance: updatedWallet.balance,
+        status: updatedWallet.status,
+      },
+
+      transaction: {
+        type: "withdraw",
+        amount,
+      },
     });
-  } catch (error: any) {
-    await session.abortTransaction();
-    session.endSession();
-    res.status(500).json({ message: error.message });
+  } catch (error: unknown) {
+    console.error(
+      "Withdraw funds error:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to withdraw funds",
+    });
   }
 };

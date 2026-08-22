@@ -1,47 +1,77 @@
-import { KYC, KYCStatus } from "../models/KYC.js";
+import {
+  KYC,
+  KYCStatus,
+} from "../models/KYC.js";
 
-export const getOrCreateKYC = async (
-  userId: string
-) => {
-  let kyc = await KYC.findOne({
-    userId,
-  });
+/* =========================================================
+   GET OR CREATE KYC
+========================================================= */
 
-  if (!kyc) {
-    kyc = await KYC.create({
-      userId,
-      status: "not_started",
-      provider: "manual",
-    });
-  }
+export const getOrCreateKYC =
+  async (
+    userId: string
+  ) => {
+    let kyc =
+      await KYC.findOne({
+        userId,
+      });
 
-  return kyc;
-};
+    if (!kyc) {
+      kyc =
+        await KYC.create({
+          userId,
+          status:
+            "not_started",
+          provider:
+            "manual",
+        });
+    }
 
-export const updateKYCStatus = async (
-  userId: string,
-  status: KYCStatus,
-  rejectionReason?: string
-) => {
-  const update: Record<string, unknown> = {
-    status,
+    return kyc;
   };
 
-  if (rejectionReason) {
-    update.rejectionReason =
-      rejectionReason;
-  }
+/* =========================================================
+   UPDATE KYC STATUS
+========================================================= */
 
-  if (status === "verified") {
-    update.verifiedAt = new Date();
-  }
+export const updateKYCStatus =
+  async (
+    userId: string,
+    status: KYCStatus,
+    rejectionReason?: string
+  ) => {
+    const update: Record<
+      string,
+      unknown
+    > = {
+      status,
+    };
 
-  return KYC.findOneAndUpdate(
-    { userId },
-    update,
-    {
-      new: true,
-      upsert: true,
+    if (rejectionReason) {
+      update.rejectionReason =
+        rejectionReason;
     }
-  );
-};
+
+    if (
+      status === "verified"
+    ) {
+      update.verifiedAt =
+        new Date();
+
+      update.rejectionReason =
+        undefined;
+    }
+
+    return KYC.findOneAndUpdate(
+      {
+        userId,
+      },
+
+      update,
+
+      {
+        new: true,
+        upsert: true,
+      }
+    );
+  };

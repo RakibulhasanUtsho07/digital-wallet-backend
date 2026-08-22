@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-
+import cookieParser from "cookie-parser";
 // Routes
 import authRoutes from "./routes/authRoutes.js";
 import transactionRoutes from "./routes/transactionRoutes.js";
@@ -24,7 +24,7 @@ import {
 } from "./middlewares/errorMiddleware.js";
 
 const app = express();
-
+app.use(cookieParser());
 /* =========================================================
    GLOBAL MIDDLEWARE
 ========================================================= */

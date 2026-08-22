@@ -1,14 +1,16 @@
 import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
+
 import { User } from "../models/User.js";
 import { Wallet } from "../models/Wallet.js";
+
 import {
   hashPassword,
   verifyPassword,
 } from "../utils/password.js";
 
 /* =========================================================
-   JWT
+   JWT GENERATOR
 ========================================================= */
 
 const generateToken = (
@@ -36,7 +38,38 @@ const generateToken = (
 };
 
 /* =========================================================
-   REGISTER
+   SET AUTH COOKIE
+========================================================= */
+
+const setAuthCookie = (
+  res: Response,
+  token: string
+): void => {
+  const isProduction =
+    process.env.NODE_ENV === "production";
+
+  res.cookie("access_token", token, {
+    httpOnly: true,
+
+    secure: isProduction,
+
+    sameSite: isProduction
+      ? "none"
+      : "lax",
+
+    maxAge:
+      30 *
+      24 *
+      60 *
+      60 *
+      1000,
+
+    path: "/",
+  });
+};
+
+/* =========================================================
+   REGISTER USER
    POST /api/auth/register
 ========================================================= */
 
@@ -44,6 +77,8 @@ export const registerUser = async (
   req: Request,
   res: Response
 ): Promise<void> => {
+  let createdUserId: string | null = null;
+
   try {
     const {
       name,
@@ -52,20 +87,20 @@ export const registerUser = async (
       password,
     } = req.body;
 
-    /* -----------------------------------------------------
-       DEBUG
-    ----------------------------------------------------- */
+    console.log(
+      "REGISTER REQUEST:",
+      {
+        name,
+        email,
+        phone,
+        passwordProvided:
+          Boolean(password),
+      }
+    );
 
-    console.log("REGISTER REQUEST:", {
-      name,
-      email,
-      phone,
-      passwordProvided: Boolean(password),
-    });
-
-    /* -----------------------------------------------------
-       NORMALIZE INPUT
-    ----------------------------------------------------- */
+    /* =====================================================
+       NORMALIZE
+    ====================================================== */
 
     const normalizedName =
       typeof name === "string"
@@ -87,9 +122,9 @@ export const registerUser = async (
         ? password
         : "";
 
-    /* -----------------------------------------------------
+    /* =====================================================
        VALIDATION
-    ----------------------------------------------------- */
+    ====================================================== */
 
     if (
       !normalizedName ||
@@ -115,14 +150,14 @@ export const registerUser = async (
       return;
     }
 
-    /* -----------------------------------------------------
-       EMAIL FORMAT
-    ----------------------------------------------------- */
-
     const emailRegex =
       /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (!emailRegex.test(normalizedEmail)) {
+    if (
+      !emailRegex.test(
+        normalizedEmail
+      )
+    ) {
       res.status(400).json({
         success: false,
         message:
@@ -132,134 +167,248 @@ export const registerUser = async (
       return;
     }
 
-    /* -----------------------------------------------------
+    /* =====================================================
        CHECK EXISTING USER
-    ----------------------------------------------------- */
+    ====================================================== */
 
-    const duplicateConditions = [
-      {
-        email: normalizedEmail,
-      },
-    ];
-
-    if (normalizedPhone) {
-      duplicateConditions.push({
-        phone: normalizedPhone,
-      } as {
-        email: string;
-        phone?: string;
+    const existingByEmail =
+      await User.findOne({
+        email:
+          normalizedEmail,
       });
-    }
 
-    const userExists = await User.findOne({
-      $or: duplicateConditions,
-    });
-
-    if (userExists) {
-      let message =
-        "User already exists.";
-
-      if (
-        userExists.email ===
-        normalizedEmail
-      ) {
-        message =
-          "An account with this email already exists.";
-      } else if (
-        normalizedPhone &&
-        userExists.phone ===
-          normalizedPhone
-      ) {
-        message =
-          "An account with this phone number already exists.";
-      }
-
-      res.status(400).json({
+    if (existingByEmail) {
+      res.status(409).json({
         success: false,
-        message,
+        message:
+          "An account with this email already exists.",
       });
 
       return;
     }
 
-    /* -----------------------------------------------------
+    if (normalizedPhone) {
+      const existingByPhone =
+        await User.findOne({
+          phone:
+            normalizedPhone,
+        });
+
+      if (existingByPhone) {
+        res.status(409).json({
+          success: false,
+          message:
+            "An account with this phone number already exists.",
+        });
+
+        return;
+      }
+    }
+
+    console.log(
+      "REGISTER STEP 1: Validation passed"
+    );
+
+    /* =====================================================
        HASH PASSWORD
-    ----------------------------------------------------- */
+    ====================================================== */
 
     const hashedPassword =
       await hashPassword(
         normalizedPassword
       );
 
-    /* -----------------------------------------------------
+    console.log(
+      "REGISTER STEP 2: Password hashed"
+    );
+
+    /* =====================================================
        CREATE USER
-    ----------------------------------------------------- */
+    ====================================================== */
 
-    const user = await User.create({
-      name: normalizedName,
-      email: normalizedEmail,
-      phone: normalizedPhone || undefined,
-      password: hashedPassword,
-    });
+    const user =
+      await User.create({
+        name: normalizedName,
 
-    /* -----------------------------------------------------
+        email: normalizedEmail,
+
+        phone:
+          normalizedPhone ||
+          undefined,
+
+        password:
+          hashedPassword,
+      });
+
+    createdUserId =
+      user._id.toString();
+
+    console.log(
+      "REGISTER STEP 3: User created:",
+      createdUserId
+    );
+
+    /* =====================================================
        CREATE WALLET
-    ----------------------------------------------------- */
+    ====================================================== */
 
-    const wallet = await Wallet.create({
-      userId: user._id,
-      balance: 0,
-    });
+    let wallet;
 
-    user.walletId = wallet._id;
+    try {
+      wallet =
+        await Wallet.create({
+          userId: user._id,
+          balance: 0,
+        });
+    } catch (walletError) {
+      console.error(
+        "WALLET CREATE ERROR:",
+        walletError
+      );
+
+      /*
+       * Roll back the user so we don't leave
+       * an account without a wallet.
+       */
+      await User.deleteOne({
+        _id: user._id,
+      });
+
+      createdUserId = null;
+
+      throw new Error(
+        "Wallet creation failed."
+      );
+    }
+
+    console.log(
+      "REGISTER STEP 4: Wallet created:",
+      wallet._id.toString()
+    );
+
+    /* =====================================================
+       LINK WALLET TO USER
+    ====================================================== */
+
+    user.walletId =
+      wallet._id;
 
     await user.save();
 
-    /* -----------------------------------------------------
-       TOKEN
-    ----------------------------------------------------- */
-
-    const token = generateToken(
-      user._id.toString(),
-      user.role
+    console.log(
+      "REGISTER STEP 5: Wallet linked to user"
     );
 
-    /* -----------------------------------------------------
-       SUCCESS
-    ----------------------------------------------------- */
+    /* =====================================================
+       GENERATE TOKEN
+    ====================================================== */
+
+    const token =
+      generateToken(
+        user._id.toString(),
+        user.role
+      );
+
+    console.log(
+      "REGISTER STEP 6: JWT generated"
+    );
+
+    /* =====================================================
+       SET COOKIE
+    ====================================================== */
+
+    setAuthCookie(
+      res,
+      token
+    );
+
+    console.log(
+      "REGISTER STEP 7: Auth cookie set"
+    );
+
+    /* =====================================================
+       SUCCESS RESPONSE
+    ====================================================== */
 
     res.status(201).json({
       success: true,
+
       message:
         "User registered successfully.",
 
       user: {
-        _id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        kycStatus: user.kycStatus,
-      },
+        _id:
+          user._id.toString(),
 
-      token,
+        name:
+          user.name,
+
+        email:
+          user.email,
+
+        phone:
+          user.phone,
+
+        role:
+          user.role,
+
+        kycStatus:
+          user.kycStatus,
+      },
     });
+
+    console.log(
+      "REGISTER SUCCESS:",
+      user.email
+    );
   } catch (error: unknown) {
     console.error(
       "REGISTER ERROR:",
       error
     );
 
+    /*
+     * Duplicate key protection
+     */
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: number }).code ===
+        11000
+    ) {
+      res.status(409).json({
+        success: false,
+        message:
+          "An account with this email or phone already exists.",
+      });
+
+      return;
+    }
+
+    const isDevelopment =
+      process.env.NODE_ENV !==
+      "production";
+
     res.status(500).json({
       success: false,
+
       message:
         "Registration failed. Please try again.",
+
+      ...(isDevelopment &&
+      error instanceof Error
+        ? {
+            debug:
+              error.message,
+          }
+        : {}),
     });
   }
 };
 
 /* =========================================================
-   LOGIN
+   LOGIN USER
    POST /api/auth/login
 ========================================================= */
 
@@ -273,9 +422,18 @@ export const loginUser = async (
       password,
     } = req.body;
 
-    /* -----------------------------------------------------
+    console.log(
+      "LOGIN REQUEST:",
+      {
+        email,
+        passwordProvided:
+          Boolean(password),
+      }
+    );
+
+    /* =====================================================
        NORMALIZE
-    ----------------------------------------------------- */
+    ====================================================== */
 
     const normalizedEmail =
       typeof email === "string"
@@ -287,9 +445,9 @@ export const loginUser = async (
         ? password
         : "";
 
-    /* -----------------------------------------------------
+    /* =====================================================
        VALIDATION
-    ----------------------------------------------------- */
+    ====================================================== */
 
     if (
       !normalizedEmail ||
@@ -304,15 +462,24 @@ export const loginUser = async (
       return;
     }
 
-    /* -----------------------------------------------------
-       FIND USER + PASSWORD
-    ----------------------------------------------------- */
+    /* =====================================================
+       FIND USER
+    ====================================================== */
 
-    const user = await User.findOne({
-      email: normalizedEmail,
-    }).select("+password");
+    const user =
+      await User.findOne({
+        email:
+          normalizedEmail,
+      }).select(
+        "+password"
+      );
 
     if (!user) {
+      console.log(
+        "LOGIN FAILED: no user for",
+        normalizedEmail
+      );
+
       res.status(401).json({
         success: false,
         message:
@@ -322,14 +489,14 @@ export const loginUser = async (
       return;
     }
 
-    /* -----------------------------------------------------
-       PASSWORD HASH
-    ----------------------------------------------------- */
+    /* =====================================================
+       GET HASH
+    ====================================================== */
 
     const storedPassword =
-      user.get("password") as
-        | string
-        | undefined;
+      user.get(
+        "password"
+      ) as string | undefined;
 
     if (!storedPassword) {
       res.status(401).json({
@@ -341,9 +508,9 @@ export const loginUser = async (
       return;
     }
 
-    /* -----------------------------------------------------
+    /* =====================================================
        VERIFY ARGON2
-    ----------------------------------------------------- */
+    ====================================================== */
 
     const passwordMatched =
       await verifyPassword(
@@ -352,6 +519,11 @@ export const loginUser = async (
       );
 
     if (!passwordMatched) {
+      console.log(
+        "LOGIN FAILED: bad password for",
+        normalizedEmail
+      );
+
       res.status(401).json({
         success: false,
         message:
@@ -361,33 +533,64 @@ export const loginUser = async (
       return;
     }
 
-    /* -----------------------------------------------------
-       JWT
-    ----------------------------------------------------- */
-
-    const token = generateToken(
-      user._id.toString(),
-      user.role
+    console.log(
+      "LOGIN PASSWORD VERIFIED:",
+      user.email
     );
 
-    /* -----------------------------------------------------
-       SUCCESS
-    ----------------------------------------------------- */
+    /* =====================================================
+       GENERATE JWT
+    ====================================================== */
+
+    const token =
+      generateToken(
+        user._id.toString(),
+        user.role
+      );
+
+    /* =====================================================
+       SET COOKIE
+    ====================================================== */
+
+    setAuthCookie(
+      res,
+      token
+    );
+
+    console.log(
+      "LOGIN COOKIE SET:",
+      user.email
+    );
+
+    /* =====================================================
+       RESPONSE
+    ====================================================== */
 
     res.status(200).json({
       success: true,
-      message: "Login successful.",
+
+      message:
+        "Login successful.",
 
       user: {
-        _id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        kycStatus: user.kycStatus,
-      },
+        _id:
+          user._id.toString(),
 
-      token,
+        name:
+          user.name,
+
+        email:
+          user.email,
+
+        phone:
+          user.phone,
+
+        role:
+          user.role,
+
+        kycStatus:
+          user.kycStatus,
+      },
     });
   } catch (error: unknown) {
     console.error(
@@ -395,10 +598,74 @@ export const loginUser = async (
       error
     );
 
+    const isDevelopment =
+      process.env.NODE_ENV !==
+      "production";
+
+    res.status(500).json({
+      success: false,
+
+      message:
+        "Login failed. Please try again.",
+
+      ...(isDevelopment &&
+      error instanceof Error
+        ? {
+            debug:
+              error.message,
+          }
+        : {}),
+    });
+  }
+};
+
+/* =========================================================
+   LOGOUT USER
+   POST /api/auth/logout
+========================================================= */
+
+export const logoutUser = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const isProduction =
+      process.env.NODE_ENV ===
+      "production";
+
+    res.clearCookie(
+      "access_token",
+      {
+        httpOnly: true,
+
+        secure:
+          isProduction,
+
+        sameSite:
+          isProduction
+            ? "none"
+            : "lax",
+
+        path: "/",
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+
+      message:
+        "Logged out successfully.",
+    });
+  } catch (error: unknown) {
+    console.error(
+      "LOGOUT ERROR:",
+      error
+    );
+
     res.status(500).json({
       success: false,
       message:
-        "Login failed. Please try again.",
+        "Logout failed.",
     });
   }
 };
