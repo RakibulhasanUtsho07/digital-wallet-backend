@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Response } from "express";
 
 import {
@@ -20,15 +21,13 @@ import {
   decryptData,
 } from "../utils/crypto.js";
 
+import {
+  updateKYCStatus,
+} from "../services/kycService.js";
+
 /* =========================================================
    TYPES
 ========================================================= */
-
-interface EncryptedValue {
-  encrypted: string;
-  iv: string;
-  authTag: string;
-}
 
 interface PopulatedUserInfo {
   _id?: string;
@@ -486,6 +485,9 @@ export const getAdminOverview =
 
       /* =====================================================
          KYC
+
+         KYC model uses lowercase statuses:
+         not_started | pending | under_review | verified | rejected
       ====================================================== */
 
       const [
@@ -497,22 +499,22 @@ export const getAdminOverview =
         await Promise.all([
           KYC.countDocuments({
             status:
-              "VERIFIED",
+              "verified",
           }),
 
           KYC.countDocuments({
             status:
-              "PENDING",
+              "pending",
           }),
 
           KYC.countDocuments({
             status:
-              "REJECTED",
+              "rejected",
           }),
 
           KYC.countDocuments({
             status:
-              "ACTION_REQUIRED",
+              "under_review",
           }),
         ]);
 
@@ -1097,7 +1099,7 @@ export const getAdminOverview =
               status:
                 String(
                   kyc.status ||
-                  "PENDING"
+                  "not_started"
                 ).toLowerCase(),
 
               submittedAt:
@@ -1575,231 +1577,6 @@ export const getAllTransactions =
     }
   };
 
-/* =========================================================
-   GET PENDING KYC
-========================================================= */
-
-export const getPendingKYCs =
-  async (
-    _req: AuthRequest,
-    res: Response
-  ): Promise<void> => {
-    try {
-      const kycs =
-        await KYC.find({
-          status:
-            "PENDING",
-        })
-          .populate(
-            "userId",
-
-            [
-              "name",
-              "emailEncrypted",
-              "phoneEncrypted",
-              "role",
-              "kycStatus",
-            ].join(
-              " "
-            )
-          )
-          .lean();
-
-      /*
-       * Never return encrypted ciphertext
-       * directly to admin frontend.
-       */
-      const safeKycs =
-        kycs.map(
-          (
-            kyc: any
-          ) => {
-            const user =
-              getPopulatedUser(
-                kyc.userId
-              );
-
-            return {
-              ...kyc,
-
-              userId:
-                user
-                  ? {
-                    _id:
-                      user._id,
-
-                    name:
-                      user.name,
-
-                    email:
-                      user.email,
-
-                    phone:
-                      user.phone,
-
-                    role:
-                      user.role,
-
-                    kycStatus:
-                      user.kycStatus,
-                  }
-                  : kyc.userId,
-            };
-          }
-        );
-
-      res.status(200).json({
-        success:
-          true,
-
-        count:
-          safeKycs.length,
-
-        kycs:
-          safeKycs,
-      });
-    } catch (
-    error: unknown
-    ) {
-      console.error(
-        "GET PENDING KYC ERROR:",
-        error
-      );
-
-      res.status(500).json({
-        success: false,
-
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to load pending KYCs.",
-      });
-    }
-  };
-
-/* =========================================================
-   REVIEW KYC
-========================================================= */
-
-export const reviewKYC =
-  async (
-    req: AuthRequest,
-    res: Response
-  ): Promise<void> => {
-    try {
-      const {
-        status,
-        rejectionReason,
-      } = req.body;
-
-      const id =
-        req.params.id;
-
-      if (
-        ![
-          "VERIFIED",
-          "REJECTED",
-        ].includes(
-          status
-        )
-      ) {
-        res.status(400).json({
-          success:
-            false,
-
-          message:
-            "Invalid status. Must be VERIFIED or REJECTED",
-        });
-
-        return;
-      }
-
-      const kyc =
-        await KYC.findById(
-          id
-        );
-
-      if (!kyc) {
-        res.status(404).json({
-          success:
-            false,
-
-          message:
-            "KYC record not found",
-        });
-
-        return;
-      }
-
-      kyc.status =
-        status;
-
-      kyc.rejectionReason =
-        status ===
-          "REJECTED"
-          ? rejectionReason ||
-          "Documents not valid"
-          : "";
-
-      kyc.reviewedBy =
-        req.user?._id as any;
-
-      await kyc.save();
-
-      /*
-       * User schema uses lowercase:
-       *
-       * verified
-       * rejected
-       *
-       * তাই uppercase KYC status সরাসরি
-       * User model-এ save করছি না।
-       */
-      const userKycStatus:
-        "verified" |
-        "rejected" =
-        status ===
-          "VERIFIED"
-          ? "verified"
-          : "rejected";
-
-      await User.findByIdAndUpdate(
-        kyc.userId,
-        {
-          kycStatus:
-            userKycStatus,
-        }
-      );
-
-      res.status(200).json({
-        success:
-          true,
-
-        message:
-          `KYC request ${status.toLowerCase()} successfully`,
-
-        kyc,
-      });
-    } catch (
-    error: unknown
-    ) {
-      console.error(
-        "REVIEW KYC ERROR:",
-        error
-      );
-
-      res.status(500).json({
-        success:
-          false,
-
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to review KYC.",
-      });
-    }
-  };
-
 const getTransactionReference = (
   transaction: {
     referenceEncrypted?: unknown;
@@ -1851,3 +1628,427 @@ const getTransactionReference = (
 
  
 };
+
+/* =========================================================
+   MASK SENSITIVE VALUE
+========================================================= */
+
+const maskSensitiveValue = (
+  value?: string
+): string => {
+  if (!value) {
+    return "";
+  }
+
+  const clean =
+    value.trim();
+
+  if (!clean) {
+    return "";
+  }
+
+  if (clean.length <= 4) {
+    return "*".repeat(
+      clean.length
+    );
+  }
+
+  const visible =
+    clean.slice(-4);
+
+  const hiddenLength =
+    Math.max(
+      4,
+      clean.length - 4
+    );
+
+  return `${"*".repeat(
+    hiddenLength
+  )}${visible}`;
+};
+
+/* =========================================================
+   GET PENDING / UNDER REVIEW KYC
+   GET /api/admin/kyc/pending
+========================================================= */
+
+export const getPendingKYCs =
+  async (
+    _req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      const kycs =
+        await KYC.find({
+          status: {
+            $in: [
+              "pending",
+              "under_review",
+            ],
+          },
+        })
+          .populate(
+            "userId",
+            [
+              "name",
+              "emailEncrypted",
+              "phoneEncrypted",
+              "role",
+              "kycStatus",
+            ].join(
+              " "
+            )
+          )
+          .sort({
+            submittedAt:
+              -1,
+
+            createdAt:
+              -1,
+          })
+          .lean();
+
+      const safeKycs =
+        kycs.map(
+          (
+            kyc: any
+          ) => {
+            const user =
+              getPopulatedUser(
+                kyc.userId
+              );
+
+            return {
+              _id:
+                kyc._id,
+
+              userId:
+                user
+                  ? {
+                      _id:
+                        user._id,
+
+                      name:
+                        user.name,
+
+                      email:
+                        user.email,
+
+                      phone:
+                        user.phone,
+
+                      role:
+                        user.role,
+
+                      kycStatus:
+                        user.kycStatus,
+                    }
+                  : kyc.userId,
+
+              documentType:
+                kyc.documentType,
+
+              documentNumber:
+                maskSensitiveValue(
+                  kyc.documentNumber
+                ),
+
+              provider:
+                kyc.provider,
+
+              status:
+                kyc.status,
+
+              rejectionReason:
+                kyc.rejectionReason,
+
+              submittedAt:
+                kyc.submittedAt,
+
+              verifiedAt:
+                kyc.verifiedAt,
+
+              createdAt:
+                kyc.createdAt,
+
+              updatedAt:
+                kyc.updatedAt,
+
+              hasFrontImage:
+                Boolean(
+                  kyc.frontImagePublicId
+                ),
+
+              hasBackImage:
+                Boolean(
+                  kyc.backImagePublicId
+                ),
+
+              hasSelfieImage:
+                Boolean(
+                  kyc.selfieImagePublicId
+                ),
+            };
+          }
+        );
+
+      res.status(200).json({
+        success:
+          true,
+
+        count:
+          safeKycs.length,
+
+        kycs:
+          safeKycs,
+      });
+    } catch (
+      error: unknown
+    ) {
+      console.error(
+        "GET PENDING KYC ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success:
+          false,
+
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to load pending KYCs.",
+      });
+    }
+  };
+
+/* =========================================================
+   REVIEW KYC
+   PATCH /api/admin/kyc/:id/review
+========================================================= */
+
+export const reviewKYC =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      const id =
+        req.params.id;
+
+      if (
+        !mongoose.isValidObjectId(
+          id
+        )
+      ) {
+        res.status(400).json({
+          success:
+            false,
+
+          message:
+            "Invalid KYC record id.",
+        });
+
+        return;
+      }
+
+      const rawStatus =
+        typeof req.body?.status ===
+          "string"
+          ? req.body.status
+              .trim()
+              .toLowerCase()
+          : "";
+
+      const rejectionReason =
+        typeof req.body
+          ?.rejectionReason ===
+          "string"
+          ? req.body.rejectionReason
+              .trim()
+          : "";
+
+      if (
+        ![
+          "verified",
+          "rejected",
+        ].includes(
+          rawStatus
+        )
+      ) {
+        res.status(400).json({
+          success:
+            false,
+
+          message:
+            "Invalid status. Must be verified or rejected.",
+        });
+
+        return;
+      }
+
+      if (
+        rawStatus ===
+          "rejected" &&
+        rejectionReason.length <
+          3
+      ) {
+        res.status(400).json({
+          success:
+            false,
+
+          message:
+            "A rejection reason is required.",
+        });
+
+        return;
+      }
+
+      const kyc =
+        await KYC.findById(
+          id
+        );
+
+      if (!kyc) {
+        res.status(404).json({
+          success:
+            false,
+
+          message:
+            "KYC record not found.",
+        });
+
+        return;
+      }
+
+      if (
+        kyc.status ===
+        "verified"
+      ) {
+        res.status(409).json({
+          success:
+            false,
+
+          message:
+            "This KYC request is already verified.",
+        });
+
+        return;
+      }
+
+      if (
+        ![
+          "pending",
+          "under_review",
+          "rejected",
+        ].includes(
+          kyc.status
+        )
+      ) {
+        res.status(409).json({
+          success:
+            false,
+
+          message:
+            "This KYC request cannot be reviewed in its current state.",
+        });
+
+        return;
+      }
+
+      const status =
+        rawStatus as
+          | "verified"
+          | "rejected";
+
+      const updatedKYC =
+        await updateKYCStatus(
+          kyc.userId.toString(),
+          status,
+          status ===
+            "rejected"
+            ? rejectionReason
+            : undefined
+        );
+
+      if (!updatedKYC) {
+        res.status(404).json({
+          success:
+            false,
+
+          message:
+            "KYC record could not be updated.",
+        });
+
+        return;
+      }
+
+      await User.findByIdAndUpdate(
+        kyc.userId,
+        {
+          kycStatus:
+            status,
+        }
+      );
+
+      res.status(200).json({
+        success:
+          true,
+
+        message:
+          status ===
+            "verified"
+            ? "KYC request verified successfully."
+            : "KYC request rejected successfully.",
+
+        kyc: {
+          _id:
+            updatedKYC._id,
+
+          userId:
+            updatedKYC.userId,
+
+          documentType:
+            updatedKYC.documentType,
+
+          documentNumber:
+            maskSensitiveValue(
+              updatedKYC.documentNumber
+            ),
+
+          provider:
+            updatedKYC.provider,
+
+          status:
+            updatedKYC.status,
+
+          rejectionReason:
+            updatedKYC.rejectionReason,
+
+          submittedAt:
+            updatedKYC.submittedAt,
+
+          verifiedAt:
+            updatedKYC.verifiedAt,
+
+        },
+      });
+    } catch (
+      error: unknown
+    ) {
+      console.error(
+        "REVIEW KYC ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success:
+          false,
+
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to review KYC.",
+      });
+    }
+  };
