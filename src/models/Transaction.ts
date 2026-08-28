@@ -4,7 +4,7 @@ import mongoose, {
 } from "mongoose";
 
 /* =========================================================
-   ENCRYPTED DATA TYPE
+   ENCRYPTED AMOUNT TYPE
 ========================================================= */
 
 export interface IEncryptedTransactionData {
@@ -24,15 +24,13 @@ export interface ITransaction
   receiverId: mongoose.Types.ObjectId;
 
   /*
-   * LEGACY PLAINTEXT AMOUNT
-   *
-   * Migration complete না হওয়া পর্যন্ত থাকবে।
-   * পরে remove করা হবে।
+   * Legacy plaintext field.
+   * Migration/cleanup complete হওয়ার আগ পর্যন্ত optional.
    */
-  amount: number;
+  amount?: number;
 
   /*
-   * NEW ENCRYPTED AMOUNT
+   * New secure encrypted amount.
    */
   amountEncrypted?: IEncryptedTransactionData;
 
@@ -98,60 +96,73 @@ const transactionSchema =
         type:
           Schema.Types.ObjectId,
 
-        ref: "User",
+        ref:
+          "User",
 
-        required: true,
+        required:
+          true,
       },
 
       receiverId: {
         type:
           Schema.Types.ObjectId,
 
-        ref: "User",
+        ref:
+          "User",
 
-        required: true,
+        required:
+          true,
       },
 
       /* =====================================================
          LEGACY PLAINTEXT AMOUNT
 
-         এখন required থাকবে যাতে existing
-         application break না করে।
+         IMPORTANT:
+         required must be FALSE.
+
+         New transfers no longer store this field.
       ====================================================== */
 
       amount: {
-        type: Number,
+        type:
+          Number,
 
-        required: true,
+        required:
+          false,
 
-        min: 1,
+        min:
+          0,
       },
 
       /* =====================================================
-         NEW ENCRYPTED AMOUNT
-
-         Migration-এর সময় populate করা হবে।
+         ENCRYPTED AMOUNT
       ====================================================== */
 
       amountEncrypted: {
         type:
           encryptedDataSchema,
 
-        required: false,
+        required:
+          false,
       },
 
       currency: {
-        type: String,
+        type:
+          String,
 
-        default: "BDT",
+        default:
+          "BDT",
 
-        trim: true,
+        trim:
+          true,
 
-        uppercase: true,
+        uppercase:
+          true,
       },
 
       type: {
-        type: String,
+        type:
+          String,
 
         enum: [
           "TRANSFER",
@@ -159,11 +170,13 @@ const transactionSchema =
           "WITHDRAW",
         ],
 
-        required: true,
+        required:
+          true,
       },
 
       status: {
-        type: String,
+        type:
+          String,
 
         enum: [
           "PENDING",
@@ -176,13 +189,16 @@ const transactionSchema =
       },
 
       reference: {
-        type: String,
+        type:
+          String,
 
-        trim: true,
+        trim:
+          true,
       },
 
       riskScore: {
-        type: String,
+        type:
+          String,
 
         enum: [
           "LOW",
@@ -190,12 +206,13 @@ const transactionSchema =
           "HIGH",
         ],
 
-        default: "LOW",
+        default:
+          "LOW",
       },
     },
-
     {
-      timestamps: true,
+      timestamps:
+        true,
     }
   );
 
@@ -204,18 +221,27 @@ const transactionSchema =
 ========================================================= */
 
 transactionSchema.index({
-  senderId: 1,
-  createdAt: -1,
+  senderId:
+    1,
+
+  createdAt:
+    -1,
 });
 
 transactionSchema.index({
-  receiverId: 1,
-  createdAt: -1,
+  receiverId:
+    1,
+
+  createdAt:
+    -1,
 });
 
 transactionSchema.index({
-  status: 1,
-  createdAt: -1,
+  status:
+    1,
+
+  createdAt:
+    -1,
 });
 
 /* =========================================================

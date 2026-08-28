@@ -129,6 +129,95 @@ const safeDecrypt = (
 };
 
 /* =========================================================
+   TRANSACTION AMOUNT DECRYPT
+
+   amountEncrypted stores minor units (poisha) as an
+   AES-256-GCM encrypted string.
+
+   Example:
+   encrypted "50000" -> 50000 poisha -> BDT 500.00
+
+   Legacy plaintext amount is kept only as a temporary
+   fallback until the final cleanup migration is complete.
+========================================================= */
+
+const getTransactionAmount = (
+  transaction: {
+    amountEncrypted?: unknown;
+    amount?: unknown;
+  }
+): number => {
+  const encryptedValue =
+    transaction.amountEncrypted;
+
+  if (
+    encryptedValue &&
+    typeof encryptedValue === "object"
+  ) {
+    const value =
+      encryptedValue as {
+        encrypted?: unknown;
+        iv?: unknown;
+        authTag?: unknown;
+      };
+
+    if (
+      typeof value.encrypted === "string" &&
+      typeof value.iv === "string" &&
+      typeof value.authTag === "string"
+    ) {
+      try {
+        const decryptedMinorUnits =
+          Number(
+            decryptData({
+              encrypted:
+                value.encrypted,
+
+              iv:
+                value.iv,
+
+              authTag:
+                value.authTag,
+            })
+          );
+
+        if (
+          Number.isSafeInteger(
+            decryptedMinorUnits
+          ) &&
+          decryptedMinorUnits >= 0
+        ) {
+          return (
+            decryptedMinorUnits /
+            100
+          );
+        }
+      } catch (error) {
+        console.error(
+          "ADMIN TRANSACTION AMOUNT DECRYPT ERROR:",
+          error
+        );
+      }
+    }
+  }
+
+  /*
+   * Temporary legacy fallback.
+   * Remove after plaintext `amount` cleanup.
+   */
+  const legacyAmount =
+    Number(
+      transaction.amount
+    );
+
+  return Number.isFinite(
+    legacyAmount
+  )
+    ? legacyAmount
+    : 0;
+};
+
+/* =========================================================
    POPULATED USER HELPER
 ========================================================= */
 
@@ -470,8 +559,9 @@ export const getAdminOverview =
       /* =====================================================
          TRANSACTION STATS
 
-         amount এখনো legacy numeric.
-         Amount encryption next step-এ হবে।
+         Amount is decrypted in application memory from
+         amountEncrypted. Legacy plaintext amount is used
+         only as a temporary fallback.
       ====================================================== */
 
       const totalTransactions =
@@ -485,9 +575,8 @@ export const getAdminOverview =
           ) => {
             return (
               sum +
-              Number(
-                transaction.amount ||
-                  0
+              getTransactionAmount(
+                transaction
               )
             );
           },
@@ -722,9 +811,8 @@ export const getAdminOverview =
           )!;
 
         current.volume +=
-          Number(
-            transaction.amount ||
-              0
+          getTransactionAmount(
+            transaction
           );
 
         current.count +=
@@ -932,9 +1020,8 @@ export const getAdminOverview =
                   ),
 
                 amount:
-                  Number(
-                    transaction.amount ||
-                      0
+                  getTransactionAmount(
+                    transaction
                   ),
 
                 currency:

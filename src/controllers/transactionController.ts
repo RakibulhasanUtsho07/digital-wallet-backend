@@ -1,6 +1,253 @@
 import { Response } from "express";
-import { AuthRequest } from "../middlewares/authMiddleware.js";
-import { Transaction } from "../models/Transaction.js";
+
+import {
+  AuthRequest,
+} from "../middlewares/authMiddleware.js";
+
+import {
+  Transaction,
+} from "../models/Transaction.js";
+
+import {
+  decryptData,
+} from "../utils/crypto.js";
+
+/* =========================================================
+   TYPES
+========================================================= */
+
+interface EncryptedValue {
+  encrypted: string;
+  iv: string;
+  authTag: string;
+}
+
+interface SafeTransactionUser {
+  _id: string;
+  name: string;
+  email: string;
+  phone: string;
+}
+
+interface TransactionLike {
+  _id?: unknown;
+  senderId?: unknown;
+  receiverId?: unknown;
+  amount?: unknown;
+  amountEncrypted?: unknown;
+  currency?: unknown;
+  type?: unknown;
+  status?: unknown;
+  reference?: unknown;
+  riskScore?: unknown;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+/* =========================================================
+   SAFE DECRYPT
+========================================================= */
+
+function safeDecrypt(
+  value: unknown
+): string {
+  if (
+    !value ||
+    typeof value !== "object"
+  ) {
+    return "";
+  }
+
+  const encrypted =
+    value as Partial<EncryptedValue>;
+
+  if (
+    typeof encrypted.encrypted !== "string" ||
+    typeof encrypted.iv !== "string" ||
+    typeof encrypted.authTag !== "string"
+  ) {
+    return "";
+  }
+
+  try {
+    return decryptData({
+      encrypted:
+        encrypted.encrypted,
+
+      iv:
+        encrypted.iv,
+
+      authTag:
+        encrypted.authTag,
+    });
+  } catch (error) {
+    console.error(
+      "TRANSACTION DATA DECRYPT ERROR:",
+      error
+    );
+
+    return "";
+  }
+}
+
+/* =========================================================
+   TRANSACTION AMOUNT
+========================================================= */
+
+function getTransactionAmount(
+  transaction: TransactionLike
+): number {
+  const encryptedAmount =
+    safeDecrypt(
+      transaction.amountEncrypted
+    );
+
+  if (encryptedAmount) {
+    const minorUnits =
+      Number(
+        encryptedAmount
+      );
+
+    if (
+      Number.isSafeInteger(
+        minorUnits
+      ) &&
+      minorUnits >= 0
+    ) {
+      return (
+        minorUnits /
+        100
+      );
+    }
+  }
+
+  /*
+   * Temporary fallback for transactions created before
+   * encrypted amount cleanup.
+   */
+  const legacyAmount =
+    Number(
+      transaction.amount
+    );
+
+  return Number.isFinite(
+    legacyAmount
+  )
+    ? legacyAmount
+    : 0;
+}
+
+/* =========================================================
+   SAFE POPULATED USER
+========================================================= */
+
+function getSafeUser(
+  value: unknown
+): SafeTransactionUser | null {
+  if (
+    !value ||
+    typeof value !== "object"
+  ) {
+    return null;
+  }
+
+  const user =
+    value as {
+      _id?: unknown;
+      name?: unknown;
+      emailEncrypted?: unknown;
+      phoneEncrypted?: unknown;
+    };
+
+  if (user._id == null) {
+    return null;
+  }
+
+  return {
+    _id:
+      String(
+        user._id
+      ),
+
+    name:
+      typeof user.name === "string"
+        ? user.name
+        : "",
+
+    email:
+      safeDecrypt(
+        user.emailEncrypted
+      ),
+
+    phone:
+      safeDecrypt(
+        user.phoneEncrypted
+      ),
+  };
+}
+
+/* =========================================================
+   SAFE TRANSACTION RESPONSE
+========================================================= */
+
+function toSafeTransaction(
+  transaction: TransactionLike
+) {
+  return {
+    _id:
+      transaction._id != null
+        ? String(
+            transaction._id
+          )
+        : "",
+
+    senderId:
+      getSafeUser(
+        transaction.senderId
+      ) ||
+      getPopulatedUserId(
+        transaction.senderId
+      ),
+
+    receiverId:
+      getSafeUser(
+        transaction.receiverId
+      ) ||
+      getPopulatedUserId(
+        transaction.receiverId
+      ),
+
+    amount:
+      getTransactionAmount(
+        transaction
+      ),
+
+    currency:
+      typeof transaction.currency === "string"
+        ? transaction.currency
+        : "BDT",
+
+    type:
+      transaction.type,
+
+    status:
+      transaction.status,
+
+    reference:
+      typeof transaction.reference === "string"
+        ? transaction.reference
+        : undefined,
+
+    riskScore:
+      transaction.riskScore,
+
+    createdAt:
+      transaction.createdAt,
+
+    updatedAt:
+      transaction.updatedAt,
+  };
+}
 
 /* =========================================================
    GET MY TRANSACTIONS
@@ -15,7 +262,8 @@ export const getMyTransactions = async (
     if (!req.user?._id) {
       res.status(401).json({
         success: false,
-        message: "Not authorized",
+        message:
+          "Not authorized",
       });
 
       return;
@@ -28,29 +276,44 @@ export const getMyTransactions = async (
       await Transaction.find({
         $or: [
           {
-            senderId: userId,
+            senderId:
+              userId,
           },
           {
-            receiverId: userId,
+            receiverId:
+              userId,
           },
         ],
       })
         .populate(
           "senderId",
-          "name email"
+          "name emailEncrypted phoneEncrypted"
         )
         .populate(
           "receiverId",
-          "name email"
+          "name emailEncrypted phoneEncrypted"
         )
         .sort({
           createdAt: -1,
-        });
+        })
+        .lean();
+
+    const safeTransactions =
+      transactions.map(
+        (transaction) =>
+          toSafeTransaction(
+            transaction as TransactionLike
+          )
+      );
 
     res.status(200).json({
       success: true,
-      count: transactions.length,
-      transactions,
+
+      count:
+        safeTransactions.length,
+
+      transactions:
+        safeTransactions,
     });
   } catch (error: unknown) {
     console.error(
@@ -60,6 +323,7 @@ export const getMyTransactions = async (
 
     res.status(500).json({
       success: false,
+
       message:
         error instanceof Error
           ? error.message
@@ -81,31 +345,38 @@ export const getTransactionById = async (
     if (!req.user?._id) {
       res.status(401).json({
         success: false,
-        message: "Not authorized",
+        message:
+          "Not authorized",
       });
 
       return;
     }
 
-    const { id } = req.params;
+    const {
+      id,
+    } = req.params;
 
     const userId =
       req.user._id.toString();
 
     const transaction =
-      await Transaction.findById(id)
+      await Transaction.findById(
+        id
+      )
         .populate(
           "senderId",
-          "name email"
+          "name emailEncrypted phoneEncrypted"
         )
         .populate(
           "receiverId",
-          "name email"
-        );
+          "name emailEncrypted phoneEncrypted"
+        )
+        .lean();
 
     if (!transaction) {
       res.status(404).json({
         success: false,
+
         message:
           "Transaction not found",
       });
@@ -128,10 +399,12 @@ export const getTransactionById = async (
       );
 
     const isSender =
-      senderId === userId;
+      senderId ===
+      userId;
 
     const isReceiver =
-      receiverId === userId;
+      receiverId ===
+      userId;
 
     if (
       !isSender &&
@@ -139,6 +412,7 @@ export const getTransactionById = async (
     ) {
       res.status(403).json({
         success: false,
+
         message:
           "Not authorized to view this transaction",
       });
@@ -146,9 +420,16 @@ export const getTransactionById = async (
       return;
     }
 
+    const safeTransaction =
+      toSafeTransaction(
+        transaction as TransactionLike
+      );
+
     res.status(200).json({
       success: true,
-      transaction,
+
+      transaction:
+        safeTransaction,
     });
   } catch (error: unknown) {
     console.error(
@@ -158,6 +439,7 @@ export const getTransactionById = async (
 
     res.status(500).json({
       success: false,
+
       message:
         error instanceof Error
           ? error.message
@@ -189,10 +471,15 @@ function getPopulatedUserId(
     "_id" in value
   ) {
     return String(
-      (value as { _id: unknown })
-        ._id
+      (
+        value as {
+          _id: unknown;
+        }
+      )._id
     );
   }
 
-  return String(value);
+  return String(
+    value
+  );
 }
