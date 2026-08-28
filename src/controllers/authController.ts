@@ -13,6 +13,7 @@ import { Wallet } from "../models/Wallet.js";
 import {
   createLookupHash,
   encryptData,
+  decryptData,
   normalizeEmail,
   normalizePhone,
 } from "../utils/crypto.js";
@@ -38,6 +39,55 @@ const toStringValue = (
     : "";
 };
 
+interface EncryptedContactValue {
+  encrypted: string;
+  iv: string;
+  authTag: string;
+}
+
+const decryptContactValue = (
+  value:
+    | EncryptedContactValue
+    | undefined
+): string => {
+  if (!value) {
+    return "";
+  }
+
+  try {
+    return decryptData(value);
+  } catch (error) {
+    console.error(
+      "CONTACT DECRYPT ERROR:",
+      error
+    );
+
+    return "";
+  }
+};
+
+const getUserContact = (
+  user: {
+    emailEncrypted?:
+      EncryptedContactValue;
+
+    phoneEncrypted?:
+      EncryptedContactValue;
+  }
+) => {
+  return {
+    email:
+      decryptContactValue(
+        user.emailEncrypted
+      ),
+
+    phone:
+      decryptContactValue(
+        user.phoneEncrypted
+      ),
+  };
+};
+
 /* =========================================================
    ENVIRONMENT
 ========================================================= */
@@ -52,7 +102,7 @@ const isProductionEnvironment =
   };
 
 /* =========================================================
-   JWT GENERATOR
+   JWT
 ========================================================= */
 
 const generateToken = (
@@ -81,7 +131,7 @@ const generateToken = (
 };
 
 /* =========================================================
-   AUTH COOKIE OPTIONS
+   COOKIE OPTIONS
 ========================================================= */
 
 const getAuthCookieOptions =
@@ -90,25 +140,11 @@ const getAuthCookieOptions =
       isProductionEnvironment();
 
     return {
-      /*
-       * Browser JavaScript থেকে
-       * auth token access করা যাবে না।
-       */
       httpOnly: true,
 
-      /*
-       * Production HTTPS only.
-       */
       secure:
         isProduction,
 
-      /*
-       * Local frontend/backend:
-       * localhost
-       *
-       * Production:
-       * different vercel.app origins
-       */
       sameSite:
         isProduction
           ? "none"
@@ -126,7 +162,7 @@ const getAuthCookieOptions =
   };
 
 /* =========================================================
-   SET AUTH COOKIE
+   SET COOKIE
 ========================================================= */
 
 const setAuthCookie = (
@@ -141,7 +177,7 @@ const setAuthCookie = (
 };
 
 /* =========================================================
-   CLEAR AUTH COOKIE
+   CLEAR COOKIE
 ========================================================= */
 
 const clearAuthCookie = (
@@ -167,7 +203,7 @@ const clearAuthCookie = (
 };
 
 /* =========================================================
-   REGISTER USER
+   REGISTER
    POST /api/auth/register
 ========================================================= */
 
@@ -185,7 +221,7 @@ export const registerUser =
       } = req.body;
 
       /* =====================================================
-         NORMALIZE INPUT
+         NORMALIZE
       ====================================================== */
 
       const normalizedName =
@@ -213,7 +249,7 @@ export const registerUser =
         );
 
       /* =====================================================
-         REQUIRED FIELDS
+         REQUIRED
       ====================================================== */
 
       if (
@@ -223,7 +259,6 @@ export const registerUser =
       ) {
         res.status(400).json({
           success: false,
-
           message:
             "Name, email and password are required.",
         });
@@ -232,7 +267,7 @@ export const registerUser =
       }
 
       /* =====================================================
-         PASSWORD VALIDATION
+         PASSWORD
       ====================================================== */
 
       if (
@@ -241,7 +276,6 @@ export const registerUser =
       ) {
         res.status(400).json({
           success: false,
-
           message:
             "Password must be at least 6 characters.",
         });
@@ -263,7 +297,6 @@ export const registerUser =
       ) {
         res.status(400).json({
           success: false,
-
           message:
             "Please provide a valid email address.",
         });
@@ -272,7 +305,7 @@ export const registerUser =
       }
 
       /* =====================================================
-         CREATE LOOKUP HASHES
+         LOOKUP HASH
       ====================================================== */
 
       const emailLookup =
@@ -286,6 +319,45 @@ export const registerUser =
               normalizedPhone
             )
           : undefined;
+
+      /* =====================================================
+         DUPLICATE CHECK
+      ====================================================== */
+
+      const existingByEmail =
+        await User.findOne({
+          emailLookup,
+        });
+
+      if (existingByEmail) {
+        res.status(409).json({
+          success: false,
+          message:
+            "An account with this email already exists.",
+        });
+
+        return;
+      }
+
+      if (
+        normalizedPhone &&
+        phoneLookup
+      ) {
+        const existingByPhone =
+          await User.findOne({
+            phoneLookup,
+          });
+
+        if (existingByPhone) {
+          res.status(409).json({
+            success: false,
+            message:
+              "An account with this phone number already exists.",
+          });
+
+          return;
+        }
+      }
 
       /* =====================================================
          ENCRYPT PII
@@ -304,79 +376,7 @@ export const registerUser =
           : undefined;
 
       /* =====================================================
-         CHECK DUPLICATE EMAIL
-      ====================================================== */
-
-      /*
-       * Temporary $or:
-       *
-       * email = legacy plaintext
-       * emailLookup = secure lookup
-       *
-       * Plaintext fields remove করার পরে
-       * শুধু emailLookup থাকবে।
-       */
-      const existingByEmail =
-        await User.findOne({
-          $or: [
-            {
-              email:
-                normalizedEmail,
-            },
-
-            {
-              emailLookup,
-            },
-          ],
-        });
-
-      if (existingByEmail) {
-        res.status(409).json({
-          success: false,
-
-          message:
-            "An account with this email already exists.",
-        });
-
-        return;
-      }
-
-      /* =====================================================
-         CHECK DUPLICATE PHONE
-      ====================================================== */
-
-      if (
-        normalizedPhone &&
-        phoneLookup
-      ) {
-        const existingByPhone =
-          await User.findOne({
-            $or: [
-              {
-                phone:
-                  normalizedPhone,
-              },
-
-              {
-                phoneLookup,
-              },
-            ],
-          });
-
-        if (existingByPhone) {
-          res.status(409).json({
-            success: false,
-
-            message:
-              "An account with this phone number already exists.",
-          });
-
-          return;
-        }
-      }
-
-      /* =====================================================
-         HASH PASSWORD
+         PASSWORD HASH
       ====================================================== */
 
       const hashedPassword =
@@ -396,9 +396,8 @@ export const registerUser =
           /*
            * TEMPORARY LEGACY FIELDS
            *
-           * User model থেকে plaintext
-           * fields remove করার আগ পর্যন্ত
-           * এগুলো রাখতে হবে।
+           * User.ts cleanup করার পর
+           * এগুলো remove হবে।
            */
           email:
             normalizedEmail,
@@ -407,20 +406,14 @@ export const registerUser =
             normalizedPhone ||
             undefined,
 
-          /*
-           * SECURE PII
-           */
-          emailEncrypted,
+          /* Secure fields */
 
+          emailEncrypted,
           emailLookup,
 
           phoneEncrypted,
-
           phoneLookup,
 
-          /*
-           * PASSWORD HASH
-           */
           password:
             hashedPassword,
         });
@@ -451,10 +444,6 @@ export const registerUser =
           walletError
         );
 
-        /*
-         * Wallet creation fail হলে
-         * user rollback।
-         */
         await User.deleteOne({
           _id:
             user._id,
@@ -466,7 +455,7 @@ export const registerUser =
       }
 
       /* =====================================================
-         JWT
+         AUTH
       ====================================================== */
 
       const token =
@@ -475,10 +464,6 @@ export const registerUser =
           user.role
         );
 
-      /* =====================================================
-         COOKIE
-      ====================================================== */
-
       setAuthCookie(
         res,
         token
@@ -486,6 +471,9 @@ export const registerUser =
 
       /* =====================================================
          RESPONSE
+
+         Registration input already exists in memory,
+         so no DB plaintext field is read here.
       ====================================================== */
 
       res.status(201).json({
@@ -501,18 +489,11 @@ export const registerUser =
           name:
             user.name,
 
-          /*
-           * Temporary response.
-           *
-           * Next privacy migration-এর পরে
-           * encrypted fields decrypt করে
-           * response দেওয়া হবে।
-           */
           email:
-            user.email,
+            normalizedEmail,
 
           phone:
-            user.phone,
+            normalizedPhone,
 
           role:
             user.role,
@@ -529,10 +510,6 @@ export const registerUser =
         error
       );
 
-      /* =====================================================
-         DUPLICATE KEY
-      ====================================================== */
-
       if (
         typeof error ===
           "object" &&
@@ -546,7 +523,6 @@ export const registerUser =
       ) {
         res.status(409).json({
           success: false,
-
           message:
             "An account with this email or phone already exists.",
         });
@@ -556,7 +532,6 @@ export const registerUser =
 
       res.status(500).json({
         success: false,
-
         message:
           "Registration failed. Please try again.",
       });
@@ -564,7 +539,7 @@ export const registerUser =
   };
 
 /* =========================================================
-   LOGIN USER
+   LOGIN
    POST /api/auth/login
 ========================================================= */
 
@@ -579,10 +554,6 @@ export const loginUser =
         password,
       } = req.body;
 
-      /* =====================================================
-         NORMALIZE INPUT
-      ====================================================== */
-
       const normalizedEmail =
         normalizeEmail(
           toStringValue(
@@ -595,17 +566,12 @@ export const loginUser =
           password
         );
 
-      /* =====================================================
-         VALIDATE
-      ====================================================== */
-
       if (
         !normalizedEmail ||
         !normalizedPassword
       ) {
         res.status(400).json({
           success: false,
-
           message:
             "Email and password are required.",
         });
@@ -614,17 +580,13 @@ export const loginUser =
       }
 
       /* =====================================================
-         CREATE SECURE EMAIL LOOKUP
+         HMAC LOOKUP
       ====================================================== */
 
       const emailLookup =
         createLookupHash(
           normalizedEmail
         );
-
-      /* =====================================================
-         FIND USER USING HMAC
-      ====================================================== */
 
       const user =
         await User.findOne({
@@ -633,16 +595,9 @@ export const loginUser =
           "+password"
         );
 
-      /*
-       * একই response missing user এবং
-       * wrong password-এর জন্য।
-       *
-       * এতে account enumeration harder হয়।
-       */
       if (!user) {
         res.status(401).json({
           success: false,
-
           message:
             "Invalid email or password.",
         });
@@ -651,7 +606,7 @@ export const loginUser =
       }
 
       /* =====================================================
-         GET STORED PASSWORD HASH
+         PASSWORD
       ====================================================== */
 
       const storedPassword =
@@ -664,17 +619,12 @@ export const loginUser =
       if (!storedPassword) {
         res.status(401).json({
           success: false,
-
           message:
             "Invalid email or password.",
         });
 
         return;
       }
-
-      /* =====================================================
-         VERIFY PASSWORD
-      ====================================================== */
 
       const passwordMatched =
         await verifyPassword(
@@ -685,7 +635,6 @@ export const loginUser =
       if (!passwordMatched) {
         res.status(401).json({
           success: false,
-
           message:
             "Invalid email or password.",
         });
@@ -694,7 +643,19 @@ export const loginUser =
       }
 
       /* =====================================================
-         GENERATE JWT
+         CONTACT DATA
+      ====================================================== */
+
+      const {
+        email: decryptedEmail,
+        phone: decryptedPhone,
+      } =
+        getUserContact(
+          user
+        );
+
+      /* =====================================================
+         TOKEN
       ====================================================== */
 
       const token =
@@ -702,10 +663,6 @@ export const loginUser =
           user._id.toString(),
           user.role
         );
-
-      /* =====================================================
-         SET COOKIE
-      ====================================================== */
 
       setAuthCookie(
         res,
@@ -730,10 +687,10 @@ export const loginUser =
             user.name,
 
           email:
-            user.email,
+            decryptedEmail,
 
           phone:
-            user.phone,
+            decryptedPhone,
 
           role:
             user.role,
@@ -752,7 +709,6 @@ export const loginUser =
 
       res.status(500).json({
         success: false,
-
         message:
           "Login failed. Please try again.",
       });
@@ -774,10 +730,6 @@ export const forgotPassword =
         email,
       } = req.body;
 
-      /* =====================================================
-         NORMALIZE EMAIL
-      ====================================================== */
-
       const normalizedEmail =
         normalizeEmail(
           toStringValue(
@@ -785,14 +737,9 @@ export const forgotPassword =
           )
         );
 
-      /* =====================================================
-         VALIDATE
-      ====================================================== */
-
       if (!normalizedEmail) {
         res.status(400).json({
           success: false,
-
           message:
             "Email address is required.",
         });
@@ -810,7 +757,6 @@ export const forgotPassword =
       ) {
         res.status(400).json({
           success: false,
-
           message:
             "Please provide a valid email address.",
         });
@@ -819,17 +765,13 @@ export const forgotPassword =
       }
 
       /* =====================================================
-         CREATE EMAIL LOOKUP
+         FIND USING HMAC
       ====================================================== */
 
       const emailLookup =
         createLookupHash(
           normalizedEmail
         );
-
-      /* =====================================================
-         FIND USER USING HMAC LOOKUP
-      ====================================================== */
 
       const user =
         await User.findOne({
@@ -839,12 +781,11 @@ export const forgotPassword =
         );
 
       /*
-       * Account exists কিনা expose করব না।
+       * Account enumeration protection
        */
       if (!user) {
         res.status(200).json({
           success: true,
-
           message:
             "If an account exists for this email, a password reset link has been sent.",
         });
@@ -853,7 +794,7 @@ export const forgotPassword =
       }
 
       /* =====================================================
-         GENERATE RESET TOKEN
+         RESET TOKEN
       ====================================================== */
 
       const rawToken =
@@ -861,11 +802,6 @@ export const forgotPassword =
           .randomBytes(32)
           .toString("hex");
 
-      /*
-       * Raw token DB-তে save হবে না।
-       *
-       * DB শুধু token hash রাখবে।
-       */
       const tokenHash =
         crypto
           .createHash(
@@ -875,11 +811,6 @@ export const forgotPassword =
             rawToken
           )
           .digest("hex");
-
-      /* =====================================================
-         TOKEN EXPIRY
-         15 MINUTES
-      ====================================================== */
 
       const expiresAt =
         new Date(
@@ -913,7 +844,7 @@ export const forgotPassword =
         )}`;
 
       /* =====================================================
-         SEND RESET EMAIL
+         EMAIL
       ====================================================== */
 
       try {
@@ -926,10 +857,6 @@ export const forgotPassword =
       } catch (
         emailError
       ) {
-        /*
-         * Email send fail করলে
-         * reset token clear।
-         */
         user.resetPasswordTokenHash =
           undefined;
 
@@ -945,7 +872,6 @@ export const forgotPassword =
 
         res.status(500).json({
           success: false,
-
           message:
             "Unable to send the password reset email. Please try again.",
         });
@@ -953,13 +879,8 @@ export const forgotPassword =
         return;
       }
 
-      /* =====================================================
-         RESPONSE
-      ====================================================== */
-
       res.status(200).json({
         success: true,
-
         message:
           "If an account exists for this email, a password reset link has been sent.",
       });
@@ -973,7 +894,6 @@ export const forgotPassword =
 
       res.status(500).json({
         success: false,
-
         message:
           "Unable to process the password reset request.",
       });
@@ -997,10 +917,6 @@ export const resetPassword =
         password,
       } = req.body;
 
-      /* =====================================================
-         NORMALIZE
-      ====================================================== */
-
       const normalizedEmail =
         normalizeEmail(
           toStringValue(
@@ -1018,10 +934,6 @@ export const resetPassword =
           password
         );
 
-      /* =====================================================
-         VALIDATE
-      ====================================================== */
-
       if (
         !normalizedEmail ||
         !normalizedToken ||
@@ -1029,7 +941,6 @@ export const resetPassword =
       ) {
         res.status(400).json({
           success: false,
-
           message:
             "Email, reset token and new password are required.",
         });
@@ -1043,17 +954,12 @@ export const resetPassword =
       ) {
         res.status(400).json({
           success: false,
-
           message:
             "Password must be at least 6 characters.",
         });
 
         return;
       }
-
-      /* =====================================================
-         EMAIL VALIDATION
-      ====================================================== */
 
       const emailRegex =
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1065,7 +971,6 @@ export const resetPassword =
       ) {
         res.status(400).json({
           success: false,
-
           message:
             "Please provide a valid email address.",
         });
@@ -1074,7 +979,7 @@ export const resetPassword =
       }
 
       /* =====================================================
-         CREATE SECURE EMAIL LOOKUP
+         EMAIL LOOKUP
       ====================================================== */
 
       const emailLookup =
@@ -1083,7 +988,7 @@ export const resetPassword =
         );
 
       /* =====================================================
-         HASH RESET TOKEN
+         TOKEN HASH
       ====================================================== */
 
       const tokenHash =
@@ -1095,14 +1000,6 @@ export const resetPassword =
             normalizedToken
           )
           .digest("hex");
-
-      /* =====================================================
-         FIND USER
-
-         IMPORTANT:
-         এখানে plaintext email আর
-         ব্যবহার করা হচ্ছে না।
-      ====================================================== */
 
       const user =
         await User.findOne({
@@ -1122,7 +1019,6 @@ export const resetPassword =
       if (!user) {
         res.status(400).json({
           success: false,
-
           message:
             "Invalid or expired password reset link.",
         });
@@ -1131,7 +1027,7 @@ export const resetPassword =
       }
 
       /* =====================================================
-         HASH NEW PASSWORD
+         PASSWORD UPDATE
       ====================================================== */
 
       const hashedPassword =
@@ -1139,16 +1035,9 @@ export const resetPassword =
           normalizedPassword
         );
 
-      /* =====================================================
-         UPDATE PASSWORD
-      ====================================================== */
-
       user.password =
         hashedPassword;
 
-      /*
-       * Reset token one-time use।
-       */
       user.resetPasswordTokenHash =
         undefined;
 
@@ -1158,7 +1047,19 @@ export const resetPassword =
       await user.save();
 
       /* =====================================================
-         CREATE NEW SESSION
+         DECRYPT CONTACT
+      ====================================================== */
+
+      const {
+        email: decryptedEmail,
+        phone: decryptedPhone,
+      } =
+        getUserContact(
+          user
+        );
+
+      /* =====================================================
+         NEW SESSION
       ====================================================== */
 
       const newToken =
@@ -1171,10 +1072,6 @@ export const resetPassword =
         res,
         newToken
       );
-
-      /* =====================================================
-         RESPONSE
-      ====================================================== */
 
       res.status(200).json({
         success: true,
@@ -1190,10 +1087,10 @@ export const resetPassword =
             user.name,
 
           email:
-            user.email,
+            decryptedEmail,
 
           phone:
-            user.phone,
+            decryptedPhone,
 
           role:
             user.role,
@@ -1212,7 +1109,6 @@ export const resetPassword =
 
       res.status(500).json({
         success: false,
-
         message:
           "Unable to reset password.",
       });
@@ -1236,7 +1132,6 @@ export const logoutUser =
 
       res.status(200).json({
         success: true,
-
         message:
           "Logged out successfully.",
       });
@@ -1250,7 +1145,6 @@ export const logoutUser =
 
       res.status(500).json({
         success: false,
-
         message:
           "Logout failed.",
       });

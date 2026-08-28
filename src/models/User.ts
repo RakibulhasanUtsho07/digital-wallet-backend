@@ -20,23 +20,23 @@ export interface IEncryptedData {
 export interface IUser extends Document {
   name: string;
 
-  /*
-   * TEMPORARY LEGACY FIELDS
-   *
-   * Existing users migrate করার পর
-   * এগুলো remove করা হবে।
-   */
-  email: string;
-  phone?: string;
+  /* =======================================================
+     SECURE EMAIL
+  ======================================================== */
 
-  /*
-   * SECURE FIELDS
-   */
-  emailEncrypted?: IEncryptedData;
-  emailLookup?: string;
+  emailEncrypted: IEncryptedData;
+  emailLookup: string;
+
+  /* =======================================================
+     SECURE PHONE
+  ======================================================== */
 
   phoneEncrypted?: IEncryptedData;
   phoneLookup?: string;
+
+  /* =======================================================
+     AUTH
+  ======================================================== */
 
   password: string;
 
@@ -44,16 +44,32 @@ export interface IUser extends Document {
     | "user"
     | "admin";
 
+  /* =======================================================
+     KYC
+  ======================================================== */
+
   kycStatus:
     | "not_started"
     | "pending"
     | "verified"
     | "rejected";
 
+  /* =======================================================
+     WALLET
+  ======================================================== */
+
   walletId?: mongoose.Types.ObjectId;
+
+  /* =======================================================
+     PASSWORD RESET
+  ======================================================== */
 
   resetPasswordTokenHash?: string;
   resetPasswordExpires?: Date;
+
+  /* =======================================================
+     TIMESTAMPS
+  ======================================================== */
 
   createdAt: Date;
   updatedAt: Date;
@@ -104,37 +120,28 @@ const userSchema =
       },
 
       /* =====================================================
-         TEMPORARY LEGACY EMAIL
-      ====================================================== */
-
-      email: {
-        type: String,
-        required: true,
-        unique: true,
-        lowercase: true,
-        trim: true,
-      },
-
-      /* =====================================================
-         TEMPORARY LEGACY PHONE
-      ====================================================== */
-
-      phone: {
-        type: String,
-        trim: true,
-      },
-
-      /* =====================================================
          SECURE EMAIL
+
+         Original email is AES-256-GCM encrypted.
       ====================================================== */
 
       emailEncrypted: {
         type:
           encryptedDataSchema,
+
+        required:
+          true,
       },
 
+      /*
+       * HMAC-SHA256 lookup value.
+       *
+       * Login / Forgot Password /
+       * Duplicate check use this field.
+       */
       emailLookup: {
         type: String,
+        required: true,
       },
 
       /* =====================================================
@@ -146,6 +153,10 @@ const userSchema =
           encryptedDataSchema,
       },
 
+      /*
+       * Send Money recipient lookup
+       * uses this HMAC value.
+       */
       phoneLookup: {
         type: String,
       },
@@ -157,6 +168,11 @@ const userSchema =
       password: {
         type: String,
         required: true,
+
+        /*
+         * Password hash normally
+         * query result-এ আসবে না।
+         */
         select: false,
       },
 
@@ -177,7 +193,7 @@ const userSchema =
       },
 
       /* =====================================================
-         KYC
+         KYC STATUS
       ====================================================== */
 
       kycStatus: {
@@ -207,13 +223,17 @@ const userSchema =
       },
 
       /* =====================================================
-         PASSWORD RESET
+         PASSWORD RESET TOKEN HASH
       ====================================================== */
 
       resetPasswordTokenHash: {
         type: String,
         select: false,
       },
+
+      /* =====================================================
+         PASSWORD RESET EXPIRATION
+      ====================================================== */
 
       resetPasswordExpires: {
         type: Date,
@@ -226,29 +246,28 @@ const userSchema =
   );
 
 /* =========================================================
-   SECURE LOOKUP INDEXES
+   SECURE EMAIL LOOKUP INDEX
+
+   Email is required for every user,
+   therefore sparse is not needed anymore.
 ========================================================= */
 
-/*
- * HMAC email lookup
- *
- * sparse: true
- * কারণ existing users-এর emailLookup
- * এখনো নাও থাকতে পারে।
- */
 userSchema.index(
   {
     emailLookup: 1,
   },
   {
     unique: true,
-    sparse: true,
   }
 );
 
-/*
- * HMAC phone lookup
- */
+/* =========================================================
+   SECURE PHONE LOOKUP INDEX
+
+   Phone is optional,
+   therefore sparse stays enabled.
+========================================================= */
+
 userSchema.index(
   {
     phoneLookup: 1,
@@ -260,7 +279,7 @@ userSchema.index(
 );
 
 /* =========================================================
-   MODEL
+   USER MODEL
 ========================================================= */
 
 export const User =
