@@ -382,8 +382,8 @@ export const sendMoney =
         senderUser.get(
           "password"
         ) as
-          | string
-          | undefined;
+        | string
+        | undefined;
 
       if (!storedPassword) {
         await session.abortTransaction();
@@ -527,7 +527,7 @@ export const sendMoney =
       if (
         Math.abs(
           parsedAmount -
-            normalizedAmount
+          normalizedAmount
         ) >
         Number.EPSILON
       ) {
@@ -662,7 +662,17 @@ export const sendMoney =
             amountInMinorUnits
           )
         );
+      const referenceValue =
+        toTrimmedString(
+          reference
+        );
 
+      const referenceEncrypted =
+        referenceValue
+          ? encryptData(
+            referenceValue
+          )
+          : undefined;
       /* =====================================================
          CREATE TRANSACTION
 
@@ -691,11 +701,7 @@ export const sendMoney =
               status:
                 "COMPLETED",
 
-              reference:
-                toTrimmedString(
-                  reference
-                ) ||
-                "Send Money",
+              referenceEncrypted,
 
               riskScore:
                 "LOW",
@@ -745,7 +751,7 @@ export const sendMoney =
             transaction.currency,
 
           reference:
-            transaction.reference,
+            referenceValue || undefined,
 
           createdAt:
             transaction.createdAt,

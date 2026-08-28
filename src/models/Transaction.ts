@@ -4,7 +4,7 @@ import mongoose, {
 } from "mongoose";
 
 /* =========================================================
-   ENCRYPTED TRANSACTION AMOUNT
+   ENCRYPTED DATA TYPE
 ========================================================= */
 
 export interface IEncryptedTransactionData {
@@ -17,8 +17,7 @@ export interface IEncryptedTransactionData {
    TRANSACTION INTERFACE
 ========================================================= */
 
-export interface ITransaction
-  extends Document {
+export interface ITransaction extends Document {
   senderId: mongoose.Types.ObjectId;
 
   receiverId: mongoose.Types.ObjectId;
@@ -31,8 +30,15 @@ export interface ITransaction
    * -> 50000 poisha
    * -> AES-256-GCM encrypted
    */
-  amountEncrypted:
-    IEncryptedTransactionData;
+  amountEncrypted: IEncryptedTransactionData;
+
+  /*
+   * Reference / note is stored ONLY in encrypted form.
+   *
+   * Optional because a transaction may not
+   * contain a reference.
+   */
+  referenceEncrypted?: IEncryptedTransactionData;
 
   currency: string;
 
@@ -46,8 +52,6 @@ export interface ITransaction
     | "COMPLETED"
     | "FAILED";
 
-  reference?: string;
-
   riskScore:
     | "LOW"
     | "MEDIUM"
@@ -60,6 +64,10 @@ export interface ITransaction
 
 /* =========================================================
    ENCRYPTED DATA SCHEMA
+
+   Reused for:
+   - amountEncrypted
+   - referenceEncrypted
 ========================================================= */
 
 const encryptedDataSchema =
@@ -93,58 +101,59 @@ const transactionSchema =
   new Schema<ITransaction>(
     {
       senderId: {
-        type:
-          Schema.Types.ObjectId,
+        type: Schema.Types.ObjectId,
 
-        ref:
-          "User",
+        ref: "User",
 
-        required:
-          true,
+        required: true,
       },
 
       receiverId: {
-        type:
-          Schema.Types.ObjectId,
+        type: Schema.Types.ObjectId,
 
-        ref:
-          "User",
+        ref: "User",
 
-        required:
-          true,
+        required: true,
       },
 
       /* =====================================================
          SECURE AMOUNT
 
-         No plaintext `amount` field exists anymore.
+         Plaintext `amount` does NOT exist.
+         Amount is stored as encrypted minor units only.
       ====================================================== */
 
       amountEncrypted: {
-        type:
-          encryptedDataSchema,
+        type: encryptedDataSchema,
 
-        required:
-          true,
+        required: true,
+      },
+
+      /* =====================================================
+         SECURE REFERENCE
+
+         Plaintext `reference` does NOT exist.
+         Reference is optional and encrypted when provided.
+      ====================================================== */
+
+      referenceEncrypted: {
+        type: encryptedDataSchema,
+
+        required: false,
       },
 
       currency: {
-        type:
-          String,
+        type: String,
 
-        default:
-          "BDT",
+        default: "BDT",
 
-        trim:
-          true,
+        trim: true,
 
-        uppercase:
-          true,
+        uppercase: true,
       },
 
       type: {
-        type:
-          String,
+        type: String,
 
         enum: [
           "TRANSFER",
@@ -152,13 +161,11 @@ const transactionSchema =
           "WITHDRAW",
         ],
 
-        required:
-          true,
+        required: true,
       },
 
       status: {
-        type:
-          String,
+        type: String,
 
         enum: [
           "PENDING",
@@ -166,21 +173,11 @@ const transactionSchema =
           "FAILED",
         ],
 
-        default:
-          "PENDING",
-      },
-
-      reference: {
-        type:
-          String,
-
-        trim:
-          true,
+        default: "PENDING",
       },
 
       riskScore: {
-        type:
-          String,
+        type: String,
 
         enum: [
           "LOW",
@@ -188,13 +185,11 @@ const transactionSchema =
           "HIGH",
         ],
 
-        default:
-          "LOW",
+        default: "LOW",
       },
     },
     {
-      timestamps:
-        true,
+      timestamps: true,
     }
   );
 
@@ -203,27 +198,18 @@ const transactionSchema =
 ========================================================= */
 
 transactionSchema.index({
-  senderId:
-    1,
-
-  createdAt:
-    -1,
+  senderId: 1,
+  createdAt: -1,
 });
 
 transactionSchema.index({
-  receiverId:
-    1,
-
-  createdAt:
-    -1,
+  receiverId: 1,
+  createdAt: -1,
 });
 
 transactionSchema.index({
-  status:
-    1,
-
-  createdAt:
-    -1,
+  status: 1,
+  createdAt: -1,
 });
 
 /* =========================================================

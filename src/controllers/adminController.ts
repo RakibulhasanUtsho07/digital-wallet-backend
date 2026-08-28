@@ -48,27 +48,27 @@ interface AdminOverviewTransaction {
   userEmail: string;
 
   type:
-    | "send"
-    | "receive"
-    | "topup"
-    | "withdraw"
-    | "payment"
-    | "refund";
+  | "send"
+  | "receive"
+  | "topup"
+  | "withdraw"
+  | "payment"
+  | "refund";
 
   amount: number;
 
   currency: string;
 
   riskLevel:
-    | "low"
-    | "medium"
-    | "high";
+  | "low"
+  | "medium"
+  | "high";
 
   status:
-    | "completed"
-    | "pending"
-    | "failed"
-    | "under_review";
+  | "completed"
+  | "pending"
+  | "failed"
+  | "under_review";
 
   timestamp?: string;
   createdAt?: string;
@@ -84,7 +84,7 @@ const safeDecrypt = (
   if (
     !value ||
     typeof value !==
-      "object"
+    "object"
   ) {
     return "";
   }
@@ -98,11 +98,11 @@ const safeDecrypt = (
 
   if (
     typeof object.encrypted !==
-      "string" ||
+    "string" ||
     typeof object.iv !==
-      "string" ||
+    "string" ||
     typeof object.authTag !==
-      "string"
+    "string"
   ) {
     return "";
   }
@@ -152,7 +152,7 @@ const getTransactionAmount = (
   if (
     !encryptedValue ||
     typeof encryptedValue !==
-      "object"
+    "object"
   ) {
     throw new Error(
       "Encrypted transaction amount is missing."
@@ -168,11 +168,11 @@ const getTransactionAmount = (
 
   if (
     typeof value.encrypted !==
-      "string" ||
+    "string" ||
     typeof value.iv !==
-      "string" ||
+    "string" ||
     typeof value.authTag !==
-      "string"
+    "string"
   ) {
     throw new Error(
       "Invalid encrypted transaction amount."
@@ -219,7 +219,7 @@ const getPopulatedUser = (
   if (
     !value ||
     typeof value !==
-      "object"
+    "object"
   ) {
     return null;
   }
@@ -230,10 +230,10 @@ const getPopulatedUser = (
       name?: unknown;
 
       emailEncrypted?:
-        unknown;
+      unknown;
 
       phoneEncrypted?:
-        unknown;
+      unknown;
 
       role?: unknown;
 
@@ -244,8 +244,8 @@ const getPopulatedUser = (
     _id:
       user._id != null
         ? String(
-            user._id
-          )
+          user._id
+        )
         : undefined,
 
     name:
@@ -286,9 +286,9 @@ const mapTransactionType = (
   type: unknown
 ): AdminOverviewTransaction["type"] => {
   switch (
-    String(
-      type || ""
-    ).toUpperCase()
+  String(
+    type || ""
+  ).toUpperCase()
   ) {
     case "DEPOSIT":
       return "topup";
@@ -312,9 +312,9 @@ const mapTransactionStatus = (
   status: unknown
 ): AdminOverviewTransaction["status"] => {
   switch (
-    String(
-      status || ""
-    ).toUpperCase()
+  String(
+    status || ""
+  ).toUpperCase()
   ) {
     case "COMPLETED":
       return "completed";
@@ -342,9 +342,9 @@ const mapRiskLevel = (
   risk: unknown
 ): AdminOverviewTransaction["riskLevel"] => {
   switch (
-    String(
-      risk || "LOW"
-    ).toUpperCase()
+  String(
+    risk || "LOW"
+  ).toUpperCase()
   ) {
     case "HIGH":
       return "high";
@@ -384,7 +384,7 @@ const getPeriodStartDate = (
     case "7d":
       startDate.setDate(
         startDate.getDate() -
-          7
+        7
       );
 
       break;
@@ -392,7 +392,7 @@ const getPeriodStartDate = (
     case "30d":
       startDate.setDate(
         startDate.getDate() -
-          30
+        30
       );
 
       break;
@@ -400,7 +400,7 @@ const getPeriodStartDate = (
     case "90d":
       startDate.setDate(
         startDate.getDate() -
-          90
+        90
       );
 
       break;
@@ -408,7 +408,7 @@ const getPeriodStartDate = (
     case "year":
       startDate.setFullYear(
         startDate.getFullYear() -
-          1
+        1
       );
 
       break;
@@ -416,7 +416,7 @@ const getPeriodStartDate = (
     default:
       startDate.setDate(
         startDate.getDate() -
-          30
+        30
       );
   }
 
@@ -482,7 +482,7 @@ export const getAdminOverview =
       const inactiveUsers =
         Math.max(
           totalUsers -
-            activeUsers,
+          activeUsers,
           0
         );
 
@@ -582,7 +582,7 @@ export const getAdminOverview =
           ) =>
             String(
               transaction.status ||
-                ""
+              ""
             ).toUpperCase() ===
             "COMPLETED"
         ).length;
@@ -594,7 +594,7 @@ export const getAdminOverview =
           ) =>
             String(
               transaction.status ||
-                ""
+              ""
             ).toUpperCase() ===
             "FAILED"
         ).length;
@@ -606,7 +606,7 @@ export const getAdminOverview =
           ) =>
             String(
               transaction.status ||
-                ""
+              ""
             ).toUpperCase() ===
             "PENDING"
         ).length;
@@ -614,16 +614,16 @@ export const getAdminOverview =
       const successRate =
         totalTransactions > 0
           ? Number(
+            (
               (
-                (
-                  successfulTransactions /
-                  totalTransactions
-                ) *
-                100
-              ).toFixed(
-                2
-              )
+                successfulTransactions /
+                totalTransactions
+              ) *
+              100
+            ).toFixed(
+              2
             )
+          )
           : 0;
 
       /* =====================================================
@@ -637,7 +637,7 @@ export const getAdminOverview =
           ) =>
             String(
               transaction.riskScore ||
-                ""
+              ""
             ).toUpperCase() ===
             "HIGH"
         ).length;
@@ -649,7 +649,7 @@ export const getAdminOverview =
           ) =>
             String(
               transaction.riskScore ||
-                ""
+              ""
             ).toUpperCase() ===
             "MEDIUM"
         ).length;
@@ -661,7 +661,7 @@ export const getAdminOverview =
           ) =>
             String(
               transaction.riskScore ||
-                ""
+              ""
             ).toUpperCase() ===
             "LOW"
         ).length;
@@ -726,16 +726,16 @@ export const getAdminOverview =
             percentage:
               typeTotal > 0
                 ? Number(
+                  (
                     (
-                      (
-                        value /
-                        typeTotal
-                      ) *
-                      100
-                    ).toFixed(
-                      1
-                    )
+                      value /
+                      typeTotal
+                    ) *
+                    100
+                  ).toFixed(
+                    1
                   )
+                )
                 : 0,
           })
         );
@@ -762,8 +762,8 @@ export const getAdminOverview =
         const createdAt =
           transaction.createdAt
             ? new Date(
-                transaction.createdAt
-              )
+              transaction.createdAt
+            )
             : now;
 
         const key =
@@ -813,7 +813,7 @@ export const getAdminOverview =
         const status =
           String(
             transaction.status ||
-              ""
+            ""
           ).toUpperCase();
 
         if (
@@ -980,10 +980,9 @@ export const getAdminOverview =
                 transaction._id.toString();
 
               const reference =
-                typeof transaction.reference ===
-                  "string"
-                  ? transaction.reference
-                  : undefined;
+                getTransactionReference(
+                  transaction
+                );
 
               return {
                 id:
@@ -1035,15 +1034,15 @@ export const getAdminOverview =
                 timestamp:
                   transaction.createdAt
                     ? new Date(
-                        transaction.createdAt
-                      ).toISOString()
+                      transaction.createdAt
+                    ).toISOString()
                     : undefined,
 
                 createdAt:
                   transaction.createdAt
                     ? new Date(
-                        transaction.createdAt
-                      ).toISOString()
+                      transaction.createdAt
+                    ).toISOString()
                     : undefined,
               };
             }
@@ -1101,14 +1100,14 @@ export const getAdminOverview =
               status:
                 String(
                   kyc.status ||
-                    "PENDING"
+                  "PENDING"
                 ).toLowerCase(),
 
               submittedAt:
                 kyc.createdAt
                   ? new Date(
-                      kyc.createdAt
-                    ).toLocaleString()
+                    kyc.createdAt
+                  ).toLocaleString()
                   : "Recently",
             };
           }
@@ -1181,7 +1180,7 @@ export const getAdminOverview =
 
         description:
           successRate >=
-          95
+            95
             ? `Transaction processing is operating normally with a ${successRate}% success rate for the selected period.`
             : `Transaction success rate is ${successRate}%. Review failed and pending transactions for operational issues.`,
       };
@@ -1271,7 +1270,7 @@ export const getAdminOverview =
         aiInsight,
       });
     } catch (
-      error: unknown
+    error: unknown
     ) {
       console.error(
         "GET ADMIN OVERVIEW ERROR:",
@@ -1376,7 +1375,7 @@ export const getAllUsers =
           safeUsers,
       });
     } catch (
-      error: unknown
+    error: unknown
     ) {
       console.error(
         "GET ALL USERS ERROR:",
@@ -1444,24 +1443,24 @@ export const getPendingKYCs =
               userId:
                 user
                   ? {
-                      _id:
-                        user._id,
+                    _id:
+                      user._id,
 
-                      name:
-                        user.name,
+                    name:
+                      user.name,
 
-                      email:
-                        user.email,
+                    email:
+                      user.email,
 
-                      phone:
-                        user.phone,
+                    phone:
+                      user.phone,
 
-                      role:
-                        user.role,
+                    role:
+                      user.role,
 
-                      kycStatus:
-                        user.kycStatus,
-                    }
+                    kycStatus:
+                      user.kycStatus,
+                  }
                   : kyc.userId,
             };
           }
@@ -1478,7 +1477,7 @@ export const getPendingKYCs =
           safeKycs,
       });
     } catch (
-      error: unknown
+    error: unknown
     ) {
       console.error(
         "GET PENDING KYC ERROR:",
@@ -1555,9 +1554,9 @@ export const reviewKYC =
 
       kyc.rejectionReason =
         status ===
-        "REJECTED"
+          "REJECTED"
           ? rejectionReason ||
-            "Documents not valid"
+          "Documents not valid"
           : "";
 
       kyc.reviewedBy =
@@ -1578,7 +1577,7 @@ export const reviewKYC =
         "verified" |
         "rejected" =
         status ===
-        "VERIFIED"
+          "VERIFIED"
           ? "verified"
           : "rejected";
 
@@ -1600,7 +1599,7 @@ export const reviewKYC =
         kyc,
       });
     } catch (
-      error: unknown
+    error: unknown
     ) {
       console.error(
         "REVIEW KYC ERROR:",
@@ -1618,3 +1617,55 @@ export const reviewKYC =
       });
     }
   };
+
+const getTransactionReference = (
+  transaction: {
+    referenceEncrypted?: unknown;
+    
+  }
+): string | undefined => {
+  const encrypted =
+    transaction.referenceEncrypted;
+
+  if (
+    encrypted &&
+    typeof encrypted ===
+    "object"
+  ) {
+    const value =
+      encrypted as {
+        encrypted?: unknown;
+        iv?: unknown;
+        authTag?: unknown;
+      };
+
+    if (
+      typeof value.encrypted ===
+      "string" &&
+      typeof value.iv ===
+      "string" &&
+      typeof value.authTag ===
+      "string"
+    ) {
+      try {
+        return decryptData({
+          encrypted:
+            value.encrypted,
+
+          iv:
+            value.iv,
+
+          authTag:
+            value.authTag,
+        });
+      } catch (error) {
+        console.error(
+          "ADMIN TRANSACTION REFERENCE DECRYPT ERROR:",
+          error
+        );
+      }
+    }
+  }
+
+ 
+};

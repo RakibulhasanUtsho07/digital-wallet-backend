@@ -224,10 +224,10 @@ function toSafeTransaction(
     status:
       transaction.status,
 
-    reference:
-      typeof transaction.reference === "string"
-        ? transaction.reference
-        : undefined,
+   reference:
+  getTransactionReference(
+    transaction
+  ),
 
     riskScore:
       transaction.riskScore,
@@ -474,3 +474,58 @@ function getPopulatedUserId(
     value
   );
 }
+const getTransactionReference = (
+  transaction: {
+    referenceEncrypted?: unknown;
+    
+  }
+): string | undefined => {
+  const encrypted =
+    transaction.referenceEncrypted;
+
+  if (
+    encrypted &&
+    typeof encrypted ===
+      "object"
+  ) {
+    const value =
+      encrypted as {
+        encrypted?: unknown;
+        iv?: unknown;
+        authTag?: unknown;
+      };
+
+    if (
+      typeof value.encrypted ===
+        "string" &&
+      typeof value.iv ===
+        "string" &&
+      typeof value.authTag ===
+        "string"
+    ) {
+      try {
+        return decryptData({
+          encrypted:
+            value.encrypted,
+
+          iv:
+            value.iv,
+
+          authTag:
+            value.authTag,
+        });
+      } catch (error) {
+        console.error(
+          "TRANSACTION REFERENCE DECRYPT ERROR:",
+          error
+        );
+      }
+    }
+  }
+
+  /*
+   * Temporary fallback.
+   * Plaintext cleanup-এর পরে remove করবো।
+   */
+  
+};
