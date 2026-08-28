@@ -137,8 +137,6 @@ const safeDecrypt = (
    Example:
    encrypted "50000" -> 50000 poisha -> BDT 500.00
 
-   Legacy plaintext amount is kept only as a temporary
-   fallback until the final cleanup migration is complete.
 ========================================================= */
 
 const getTransactionAmount = (
@@ -552,8 +550,7 @@ export const getAdminOverview =
          TRANSACTION STATS
 
          Amount is decrypted in application memory from
-         amountEncrypted. Legacy plaintext amount is used
-         only as a temporary fallback.
+         amountEncrypted.
       ====================================================== */
 
       const totalTransactions =
@@ -1389,6 +1386,191 @@ export const getAllUsers =
           error instanceof Error
             ? error.message
             : "Failed to load users.",
+      });
+    }
+  };
+
+/* =========================================================
+   GET ALL TRANSACTIONS
+   GET /api/admin/transactions
+========================================================= */
+
+export const getAllTransactions =
+  async (
+    _req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      const transactions =
+        await Transaction.find()
+          .populate(
+            "senderId",
+            "name emailEncrypted phoneEncrypted"
+          )
+          .populate(
+            "receiverId",
+            "name emailEncrypted phoneEncrypted"
+          )
+          .sort({
+            createdAt: -1,
+          })
+          .lean();
+
+      const safeTransactions =
+        transactions.map(
+          (transaction) => {
+            const sender =
+              getPopulatedUser(
+                transaction.senderId
+              );
+
+            const receiver =
+              getPopulatedUser(
+                transaction.receiverId
+              );
+
+            const rawType =
+              String(
+                transaction.type ||
+                  "TRANSFER"
+              ).toUpperCase();
+
+            const type:
+              | "TRANSFER"
+              | "DEPOSIT"
+              | "WITHDRAW" =
+              rawType === "DEPOSIT"
+                ? "DEPOSIT"
+                : rawType === "WITHDRAW"
+                  ? "WITHDRAW"
+                  : "TRANSFER";
+
+            const rawStatus =
+              String(
+                transaction.status ||
+                  "PENDING"
+              ).toUpperCase();
+
+            const status:
+              | "PENDING"
+              | "COMPLETED"
+              | "FAILED" =
+              rawStatus === "COMPLETED"
+                ? "COMPLETED"
+                : rawStatus === "FAILED"
+                  ? "FAILED"
+                  : "PENDING";
+
+            const rawRisk =
+              String(
+                transaction.riskScore ||
+                  "LOW"
+              ).toUpperCase();
+
+            const riskScore:
+              | "LOW"
+              | "MEDIUM"
+              | "HIGH" =
+              rawRisk === "HIGH"
+                ? "HIGH"
+                : rawRisk === "MEDIUM"
+                  ? "MEDIUM"
+                  : "LOW";
+
+            return {
+              _id:
+                transaction._id.toString(),
+
+              senderId:
+                sender
+                  ? {
+                      _id:
+                        sender._id || "",
+                      name:
+                        sender.name || "Unknown User",
+                      email:
+                        sender.email || "",
+                      phone:
+                        sender.phone || "",
+                    }
+                  : String(
+                      transaction.senderId || ""
+                    ),
+
+              receiverId:
+                receiver
+                  ? {
+                      _id:
+                        receiver._id || "",
+                      name:
+                        receiver.name || "Unknown User",
+                      email:
+                        receiver.email || "",
+                      phone:
+                        receiver.phone || "",
+                    }
+                  : String(
+                      transaction.receiverId || ""
+                    ),
+
+              amount:
+                getTransactionAmount(
+                  transaction
+                ),
+
+              currency:
+                typeof transaction.currency ===
+                  "string"
+                  ? transaction.currency
+                  : "BDT",
+
+              type,
+
+              status,
+
+              reference:
+                getTransactionReference(
+                  transaction
+                ),
+
+              riskScore,
+
+              createdAt:
+                transaction.createdAt
+                  ? new Date(
+                      transaction.createdAt
+                    ).toISOString()
+                  : undefined,
+
+              updatedAt:
+                transaction.updatedAt
+                  ? new Date(
+                      transaction.updatedAt
+                    ).toISOString()
+                  : undefined,
+            };
+          }
+        );
+
+      res.status(200).json({
+        success: true,
+        count:
+          safeTransactions.length,
+        transactions:
+          safeTransactions,
+      });
+    } catch (error: unknown) {
+      console.error(
+        "GET ALL TRANSACTIONS ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to load transactions.",
       });
     }
   };

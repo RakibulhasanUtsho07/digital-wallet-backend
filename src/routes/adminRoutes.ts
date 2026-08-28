@@ -3,6 +3,7 @@ import express from "express";
 import {
   getAdminOverview,
   getAllUsers,
+  getAllTransactions,
   getPendingKYCs,
   reviewKYC,
 } from "../controllers/adminController.js";
@@ -34,6 +35,18 @@ router.get(
   protect,
   adminOnly,
   getAllUsers
+);
+
+/* =========================================================
+   ALL TRANSACTIONS
+   GET /api/admin/transactions
+========================================================= */
+
+router.get(
+  "/transactions",
+  protect,
+  adminOnly,
+  getAllTransactions
 );
 
 /* =========================================================
