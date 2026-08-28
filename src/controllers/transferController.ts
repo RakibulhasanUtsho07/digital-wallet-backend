@@ -22,6 +22,7 @@ import {
 
 import {
   createLookupHash,
+  encryptData,
   normalizeEmail,
   normalizePhone,
 } from "../utils/crypto.js";
@@ -631,9 +632,43 @@ export const sendMoney =
       });
 
       /* =====================================================
+         ENCRYPT TRANSACTION AMOUNT
+
+         Store money in minor units (poisha) before encryption.
+
+         Example:
+         ৳500.00 -> 50000 -> encrypt("50000")
+      ====================================================== */
+
+      const amountInMinorUnits =
+        Math.round(
+          normalizedAmount * 100
+        );
+
+      if (
+        !Number.isSafeInteger(
+          amountInMinorUnits
+        ) ||
+        amountInMinorUnits <= 0
+      ) {
+        throw new Error(
+          "Unable to securely process transaction amount."
+        );
+      }
+
+      const amountEncrypted =
+        encryptData(
+          String(
+            amountInMinorUnits
+          )
+        );
+
+      /* =====================================================
          CREATE TRANSACTION
 
-         Password এখানে save হচ্ছে না।
+         - Password is NEVER stored.
+         - Plaintext amount is NOT stored.
+         - Only amountEncrypted is persisted.
       ====================================================== */
 
       const transactions =
@@ -645,8 +680,7 @@ export const sendMoney =
               receiverId:
                 recipientUser._id,
 
-              amount:
-                normalizedAmount,
+              amountEncrypted,
 
               currency:
                 "BDT",
