@@ -33,7 +33,6 @@ interface TransactionLike {
   _id?: unknown;
   senderId?: unknown;
   receiverId?: unknown;
-  amount?: unknown;
   amountEncrypted?: unknown;
   currency?: unknown;
   type?: unknown;
@@ -102,41 +101,33 @@ function getTransactionAmount(
       transaction.amountEncrypted
     );
 
-  if (encryptedAmount) {
-    const minorUnits =
-      Number(
-        encryptedAmount
-      );
-
-    if (
-      Number.isSafeInteger(
-        minorUnits
-      ) &&
-      minorUnits >= 0
-    ) {
-      return (
-        minorUnits /
-        100
-      );
-    }
+  if (!encryptedAmount) {
+    throw new Error(
+      "Encrypted transaction amount is missing or invalid."
+    );
   }
 
-  /*
-   * Temporary fallback for transactions created before
-   * encrypted amount cleanup.
-   */
-  const legacyAmount =
+  const minorUnits =
     Number(
-      transaction.amount
+      encryptedAmount
     );
 
-  return Number.isFinite(
-    legacyAmount
-  )
-    ? legacyAmount
-    : 0;
-}
+  if (
+    !Number.isSafeInteger(
+      minorUnits
+    ) ||
+    minorUnits < 0
+  ) {
+    throw new Error(
+      "Invalid decrypted transaction amount."
+    );
+  }
 
+  return (
+    minorUnits /
+    100
+  );
+}
 /* =========================================================
    SAFE POPULATED USER
 ========================================================= */

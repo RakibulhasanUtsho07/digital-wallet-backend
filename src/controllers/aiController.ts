@@ -23,8 +23,6 @@ interface EncryptedAmount {
 }
 
 interface TransactionAmountData {
-  amount?: number;
-
   amountEncrypted?: {
     encrypted?: unknown;
     iv?: unknown;
@@ -57,79 +55,57 @@ const getTransactionAmount = (
   const encrypted =
     transaction.amountEncrypted;
 
-  /* =====================================================
-     NEW ENCRYPTED AMOUNT
-  ====================================================== */
-
-  if (encrypted) {
-    const {
-      encrypted: encryptedValue,
-      iv,
-      authTag,
-    } = encrypted;
-
-    if (
-      typeof encryptedValue !==
-        "string" ||
-      typeof iv !== "string" ||
-      typeof authTag !== "string"
-    ) {
-      throw new Error(
-        "Invalid encrypted transaction amount."
-      );
-    }
-
-    const decrypted =
-      decryptData({
-        encrypted:
-          encryptedValue,
-
-        iv,
-
-        authTag,
-      } as EncryptedAmount);
-
-    const minorUnits =
-      Number(
-        decrypted
-      );
-
-    if (
-      !Number.isSafeInteger(
-        minorUnits
-      ) ||
-      minorUnits < 0
-    ) {
-      throw new Error(
-        "Invalid decrypted transaction amount."
-      );
-    }
-
-    return (
-      minorUnits /
-      100
+  if (!encrypted) {
+    throw new Error(
+      "Encrypted transaction amount is missing."
     );
   }
 
-  /* =====================================================
-     LEGACY PLAINTEXT FALLBACK
-
-     Plaintext cleanup-এর পরে এই fallback
-     remove করা যাবে।
-  ====================================================== */
+  const {
+    encrypted: encryptedValue,
+    iv,
+    authTag,
+  } = encrypted;
 
   if (
-    typeof transaction.amount ===
-      "number" &&
-    Number.isFinite(
-      transaction.amount
-    )
+    typeof encryptedValue !== "string" ||
+    typeof iv !== "string" ||
+    typeof authTag !== "string"
   ) {
-    return transaction.amount;
+    throw new Error(
+      "Invalid encrypted transaction amount."
+    );
   }
 
-  throw new Error(
-    "Transaction amount is unavailable."
+  const decrypted =
+    decryptData({
+      encrypted:
+        encryptedValue,
+
+      iv,
+
+      authTag,
+    } as EncryptedAmount);
+
+  const minorUnits =
+    Number(
+      decrypted
+    );
+
+  if (
+    !Number.isSafeInteger(
+      minorUnits
+    ) ||
+    minorUnits < 0
+  ) {
+    throw new Error(
+      "Invalid decrypted transaction amount."
+    );
+  }
+
+  return (
+    minorUnits /
+    100
   );
 };
 

@@ -4,7 +4,7 @@ import mongoose, {
 } from "mongoose";
 
 /* =========================================================
-   ENCRYPTED AMOUNT TYPE
+   ENCRYPTED TRANSACTION AMOUNT
 ========================================================= */
 
 export interface IEncryptedTransactionData {
@@ -24,15 +24,15 @@ export interface ITransaction
   receiverId: mongoose.Types.ObjectId;
 
   /*
-   * Legacy plaintext field.
-   * Migration/cleanup complete হওয়ার আগ পর্যন্ত optional.
+   * Amount is stored ONLY as encrypted minor units.
+   *
+   * Example:
+   * BDT 500.00
+   * -> 50000 poisha
+   * -> AES-256-GCM encrypted
    */
-  amount?: number;
-
-  /*
-   * New secure encrypted amount.
-   */
-  amountEncrypted?: IEncryptedTransactionData;
+  amountEncrypted:
+    IEncryptedTransactionData;
 
   currency: string;
 
@@ -115,27 +115,9 @@ const transactionSchema =
       },
 
       /* =====================================================
-         LEGACY PLAINTEXT AMOUNT
+         SECURE AMOUNT
 
-         IMPORTANT:
-         required must be FALSE.
-
-         New transfers no longer store this field.
-      ====================================================== */
-
-      amount: {
-        type:
-          Number,
-
-        required:
-          false,
-
-        min:
-          0,
-      },
-
-      /* =====================================================
-         ENCRYPTED AMOUNT
+         No plaintext `amount` field exists anymore.
       ====================================================== */
 
       amountEncrypted: {
@@ -143,7 +125,7 @@ const transactionSchema =
           encryptedDataSchema,
 
         required:
-          false,
+          true,
       },
 
       currency: {

@@ -144,79 +144,71 @@ const safeDecrypt = (
 const getTransactionAmount = (
   transaction: {
     amountEncrypted?: unknown;
-    amount?: unknown;
   }
 ): number => {
   const encryptedValue =
     transaction.amountEncrypted;
 
   if (
-    encryptedValue &&
-    typeof encryptedValue === "object"
+    !encryptedValue ||
+    typeof encryptedValue !==
+      "object"
   ) {
-    const value =
-      encryptedValue as {
-        encrypted?: unknown;
-        iv?: unknown;
-        authTag?: unknown;
-      };
-
-    if (
-      typeof value.encrypted === "string" &&
-      typeof value.iv === "string" &&
-      typeof value.authTag === "string"
-    ) {
-      try {
-        const decryptedMinorUnits =
-          Number(
-            decryptData({
-              encrypted:
-                value.encrypted,
-
-              iv:
-                value.iv,
-
-              authTag:
-                value.authTag,
-            })
-          );
-
-        if (
-          Number.isSafeInteger(
-            decryptedMinorUnits
-          ) &&
-          decryptedMinorUnits >= 0
-        ) {
-          return (
-            decryptedMinorUnits /
-            100
-          );
-        }
-      } catch (error) {
-        console.error(
-          "ADMIN TRANSACTION AMOUNT DECRYPT ERROR:",
-          error
-        );
-      }
-    }
+    throw new Error(
+      "Encrypted transaction amount is missing."
+    );
   }
 
-  /*
-   * Temporary legacy fallback.
-   * Remove after plaintext `amount` cleanup.
-   */
-  const legacyAmount =
+  const value =
+    encryptedValue as {
+      encrypted?: unknown;
+      iv?: unknown;
+      authTag?: unknown;
+    };
+
+  if (
+    typeof value.encrypted !==
+      "string" ||
+    typeof value.iv !==
+      "string" ||
+    typeof value.authTag !==
+      "string"
+  ) {
+    throw new Error(
+      "Invalid encrypted transaction amount."
+    );
+  }
+
+  const decryptedMinorUnits =
     Number(
-      transaction.amount
+      decryptData({
+        encrypted:
+          value.encrypted,
+
+        iv:
+          value.iv,
+
+        authTag:
+          value.authTag,
+      })
     );
 
-  return Number.isFinite(
-    legacyAmount
-  )
-    ? legacyAmount
-    : 0;
-};
+  if (
+    !Number.isSafeInteger(
+      decryptedMinorUnits
+    ) ||
+    decryptedMinorUnits < 0
+  ) {
+    throw new Error(
+      "Invalid decrypted transaction amount."
+    );
+  }
 
+  return (
+    decryptedMinorUnits /
+    100
+  );
+};
 /* =========================================================
    POPULATED USER HELPER
 ========================================================= */
