@@ -1,4 +1,6 @@
-import { Response } from "express";
+import {
+  Response,
+} from "express";
 
 import {
   AuthRequest,
@@ -32,195 +34,258 @@ const allowedDocumentTypes: DocumentType[] = [
 ];
 
 /* =========================================================
+   HELPER - USER ID
+========================================================= */
+
+const getUserId = (
+  req: AuthRequest
+): string | null => {
+  if (!req.user?._id) {
+    return null;
+  }
+
+  return req.user._id.toString();
+};
+
+/* =========================================================
    GET KYC STATUS
    GET /api/kyc/status
 ========================================================= */
 
-export const getKYCStatus = async (
-  req: AuthRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    if (!req.user?._id) {
-      res.status(401).json({
-        success: false,
-        message: "Not authorized",
+export const getKYCStatus =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      /* ===============================================
+         AUTH CHECK
+      =============================================== */
+
+      const userId =
+        getUserId(req);
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message:
+            "Not authorized",
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         GET OR CREATE KYC RECORD
+      =============================================== */
+
+      const kyc =
+        await getOrCreateKYC(
+          userId
+        );
+
+      /* ===============================================
+         GET USER KYC STATUS
+      =============================================== */
+
+      const user =
+        await User.findById(
+          userId
+        ).select(
+          "kycStatus"
+        );
+
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message:
+            "User not found",
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         RESPONSE
+      =============================================== */
+
+      res.status(200).json({
+        success: true,
+
+        kyc,
+
+        userKycStatus:
+          user.kycStatus ??
+          "not_started",
       });
-
-      return;
-    }
-
-    const kyc =
-      await getOrCreateKYC(
-        req.user._id
+    } catch (error) {
+      console.error(
+        "Get KYC status error:",
+        error
       );
 
-    const user =
-      await User.findById(
-        req.user._id
-      ).select("kycStatus");
+      res.status(500).json({
+        success: false,
 
-    res.status(200).json({
-      success: true,
-      kyc,
-      userKycStatus:
-        user?.kycStatus ??
-        "not_started",
-    });
-  } catch (error) {
-    console.error(
-      "Get KYC status error:",
-      error
-    );
-
-    res.status(500).json({
-      success: false,
-      message:
-        "Failed to fetch KYC status",
-    });
-  }
-};
+        message:
+          "Failed to fetch KYC status",
+      });
+    }
+  };
 
 /* =========================================================
-   START / SAVE KYC
+   START KYC
    POST /api/kyc/start
+
+   IMPORTANT:
+   This endpoint does NOT require:
+   - documentType
+   - documentNumber
+   - images
+
+   It only creates / reads the user's KYC record.
 ========================================================= */
 
-export const startKYC = async (
-  req: AuthRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    if (!req.user?._id) {
-      res.status(401).json({
-        success: false,
-        message: "Not authorized",
-      });
+export const startKYC =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      /* ===============================================
+         AUTH CHECK
+      =============================================== */
 
-      return;
-    }
+      const userId =
+        getUserId(req);
 
-    const {
-      documentType,
-      documentNumber,
-    } =
-      req.body as {
-        documentType?: DocumentType;
-        documentNumber?: string;
-      };
+      if (!userId) {
+        res.status(401).json({
+          success: false,
 
-    /* =====================================================
-       DOCUMENT TYPE
-    ====================================================== */
+          message:
+            "Not authorized",
+        });
 
-    if (
-      !documentType ||
-      !allowedDocumentTypes.includes(
-        documentType
-      )
-    ) {
-      res.status(400).json({
-        success: false,
+        return;
+      }
+
+      /* ===============================================
+         USER CHECK
+      =============================================== */
+
+      const user =
+        await User.findById(
+          userId
+        ).select(
+          "kycStatus"
+        );
+
+      if (!user) {
+        res.status(404).json({
+          success: false,
+
+          message:
+            "User not found",
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         GET OR CREATE KYC
+      =============================================== */
+
+      const kyc =
+        await getOrCreateKYC(
+          userId
+        );
+
+      /* ===============================================
+         VERIFIED
+      =============================================== */
+
+      if (
+        kyc.status ===
+        "verified"
+      ) {
+        res.status(200).json({
+          success: true,
+
+          message:
+            "Your identity is already verified.",
+
+          kyc,
+
+          userKycStatus:
+            user.kycStatus,
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         ALREADY UNDER REVIEW
+      =============================================== */
+
+      if (
+        kyc.status ===
+          "under_review"
+      ) {
+        res.status(200).json({
+          success: true,
+
+          message:
+            "Your KYC application is already under review.",
+
+          kyc,
+
+          userKycStatus:
+            user.kycStatus,
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         READY
+
+         No document validation here.
+         Frontend can now open step 1.
+      =============================================== */
+
+      res.status(200).json({
+        success: true,
+
         message:
-          "Invalid document type",
+          "KYC verification started successfully.",
+
+        kyc,
+
+        userKycStatus:
+          user.kycStatus ??
+          "not_started",
       });
-
-      return;
-    }
-
-    /* =====================================================
-       DOCUMENT NUMBER
-    ====================================================== */
-
-    const normalizedDocumentNumber =
-      typeof documentNumber === "string"
-        ? documentNumber.trim()
-        : "";
-
-    if (!normalizedDocumentNumber) {
-      res.status(400).json({
-        success: false,
-        message:
-          "Document number is required",
-      });
-
-      return;
-    }
-
-    /* =====================================================
-       CREATE / UPDATE KYC
-    ====================================================== */
-
-    const kyc =
-      await KYC.findOneAndUpdate(
-        {
-          userId:
-            req.user._id,
-        },
-        {
-          userId:
-            req.user._id,
-
-          documentType,
-
-          documentNumber:
-            normalizedDocumentNumber,
-
-          provider:
-            "manual",
-
-          status:
-            "pending",
-
-          rejectionReason:
-            undefined,
-        },
-        {
-          new: true,
-          upsert: true,
-          setDefaultsOnInsert:
-            true,
-        }
+    } catch (error) {
+      console.error(
+        "Start KYC error:",
+        error
       );
 
-    /* =====================================================
-       UPDATE USER KYC STATUS
-    ====================================================== */
+      res.status(500).json({
+        success: false,
 
-    await User.findByIdAndUpdate(
-      req.user._id,
-      {
-        kycStatus:
-          "pending",
-      }
-    );
-
-    res.status(200).json({
-      success: true,
-      message:
-        "KYC application started",
-      kyc,
-      userKycStatus:
-        "pending",
-    });
-  } catch (error) {
-    console.error(
-      "Start KYC error:",
-      error
-    );
-
-    res.status(500).json({
-      success: false,
-      message:
-        "Failed to start KYC verification",
-    });
-  }
-};
+        message:
+          "Failed to start KYC verification",
+      });
+    }
+  };
 
 /* =========================================================
    SUBMIT KYC
    PUT /api/kyc/submit
 
+   Content-Type:
    multipart/form-data
 
    Fields:
@@ -231,362 +296,432 @@ export const startKYC = async (
    - selfieImage
 ========================================================= */
 
-export const submitKYC = async (
-  req: AuthRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    if (!req.user?._id) {
-      res.status(401).json({
-        success: false,
-        message: "Not authorized",
-      });
+export const submitKYC =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      /* ===============================================
+         AUTH CHECK
+      =============================================== */
 
-      return;
-    }
+      const userId =
+        getUserId(req);
 
-    /* =====================================================
-       FIND KYC
-    ====================================================== */
-
-    const kyc =
-      await KYC.findOne({
-        userId:
-          req.user._id,
-      });
-
-    if (!kyc) {
-      res.status(404).json({
-        success: false,
-        message:
-          "KYC application not found",
-      });
-
-      return;
-    }
-
-    /* =====================================================
-       PREVENT INVALID RESUBMISSION
-    ====================================================== */
-
-    if (
-      kyc.status === "verified"
-    ) {
-      res.status(400).json({
-        success: false,
-        message:
-          "Your KYC is already verified.",
-      });
-
-      return;
-    }
-
-    if (
-      kyc.status === "under_review"
-    ) {
-      res.status(400).json({
-        success: false,
-        message:
-          "Your KYC is already under review.",
-      });
-
-      return;
-    }
-
-    /* =====================================================
-       BODY
-    ====================================================== */
-
-    const {
-      documentType,
-      documentNumber,
-    } =
-      req.body as {
-        documentType?: DocumentType;
-        documentNumber?: string;
-      };
-
-    /* =====================================================
-       DOCUMENT TYPE
-    ====================================================== */
-
-    if (documentType) {
-      if (
-        !allowedDocumentTypes.includes(
-          documentType
-        )
-      ) {
-        res.status(400).json({
+      if (!userId) {
+        res.status(401).json({
           success: false,
+
           message:
-            "Invalid document type",
+            "Not authorized",
         });
 
         return;
       }
 
-      kyc.documentType =
-        documentType;
-    }
+      /* ===============================================
+         USER CHECK
+      =============================================== */
 
-    /* =====================================================
-       DOCUMENT NUMBER
-    ====================================================== */
-
-    if (
-      typeof documentNumber ===
-        "string" &&
-      documentNumber.trim()
-    ) {
-      kyc.documentNumber =
-        documentNumber.trim();
-    }
-
-    /* =====================================================
-       VALIDATE DOCUMENT INFORMATION
-    ====================================================== */
-
-    if (
-      !kyc.documentType ||
-      !kyc.documentNumber
-    ) {
-      res.status(400).json({
-        success: false,
-        message:
-          "Complete identity information first",
-      });
-
-      return;
-    }
-
-    /* =====================================================
-       FILES
-    ====================================================== */
-
-    const files =
-      req.files as
-        | {
-            [
-              fieldname: string
-            ]: Express.Multer.File[];
-          }
-        | undefined;
-
-    const frontImage =
-      files?.frontImage?.[0];
-
-    const backImage =
-      files?.backImage?.[0];
-
-    const selfieImage =
-      files?.selfieImage?.[0];
-
-    /* =====================================================
-       REQUIRED FRONT
-    ====================================================== */
-
-    if (!frontImage) {
-      res.status(400).json({
-        success: false,
-        message:
-          "Front document image is required",
-      });
-
-      return;
-    }
-
-    /* =====================================================
-       REQUIRED BACK FOR NID
-    ====================================================== */
-
-    if (
-      kyc.documentType === "nid" &&
-      !backImage
-    ) {
-      res.status(400).json({
-        success: false,
-        message:
-          "Back document image is required for NID",
-      });
-
-      return;
-    }
-
-    /* =====================================================
-       REQUIRED SELFIE
-    ====================================================== */
-
-    if (!selfieImage) {
-      res.status(400).json({
-        success: false,
-        message:
-          "Selfie image is required",
-      });
-
-      return;
-    }
-
-    /* =====================================================
-       CLOUDINARY UPLOAD
-    ====================================================== */
-
-    console.log(
-      "KYC: uploading front image..."
-    );
-
-    const frontUpload =
-      await uploadKYCImage(
-        frontImage.buffer,
-        req.user._id,
-        "front"
-      );
-
-    console.log(
-      "KYC: front uploaded:",
-      frontUpload.public_id
-    );
-
-    console.log(
-      "KYC: uploading selfie..."
-    );
-
-    const selfieUpload =
-      await uploadKYCImage(
-        selfieImage.buffer,
-        req.user._id,
-        "selfie"
-      );
-
-    console.log(
-      "KYC: selfie uploaded:",
-      selfieUpload.public_id
-    );
-
-    let backUpload:
-      | Awaited<
-          ReturnType<typeof uploadKYCImage>
-        >
-      | null = null;
-
-    if (backImage) {
-      console.log(
-        "KYC: uploading back image..."
-      );
-
-      backUpload =
-        await uploadKYCImage(
-          backImage.buffer,
-          req.user._id,
-          "back"
+      const user =
+        await User.findById(
+          userId
+        ).select(
+          "kycStatus"
         );
 
-      console.log(
-        "KYC: back uploaded:",
-        backUpload.public_id
-      );
-    }
+      if (!user) {
+        res.status(404).json({
+          success: false,
 
-    /* =====================================================
-       SAVE CLOUDINARY PUBLIC IDS
-    ====================================================== */
+          message:
+            "User not found",
+        });
 
-    kyc.frontImagePublicId =
-      frontUpload.public_id;
-
-    kyc.selfieImagePublicId =
-      selfieUpload.public_id;
-
-    if (backUpload) {
-      kyc.backImagePublicId =
-        backUpload.public_id;
-    }
-
-    /*
-     * We intentionally do NOT save Cloudinary secure_url
-     * into the KYC document for private assets.
-     */
-
-    kyc.frontImageUrl =
-      undefined;
-
-    kyc.backImageUrl =
-      undefined;
-
-    kyc.selfieImageUrl =
-      undefined;
-
-    /* =====================================================
-       UPDATE STATUS
-    ====================================================== */
-
-    kyc.status =
-      "under_review";
-
-    kyc.submittedAt =
-      new Date();
-
-    kyc.provider =
-      "manual";
-
-    kyc.rejectionReason =
-      undefined;
-
-    await kyc.save();
-
-    /* =====================================================
-       UPDATE USER STATUS
-    ====================================================== */
-
-    await User.findByIdAndUpdate(
-      req.user._id,
-      {
-        kycStatus:
-          "pending",
+        return;
       }
-    );
 
-    /* =====================================================
-       RESPONSE
-    ====================================================== */
+      /* ===============================================
+         GET / CREATE KYC
 
-    res.status(200).json({
-      success: true,
+         Safer than requiring /start to have run first.
+      =============================================== */
 
-      message:
-        "KYC submitted for review",
+      const kyc =
+        await getOrCreateKYC(
+          userId
+        );
 
-      kyc: {
-        _id: kyc._id,
-        userId: kyc.userId,
-        documentType:
-          kyc.documentType,
+      /* ===============================================
+         PREVENT INVALID RESUBMISSION
+      =============================================== */
 
-        /*
-         * Do not return document number or
-         * private Cloudinary IDs unnecessarily.
-         */
+      if (
+        kyc.status ===
+        "verified"
+      ) {
+        res.status(409).json({
+          success: false,
 
-        status: kyc.status,
+          message:
+            "Your KYC is already verified.",
+        });
 
-        submittedAt:
-          kyc.submittedAt,
-      },
+        return;
+      }
 
-      userKycStatus:
-        "pending",
-    });
-  } catch (error: unknown) {
-    console.error(
-      "Submit KYC error:",
-      error
-    );
+      if (
+        kyc.status ===
+        "under_review"
+      ) {
+        res.status(409).json({
+          success: false,
 
-    res.status(500).json({
-      success: false,
-      message:
-        error instanceof Error
-          ? error.message
-          : "Failed to submit KYC",
-    });
-  }
-};
+          message:
+            "Your KYC application is already under review.",
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         BODY
+
+         multipart/form-data fields are strings.
+      =============================================== */
+
+      const rawDocumentType =
+        typeof req.body
+          ?.documentType ===
+        "string"
+          ? req.body.documentType
+              .trim()
+              .toLowerCase()
+          : "";
+
+      const normalizedDocumentNumber =
+        typeof req.body
+          ?.documentNumber ===
+        "string"
+          ? req.body.documentNumber
+              .trim()
+          : "";
+
+      /* ===============================================
+         DOCUMENT TYPE VALIDATION
+      =============================================== */
+
+      if (
+        !rawDocumentType ||
+        !allowedDocumentTypes.includes(
+          rawDocumentType as DocumentType
+        )
+      ) {
+        res.status(400).json({
+          success: false,
+
+          message:
+            "Invalid document type.",
+        });
+
+        return;
+      }
+
+      const documentType =
+        rawDocumentType as DocumentType;
+
+      /* ===============================================
+         DOCUMENT NUMBER VALIDATION
+      =============================================== */
+
+      if (
+        !normalizedDocumentNumber
+      ) {
+        res.status(400).json({
+          success: false,
+
+          message:
+            "Document number is required.",
+        });
+
+        return;
+      }
+
+      if (
+        normalizedDocumentNumber.length <
+        4
+      ) {
+        res.status(400).json({
+          success: false,
+
+          message:
+            "Please provide a valid document number.",
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         FILES
+      =============================================== */
+
+      const files =
+        req.files as
+          | {
+              [fieldname: string]:
+                Express.Multer.File[];
+            }
+          | undefined;
+
+      const frontImage =
+        files?.frontImage?.[0];
+
+      const backImage =
+        files?.backImage?.[0];
+
+      const selfieImage =
+        files?.selfieImage?.[0];
+
+      /* ===============================================
+         FRONT IMAGE REQUIRED
+      =============================================== */
+
+      if (!frontImage) {
+        res.status(400).json({
+          success: false,
+
+          message:
+            "Front document image is required.",
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         BACK IMAGE
+
+         Required for:
+         - NID
+         - Driving License
+
+         Passport can submit without back image.
+      =============================================== */
+
+      const backImageRequired =
+        documentType === "nid" ||
+        documentType ===
+          "driving_license";
+
+      if (
+        backImageRequired &&
+        !backImage
+      ) {
+        res.status(400).json({
+          success: false,
+
+          message:
+            documentType === "nid"
+              ? "Back document image is required for NID."
+              : "Back document image is required for driving license.",
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         SELFIE REQUIRED
+      =============================================== */
+
+      if (!selfieImage) {
+        res.status(400).json({
+          success: false,
+
+          message:
+            "Selfie image is required.",
+        });
+
+        return;
+      }
+
+      /* ===============================================
+         SAVE IDENTITY INFO BEFORE UPLOAD
+      =============================================== */
+
+      kyc.documentType =
+        documentType;
+
+      kyc.documentNumber =
+        normalizedDocumentNumber;
+
+      kyc.provider =
+        "manual";
+
+      /* ===============================================
+         CLOUDINARY UPLOAD
+      =============================================== */
+
+      console.log(
+        "KYC: uploading verification images..."
+      );
+
+      /*
+       * Front + selfie are always required.
+       */
+
+      const [
+        frontUpload,
+        selfieUpload,
+      ] =
+        await Promise.all([
+          uploadKYCImage(
+            frontImage.buffer,
+            userId,
+            "front"
+          ),
+
+          uploadKYCImage(
+            selfieImage.buffer,
+            userId,
+            "selfie"
+          ),
+        ]);
+
+      /* ===============================================
+         BACK UPLOAD
+      =============================================== */
+
+      let backUpload:
+        | Awaited<
+            ReturnType<
+              typeof uploadKYCImage
+            >
+          >
+        | null = null;
+
+      if (backImage) {
+        backUpload =
+          await uploadKYCImage(
+            backImage.buffer,
+            userId,
+            "back"
+          );
+      }
+
+      /* ===============================================
+         SAVE CLOUDINARY PRIVATE PUBLIC IDS
+      =============================================== */
+
+      kyc.frontImagePublicId =
+        frontUpload.public_id;
+
+      kyc.selfieImagePublicId =
+        selfieUpload.public_id;
+
+      if (backUpload) {
+        kyc.backImagePublicId =
+          backUpload.public_id;
+      } else {
+        kyc.backImagePublicId =
+          undefined;
+      }
+
+      /*
+       * Private Cloudinary assets:
+       * do not store public secure_url.
+       */
+
+      kyc.frontImageUrl =
+        undefined;
+
+      kyc.backImageUrl =
+        undefined;
+
+      kyc.selfieImageUrl =
+        undefined;
+
+      /* ===============================================
+         STATUS
+      =============================================== */
+
+      kyc.status =
+        "under_review";
+
+      kyc.submittedAt =
+        new Date();
+
+      kyc.verifiedAt =
+        undefined;
+
+      kyc.rejectionReason =
+        undefined;
+
+      await kyc.save();
+
+      /* ===============================================
+         UPDATE USER KYC STATUS
+
+         User model currently uses:
+         not_started | pending | verified | rejected
+
+         So while KYC document is under_review,
+         User kycStatus remains pending.
+      =============================================== */
+
+      await User.findByIdAndUpdate(
+        userId,
+        {
+          kycStatus:
+            "pending",
+        }
+      );
+
+      /* ===============================================
+         RESPONSE
+      =============================================== */
+
+      res.status(200).json({
+        success: true,
+
+        message:
+          "KYC submitted successfully and is now under review.",
+
+        kyc: {
+          _id:
+            kyc._id,
+
+          userId:
+            kyc.userId,
+
+          documentType:
+            kyc.documentType,
+
+          status:
+            kyc.status,
+
+          provider:
+            kyc.provider,
+
+          submittedAt:
+            kyc.submittedAt,
+        },
+
+        userKycStatus:
+          "pending",
+      });
+    } catch (error: unknown) {
+      console.error(
+        "Submit KYC error:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to submit KYC",
+      });
+    }
+  };

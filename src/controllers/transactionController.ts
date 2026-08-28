@@ -2,52 +2,197 @@ import { Response } from "express";
 import { AuthRequest } from "../middlewares/authMiddleware.js";
 import { Transaction } from "../models/Transaction.js";
 
-// @desc    Get logged in user's transactions
-// @route   GET /api/transactions
-// @access  Private
-export const getMyTransactions = async (req: AuthRequest, res: Response): Promise<void> => {
+/* =========================================================
+   GET MY TRANSACTIONS
+   GET /api/transactions
+========================================================= */
+
+export const getMyTransactions = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
   try {
-    const userId = req.user?._id;
+    if (!req.user?._id) {
+      res.status(401).json({
+        success: false,
+        message: "Not authorized",
+      });
 
-    // Fetch transactions where the user is either the sender or receiver
-    const transactions = await Transaction.find({
-      $or: [{ senderId: userId }, { receiverId: userId }],
-    }).sort({ createdAt: -1 });
+      return;
+    }
 
-    res.status(200).json({ success: true, count: transactions.length, transactions });
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    const userId =
+      req.user._id;
+
+    const transactions =
+      await Transaction.find({
+        $or: [
+          {
+            senderId: userId,
+          },
+          {
+            receiverId: userId,
+          },
+        ],
+      })
+        .populate(
+          "senderId",
+          "name email"
+        )
+        .populate(
+          "receiverId",
+          "name email"
+        )
+        .sort({
+          createdAt: -1,
+        });
+
+    res.status(200).json({
+      success: true,
+      count: transactions.length,
+      transactions,
+    });
+  } catch (error: unknown) {
+    console.error(
+      "Get transactions error:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch transactions.",
+    });
   }
 };
 
-// @desc    Get transaction details by ID
-// @route   GET /api/transactions/:id
-// @access  Private
-export const getTransactionById = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const userId = req.user?._id;
+/* =========================================================
+   GET TRANSACTION BY ID
+   GET /api/transactions/:id
+========================================================= */
 
-    const transaction = await Transaction.findById(id)
-      .populate("senderId", "name email")
-      .populate("receiverId", "name email");
+export const getTransactionById = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    if (!req.user?._id) {
+      res.status(401).json({
+        success: false,
+        message: "Not authorized",
+      });
+
+      return;
+    }
+
+    const { id } = req.params;
+
+    const userId =
+      req.user._id.toString();
+
+    const transaction =
+      await Transaction.findById(id)
+        .populate(
+          "senderId",
+          "name email"
+        )
+        .populate(
+          "receiverId",
+          "name email"
+        );
 
     if (!transaction) {
-      res.status(404).json({ message: "Transaction not found" });
+      res.status(404).json({
+        success: false,
+        message:
+          "Transaction not found",
+      });
+
       return;
     }
 
-    // Ensure the user is authorized to view this transaction
-    const isSender = transaction.senderId._id.toString() === userId?.toString();
-    const isReceiver = transaction.receiverId._id.toString() === userId?.toString();
+    /* =====================================================
+       AUTHORIZATION
+    ====================================================== */
 
-    if (!isSender && !isReceiver) {
-      res.status(403).json({ message: "Not authorized to view this transaction" });
+    const senderId =
+      getPopulatedUserId(
+        transaction.senderId
+      );
+
+    const receiverId =
+      getPopulatedUserId(
+        transaction.receiverId
+      );
+
+    const isSender =
+      senderId === userId;
+
+    const isReceiver =
+      receiverId === userId;
+
+    if (
+      !isSender &&
+      !isReceiver
+    ) {
+      res.status(403).json({
+        success: false,
+        message:
+          "Not authorized to view this transaction",
+      });
+
       return;
     }
 
-    res.status(200).json({ success: true, transaction });
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    res.status(200).json({
+      success: true,
+      transaction,
+    });
+  } catch (error: unknown) {
+    console.error(
+      "Get transaction details error:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch transaction.",
+    });
   }
 };
+
+/* =========================================================
+   HELPER
+========================================================= */
+
+function getPopulatedUserId(
+  value: unknown
+): string {
+  if (!value) {
+    return "";
+  }
+
+  if (
+    typeof value === "string"
+  ) {
+    return value;
+  }
+
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "_id" in value
+  ) {
+    return String(
+      (value as { _id: unknown })
+        ._id
+    );
+  }
+
+  return String(value);
+}

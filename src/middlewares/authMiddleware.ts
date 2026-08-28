@@ -1,61 +1,191 @@
-import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
-import { User } from "../models/User.js";
+import {
+  Request,
+  Response,
+  NextFunction,
+} from "express";
 
-// কাস্টম রিকোয়েস্ট ইন্টারফেস তৈরি
-export interface AuthRequest extends Request {
+import jwt from "jsonwebtoken";
+
+import {
+  User,
+} from "../models/User.js";
+
+/* =========================================================
+   AUTH REQUEST
+========================================================= */
+
+export interface AuthRequest
+  extends Request {
   user?: {
     _id: string;
-    role: string;
+    role:
+      | "user"
+      | "admin";
   };
 }
 
+/* =========================================================
+   JWT PAYLOAD
+========================================================= */
+
 interface DecodedToken {
   id: string;
-  role: "CUSTOMER" | "ADMIN";
+
+  role:
+    | "user"
+    | "admin";
+
+  iat?: number;
+  exp?: number;
 }
 
-// Request-এর বদলে AuthRequest ব্যবহার করুন
-export const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  // Accept either an Authorization: Bearer header (useful for non-browser
-  // clients — Postman, mobile apps, etc.) OR the HttpOnly `access_token`
-  // cookie that the backend actually sets on login/register. The web app
-  // only ever has the cookie: it's HttpOnly on purpose, so frontend JS
-  // can never read it to build a Bearer header itself. Without this
-  // `req.cookies` fallback, every request from the web app fell straight
-  // into the "no token provided" 401 below — even immediately after a
-  // successful login — which is why login looked like it "wasn't working"
-  // with no visible error.
-  let token: string | undefined;
+/* =========================================================
+   PROTECT
+========================================================= */
 
-  if (req.headers.authorization?.startsWith("Bearer")) {
-    token = req.headers.authorization.split(" ")[1];
-  } else if (req.cookies?.access_token) {
-    token = req.cookies.access_token;
-  }
+export const protect =
+  async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      let token:
+        | string
+        | undefined;
 
-  if (!token) {
-    res.status(401).json({ message: "Not authorized, no token provided" });
-    return;
-  }
+      /* =====================================================
+         1. BEARER TOKEN
+      ====================================================== */
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as DecodedToken;
+      const authorization =
+        req.headers.authorization;
 
-    const foundUser = await User.findById(decoded.id).select("-password");
-    if (!foundUser) {
-      res.status(401).json({ message: "User not found" });
-      return;
+      if (
+        authorization &&
+        authorization.startsWith(
+          "Bearer "
+        )
+      ) {
+        token =
+          authorization
+            .split(" ")[1]
+            ?.trim();
+      }
+
+      /* =====================================================
+         2. HTTPONLY COOKIE
+      ====================================================== */
+
+      if (
+        !token &&
+        req.cookies?.access_token
+      ) {
+        token =
+          req.cookies.access_token;
+      }
+
+      /* =====================================================
+         NO TOKEN
+      ====================================================== */
+
+      if (!token) {
+        res.status(401).json({
+          success: false,
+          message:
+            "Not authorized, no token provided",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         JWT SECRET
+      ====================================================== */
+
+      const jwtSecret =
+        process.env.JWT_SECRET;
+
+      if (!jwtSecret) {
+        console.error(
+          "JWT_SECRET is missing"
+        );
+
+        res.status(500).json({
+          success: false,
+          message:
+            "Authentication service is not configured.",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         VERIFY JWT
+      ====================================================== */
+
+      const decoded =
+        jwt.verify(
+          token,
+          jwtSecret
+        ) as DecodedToken;
+
+      if (!decoded?.id) {
+        res.status(401).json({
+          success: false,
+          message:
+            "Not authorized, invalid token",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         FIND USER
+      ====================================================== */
+
+      const foundUser =
+        await User.findById(
+          decoded.id
+        ).select(
+          "-password"
+        );
+
+      if (!foundUser) {
+        res.status(401).json({
+          success: false,
+          message:
+            "Not authorized, user not found",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         ATTACH USER
+      ====================================================== */
+
+      req.user = {
+        _id:
+          foundUser._id.toString(),
+
+        role:
+          foundUser.role,
+      };
+
+      next();
+    } catch (error) {
+      console.error(
+        "AUTH MIDDLEWARE ERROR:",
+        error instanceof Error
+          ? error.message
+          : error
+      );
+
+      res.status(401).json({
+        success: false,
+        message:
+          "Not authorized, token failed",
+      });
     }
-
-    // এখন আর এরর দেবে না
-    req.user = {
-      _id: foundUser._id.toString(),
-      role: foundUser.role,
-    };
-
-    next();
-  } catch (error) {
-    res.status(401).json({ message: "Not authorized, token failed" });
-  }
-};
+  };

@@ -3,6 +3,9 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 
+// Database
+import connectDB from "./config/db.js";
+
 // Routes
 import authRoutes from "./routes/authRoutes.js";
 import transactionRoutes from "./routes/transactionRoutes.js";
@@ -27,13 +30,39 @@ import {
 const app = express();
 
 /* =========================================================
+   TRUST PROXY
+========================================================= */
+
+app.set("trust proxy", 1);
+
+/* =========================================================
    CORS
 ========================================================= */
 
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://digital-payment-system-web.vercel.app",
+];
+
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: allowedOrigins,
+
     credentials: true,
+
+    methods: [
+      "GET",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE",
+      "OPTIONS",
+    ],
+
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+    ],
   })
 );
 
@@ -41,39 +70,130 @@ app.use(
    BODY PARSERS
 ========================================================= */
 
-app.use(express.json());
+app.use(
+  express.json({
+    limit: "2mb",
+  })
+);
 
 app.use(
   express.urlencoded({
     extended: true,
+    limit: "2mb",
   })
 );
 
 /* =========================================================
-   COOKIE
+   COOKIE PARSER
 ========================================================= */
 
 app.use(cookieParser());
 
 /* =========================================================
+   REQUEST LOGGER
+========================================================= */
+
+app.use(
+  (req, _res, next) => {
+    console.log(
+      `${req.method} ${req.originalUrl}`
+    );
+
+    next();
+  }
+);
+
+/* =========================================================
+   DATABASE CONNECTION
+========================================================= */
+
+app.use(
+  async (_req, res, next) => {
+    try {
+      await connectDB();
+
+      next();
+    } catch (error) {
+      console.error(
+        "DB CONNECTION ERROR:",
+        error
+      );
+
+      res.status(503).json({
+        success: false,
+        message:
+          "Database connection failed. Please try again shortly.",
+      });
+    }
+  }
+);
+
+/* =========================================================
    RATE LIMIT
 ========================================================= */
 
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
+const apiLimiter =
+  rateLimit({
+    windowMs:
+      15 * 60 * 1000,
 
-  max: 100,
+    max: 100,
 
-  message: {
-    success: false,
-    message:
-      "Too many requests from this IP, please try again after 15 minutes.",
-  },
-});
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message: {
+      success: false,
+      message:
+        "Too many requests. Please try again after 15 minutes.",
+    },
+  });
 
 app.use(
   "/api/",
   apiLimiter
+);
+
+/* =========================================================
+   ROOT
+========================================================= */
+
+app.get(
+  "/",
+  (_req, res) => {
+    res.status(200).json({
+      status: "Success",
+      message:
+        "Digital Wallet API is running",
+    });
+  }
+);
+
+app.get(
+  "/api",
+  (_req, res) => {
+    res.status(200).json({
+      success: true,
+      message:
+        "Digital Wallet API is running",
+    });
+  }
+);
+
+app.get(
+  "/api/health",
+  (_req, res) => {
+    res.status(200).json({
+      success: true,
+      message:
+        "Digital Wallet API is healthy",
+      timestamp:
+        new Date().toISOString(),
+    });
+  }
 );
 
 /* =========================================================
@@ -146,25 +266,14 @@ app.use(
 );
 
 /* =========================================================
-   HEALTH CHECK
-========================================================= */
-
-app.get(
-  "/",
-  (_req, res) => {
-    res.status(200).json({
-      status: "Success",
-      message:
-        "Digital Wallet API is running",
-    });
-  }
-);
-
-/* =========================================================
-   ERROR HANDLING
+   404
 ========================================================= */
 
 app.use(notFound);
+
+/* =========================================================
+   ERROR HANDLER
+========================================================= */
 
 app.use(errorHandler);
 

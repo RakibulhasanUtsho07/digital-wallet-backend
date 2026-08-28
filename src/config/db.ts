@@ -1,20 +1,63 @@
 import mongoose from "mongoose";
 
-const connectDB = async (): Promise<void> => {
-  try {
-    const mongoURI = process.env.MONGO_URI;
+type GlobalWithMongoose = typeof globalThis & {
+  mongoose?: {
+    conn: typeof mongoose | null;
+    promise: Promise<typeof mongoose> | null;
+  };
+};
 
-    if (!mongoURI) {
-      throw new Error("MONGO_URI is not defined in .env");
-    }
+const globalWithMongoose =
+  global as GlobalWithMongoose;
 
-    const connection = await mongoose.connect(mongoURI);
+const cached =
+  globalWithMongoose.mongoose ??
+  (globalWithMongoose.mongoose = {
+    conn: null,
+    promise: null,
+  });
 
-    console.log(
-      `MongoDB Connected Successfully: ${connection.connection.host}`
+const connectDB = async () => {
+  if (cached.conn) {
+    return cached.conn;
+  }
+
+  const mongoURI =
+    process.env.MONGO_URI;
+
+  if (!mongoURI) {
+    throw new Error(
+      "MONGO_URI is not defined"
     );
+  }
+
+  if (!cached.promise) {
+    cached.promise = mongoose
+      .connect(mongoURI, {
+        bufferCommands: false,
+      })
+      .then((connection) => {
+        console.log(
+          `MongoDB Connected Successfully: ${connection.connection.host}`
+        );
+
+        return connection;
+      });
+  }
+
+  try {
+    cached.conn =
+      await cached.promise;
+
+    return cached.conn;
   } catch (error) {
-    console.error("Database connection error:", error);
+    cached.promise = null;
+
+    console.error(
+      "Database connection error:",
+      error
+    );
+
     throw error;
   }
 };
