@@ -21,7 +21,7 @@ export interface ITransaction extends Document {
   senderId: mongoose.Types.ObjectId;
 
   receiverId: mongoose.Types.ObjectId;
-
+  idempotencyKey?: string;
   /*
    * Amount is stored ONLY as encrypted minor units.
    *
@@ -43,19 +43,19 @@ export interface ITransaction extends Document {
   currency: string;
 
   type:
-    | "TRANSFER"
-    | "DEPOSIT"
-    | "WITHDRAW";
+  | "TRANSFER"
+  | "DEPOSIT"
+  | "WITHDRAW";
 
   status:
-    | "PENDING"
-    | "COMPLETED"
-    | "FAILED";
+  | "PENDING"
+  | "COMPLETED"
+  | "FAILED";
 
   riskScore:
-    | "LOW"
-    | "MEDIUM"
-    | "HIGH";
+  | "LOW"
+  | "MEDIUM"
+  | "HIGH";
 
   createdAt?: Date;
 
@@ -141,7 +141,11 @@ const transactionSchema =
 
         required: false,
       },
-
+idempotencyKey: {
+  type: String,
+  trim: true,
+  required: false,
+},
       currency: {
         type: String,
 
@@ -211,7 +215,16 @@ transactionSchema.index({
   status: 1,
   createdAt: -1,
 });
-
+transactionSchema.index(
+  {
+    senderId: 1,
+    idempotencyKey: 1,
+  },
+  {
+    unique: true,
+    sparse: true,
+  }
+);
 /* =========================================================
    MODEL
 ========================================================= */

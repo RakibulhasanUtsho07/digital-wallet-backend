@@ -22,6 +22,7 @@ import {
 
 import {
   createLookupHash,
+  decryptData,
   encryptData,
   normalizeEmail,
   normalizePhone,
@@ -30,6 +31,16 @@ import {
 import {
   verifyPassword,
 } from "../utils/password.js";
+
+/* =========================================================
+   TYPES
+========================================================= */
+
+interface EncryptedValue {
+  encrypted: string;
+  iv: string;
+  authTag: string;
+}
 
 /* =========================================================
    HELPERS
@@ -62,7 +73,178 @@ const toRawString = (
 };
 
 /* =========================================================
+   IDEMPOTENCY KEY VALIDATION
+========================================================= */
+
+/*
+ * Frontend will generate the key using:
+ *
+ * crypto.randomUUID()
+ *
+ * Example:
+ * 550e8400-e29b-41d4-a716-446655440000
+ */
+const isValidIdempotencyKey = (
+  value: string
+): boolean => {
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  return (
+    value.length <= 128 &&
+    uuidRegex.test(value)
+  );
+};
+
+/* =========================================================
+   DUPLICATE KEY ERROR
+========================================================= */
+
+const isIdempotencyDuplicateError = (
+  error: unknown
+): boolean => {
+  if (
+    !error ||
+    typeof error !== "object"
+  ) {
+    return false;
+  }
+
+  const mongoError =
+    error as {
+      code?: unknown;
+
+      message?: unknown;
+
+      keyPattern?: {
+        idempotencyKey?: unknown;
+      };
+    };
+
+  if (
+    mongoError.code !== 11000
+  ) {
+    return false;
+  }
+
+  if (
+    mongoError.keyPattern
+      ?.idempotencyKey
+  ) {
+    return true;
+  }
+
+  return (
+    typeof mongoError.message === "string" &&
+    mongoError.message.includes(
+      "idempotencyKey"
+    )
+  );
+};
+
+/* =========================================================
+   DECRYPT STORED VALUE
+========================================================= */
+
+const decryptStoredValue = (
+  value: unknown
+): string => {
+  if (
+    !value ||
+    typeof value !== "object"
+  ) {
+    throw new Error(
+      "Encrypted transaction data is missing."
+    );
+  }
+
+  const encrypted =
+    value as Partial<EncryptedValue>;
+
+  if (
+    typeof encrypted.encrypted !==
+      "string" ||
+    typeof encrypted.iv !==
+      "string" ||
+    typeof encrypted.authTag !==
+      "string"
+  ) {
+    throw new Error(
+      "Invalid encrypted transaction data."
+    );
+  }
+
+  return decryptData({
+    encrypted:
+      encrypted.encrypted,
+
+    iv:
+      encrypted.iv,
+
+    authTag:
+      encrypted.authTag,
+  });
+};
+
+/* =========================================================
+   GET STORED TRANSACTION AMOUNT
+
+   Returns minor units.
+
+   Example:
+   encrypted "50000"
+   -> 50000 poisha
+========================================================= */
+
+const getStoredAmountMinorUnits = (
+  value: unknown
+): number => {
+  const decrypted =
+    decryptStoredValue(
+      value
+    );
+
+  const minorUnits =
+    Number(
+      decrypted
+    );
+
+  if (
+    !Number.isSafeInteger(
+      minorUnits
+    ) ||
+    minorUnits <= 0
+  ) {
+    throw new Error(
+      "Invalid stored transaction amount."
+    );
+  }
+
+  return minorUnits;
+};
+
+/* =========================================================
+   GET STORED REFERENCE
+========================================================= */
+
+const getStoredReference = (
+  value: unknown
+): string => {
+  /*
+   * Reference is optional.
+   */
+  if (!value) {
+    return "";
+  }
+
+  return decryptStoredValue(
+    value
+  );
+};
+
+/* =========================================================
    FIND RECIPIENT
+
    Supports:
    - Email
    - Phone
@@ -83,9 +265,13 @@ const findRecipient = async (
      EMAIL
   ======================================================== */
 
-  if (raw.includes("@")) {
+  if (
+    raw.includes("@")
+  ) {
     const normalizedEmail =
-      normalizeEmail(raw);
+      normalizeEmail(
+        raw
+      );
 
     const emailRegex =
       /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -122,7 +308,9 @@ const findRecipient = async (
   ======================================================== */
 
   const normalizedPhone =
-    normalizePhone(raw);
+    normalizePhone(
+      raw
+    );
 
   const digits =
     normalizedPhone.replace(
@@ -131,7 +319,8 @@ const findRecipient = async (
     );
 
   /*
-   * Generic international-style length check.
+   * Generic international-style
+   * phone length validation.
    */
   if (
     digits.length < 8 ||
@@ -181,6 +370,7 @@ export const validateRecipient =
       if (!senderId) {
         res.status(401).json({
           success: false,
+
           valid: false,
 
           message:
@@ -202,6 +392,7 @@ export const validateRecipient =
       if (!recipient) {
         res.status(400).json({
           success: false,
+
           valid: false,
 
           message:
@@ -223,6 +414,7 @@ export const validateRecipient =
       if (!recipientUser) {
         res.status(404).json({
           success: false,
+
           valid: false,
 
           message:
@@ -242,6 +434,7 @@ export const validateRecipient =
       ) {
         res.status(400).json({
           success: false,
+
           valid: false,
 
           message:
@@ -257,6 +450,7 @@ export const validateRecipient =
 
       res.status(200).json({
         success: true,
+
         valid: true,
 
         recipient: {
@@ -264,7 +458,9 @@ export const validateRecipient =
             recipientUser.name,
         },
       });
-    } catch (error) {
+    } catch (
+      error: unknown
+    ) {
       console.error(
         "VALIDATE RECIPIENT ERROR:",
         error
@@ -272,6 +468,7 @@ export const validateRecipient =
 
       res.status(500).json({
         success: false,
+
         valid: false,
 
         message:
@@ -296,6 +493,10 @@ export const sendMoney =
 
     try {
       session.startTransaction();
+
+      /* =====================================================
+         BODY
+      ====================================================== */
 
       const {
         recipient,
@@ -325,13 +526,56 @@ export const sendMoney =
       }
 
       /* =====================================================
-         PASSWORD REQUIRED
+         IDEMPOTENCY KEY
+
+         Every logical transfer must have
+         one unique UUID.
       ====================================================== */
 
-      /*
-       * IMPORTANT:
-       * Password trim করা হচ্ছে না।
-       */
+      const idempotencyKey =
+        req
+          .get(
+            "Idempotency-Key"
+          )
+          ?.trim() || "";
+
+      if (!idempotencyKey) {
+        await session.abortTransaction();
+
+        res.status(400).json({
+          success: false,
+
+          message:
+            "Idempotency key is required.",
+        });
+
+        return;
+      }
+
+      if (
+        !isValidIdempotencyKey(
+          idempotencyKey
+        )
+      ) {
+        await session.abortTransaction();
+
+        res.status(400).json({
+          success: false,
+
+          message:
+            "Invalid idempotency key.",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         PASSWORD REQUIRED
+
+         IMPORTANT:
+         Password is NOT trimmed.
+      ====================================================== */
+
       const enteredPassword =
         toRawString(
           password
@@ -382,8 +626,8 @@ export const sendMoney =
         senderUser.get(
           "password"
         ) as
-        | string
-        | undefined;
+          | string
+          | undefined;
 
       if (!storedPassword) {
         await session.abortTransaction();
@@ -446,8 +690,7 @@ export const sendMoney =
       /* =====================================================
          VERIFY RECIPIENT AGAIN
 
-         Frontend validation alone trusted নয়।
-         Final transfer-এর সময় backend আবার check করে।
+         Frontend validation alone is never trusted.
       ====================================================== */
 
       const recipientUser =
@@ -521,13 +764,14 @@ export const sendMoney =
        */
       const normalizedAmount =
         Math.round(
-          parsedAmount * 100
+          parsedAmount *
+            100
         ) / 100;
 
       if (
         Math.abs(
           parsedAmount -
-          normalizedAmount
+            normalizedAmount
         ) >
         Number.EPSILON
       ) {
@@ -538,6 +782,164 @@ export const sendMoney =
 
           message:
             "Amount can have maximum 2 decimal places.",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         AMOUNT -> MINOR UNITS
+
+         BDT 500.00
+         -> 50000 poisha
+      ====================================================== */
+
+      const amountInMinorUnits =
+        Math.round(
+          normalizedAmount *
+            100
+        );
+
+      if (
+        !Number.isSafeInteger(
+          amountInMinorUnits
+        ) ||
+        amountInMinorUnits <= 0
+      ) {
+        await session.abortTransaction();
+
+        res.status(400).json({
+          success: false,
+
+          message:
+            "Unable to securely process transaction amount.",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         REFERENCE
+      ====================================================== */
+
+      const referenceValue =
+        toTrimmedString(
+          reference
+        );
+
+      /* =====================================================
+         EXISTING IDEMPOTENT TRANSACTION
+
+         Same sender + same idempotency key
+         must not debit wallet again.
+      ====================================================== */
+
+      const existingTransaction =
+        await Transaction.findOne({
+          senderId,
+
+          idempotencyKey,
+        }).session(
+          session
+        );
+
+      if (
+        existingTransaction
+      ) {
+        /*
+         * Protect against accidentally reusing the same
+         * idempotency key for a DIFFERENT transfer.
+         */
+
+        const existingAmountMinorUnits =
+          getStoredAmountMinorUnits(
+            existingTransaction.amountEncrypted
+          );
+
+        const existingReference =
+          getStoredReference(
+            existingTransaction.referenceEncrypted
+          );
+
+        const sameReceiver =
+          existingTransaction.receiverId.toString() ===
+          recipientUser._id.toString();
+
+        const sameAmount =
+          existingAmountMinorUnits ===
+          amountInMinorUnits;
+
+        const sameReference =
+          existingReference ===
+          referenceValue;
+
+        if (
+          !sameReceiver ||
+          !sameAmount ||
+          !sameReference
+        ) {
+          await session.abortTransaction();
+
+          res.status(409).json({
+            success: false,
+
+            message:
+              "This idempotency key has already been used for a different transfer.",
+          });
+
+          return;
+        }
+
+        /*
+         * Get current wallet balance so frontend
+         * receives the same response structure.
+         */
+        const currentSenderWallet =
+          await Wallet.findOne({
+            userId:
+              senderId,
+          }).session(
+            session
+          );
+
+        await session.abortTransaction();
+
+        res.status(200).json({
+          success: true,
+
+          duplicate: true,
+
+          message:
+            "This transfer has already been processed.",
+
+          transaction: {
+            _id:
+              existingTransaction._id.toString(),
+
+            amount:
+              normalizedAmount,
+
+            status:
+              existingTransaction.status,
+
+            currency:
+              existingTransaction.currency,
+
+            reference:
+              referenceValue ||
+              undefined,
+
+            createdAt:
+              existingTransaction.createdAt,
+          },
+
+          wallet:
+            currentSenderWallet
+              ? {
+                  balance:
+                    currentSenderWallet.balance,
+                }
+              : undefined,
         });
 
         return;
@@ -634,27 +1036,9 @@ export const sendMoney =
       /* =====================================================
          ENCRYPT TRANSACTION AMOUNT
 
-         Store money in minor units (poisha) before encryption.
-
-         Example:
-         ৳500.00 -> 50000 -> encrypt("50000")
+         Only encrypted minor units
+         are stored in MongoDB.
       ====================================================== */
-
-      const amountInMinorUnits =
-        Math.round(
-          normalizedAmount * 100
-        );
-
-      if (
-        !Number.isSafeInteger(
-          amountInMinorUnits
-        ) ||
-        amountInMinorUnits <= 0
-      ) {
-        throw new Error(
-          "Unable to securely process transaction amount."
-        );
-      }
 
       const amountEncrypted =
         encryptData(
@@ -662,23 +1046,32 @@ export const sendMoney =
             amountInMinorUnits
           )
         );
-      const referenceValue =
-        toTrimmedString(
-          reference
-        );
+
+      /* =====================================================
+         ENCRYPT REFERENCE
+
+         Plaintext reference is NEVER stored.
+      ====================================================== */
 
       const referenceEncrypted =
         referenceValue
           ? encryptData(
-            referenceValue
-          )
+              referenceValue
+            )
           : undefined;
+
       /* =====================================================
          CREATE TRANSACTION
 
-         - Password is NEVER stored.
-         - Plaintext amount is NOT stored.
-         - Only amountEncrypted is persisted.
+         Stored:
+         ✅ amountEncrypted
+         ✅ referenceEncrypted
+         ✅ idempotencyKey
+
+         Not stored:
+         ❌ password
+         ❌ plaintext amount
+         ❌ plaintext reference
       ====================================================== */
 
       const transactions =
@@ -692,6 +1085,10 @@ export const sendMoney =
 
               amountEncrypted,
 
+              referenceEncrypted,
+
+              idempotencyKey,
+
               currency:
                 "BDT",
 
@@ -700,8 +1097,6 @@ export const sendMoney =
 
               status:
                 "COMPLETED",
-
-              referenceEncrypted,
 
               riskScore:
                 "LOW",
@@ -729,10 +1124,17 @@ export const sendMoney =
 
       /* =====================================================
          RESPONSE
+
+         Decrypted/plain values can be returned
+         to the authenticated client.
+
+         They are NOT persisted in plaintext.
       ====================================================== */
 
       res.status(200).json({
         success: true,
+
+        duplicate: false,
 
         message:
           "Transfer completed successfully.",
@@ -751,7 +1153,8 @@ export const sendMoney =
             transaction.currency,
 
           reference:
-            referenceValue || undefined,
+            referenceValue ||
+            undefined,
 
           createdAt:
             transaction.createdAt,
@@ -762,7 +1165,9 @@ export const sendMoney =
             senderWallet.balance,
         },
       });
-    } catch (error) {
+    } catch (
+      error: unknown
+    ) {
       /* =====================================================
          ROLLBACK
       ====================================================== */
@@ -771,6 +1176,150 @@ export const sendMoney =
         session.inTransaction()
       ) {
         await session.abortTransaction();
+      }
+
+      /* =====================================================
+         CONCURRENT IDEMPOTENCY RACE
+
+         Example:
+
+         Request A ─┐
+                    ├─ same key
+         Request B ─┘
+
+         Both may pass the initial findOne before either
+         transaction commits.
+
+         MongoDB unique index allows only ONE insert.
+
+         The losing transaction is rolled back, including
+         its wallet balance changes.
+      ====================================================== */
+
+      if (
+        isIdempotencyDuplicateError(
+          error
+        )
+      ) {
+        try {
+          const senderId =
+            req.user?._id;
+
+          const idempotencyKey =
+            req
+              .get(
+                "Idempotency-Key"
+              )
+              ?.trim();
+
+          if (
+            senderId &&
+            idempotencyKey
+          ) {
+            const existingTransaction =
+              await Transaction.findOne({
+                senderId,
+
+                idempotencyKey,
+              });
+
+            if (
+              existingTransaction
+            ) {
+              const amountMinorUnits =
+                getStoredAmountMinorUnits(
+                  existingTransaction.amountEncrypted
+                );
+
+              const reference =
+                getStoredReference(
+                  existingTransaction.referenceEncrypted
+                );
+
+              const senderWallet =
+                await Wallet.findOne({
+                  userId:
+                    senderId,
+                });
+
+              res.status(200).json({
+                success: true,
+
+                duplicate: true,
+
+                message:
+                  "This transfer has already been processed.",
+
+                transaction: {
+                  _id:
+                    existingTransaction._id.toString(),
+
+                  amount:
+                    amountMinorUnits /
+                    100,
+
+                  status:
+                    existingTransaction.status,
+
+                  currency:
+                    existingTransaction.currency,
+
+                  reference:
+                    reference ||
+                    undefined,
+
+                  createdAt:
+                    existingTransaction.createdAt,
+                },
+
+                wallet:
+                  senderWallet
+                    ? {
+                        balance:
+                          senderWallet.balance,
+                      }
+                    : undefined,
+              });
+
+              return;
+            }
+          }
+
+          /*
+           * Duplicate was detected but the winner
+           * may still be committing.
+           *
+           * Client can safely retry using SAME key.
+           */
+          res.status(409).json({
+            success: false,
+
+            retryable: true,
+
+            message:
+              "Duplicate transfer request detected. Retry using the same idempotency key.",
+          });
+
+          return;
+        } catch (
+          duplicateError: unknown
+        ) {
+          console.error(
+            "IDEMPOTENCY RECOVERY ERROR:",
+            duplicateError
+          );
+
+          res.status(409).json({
+            success: false,
+
+            retryable: true,
+
+            message:
+              "Duplicate transfer request detected. Retry using the same idempotency key.",
+          });
+
+          return;
+        }
       }
 
       console.error(
@@ -782,9 +1331,7 @@ export const sendMoney =
         success: false,
 
         message:
-          error instanceof Error
-            ? error.message
-            : "Transfer failed.",
+          "Transfer failed.",
       });
     } finally {
       await session.endSession();

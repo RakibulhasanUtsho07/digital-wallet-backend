@@ -41,29 +41,114 @@ app.set("trust proxy", 1);
 
 const allowedOrigins = [
   "http://localhost:3000",
+
+  /*
+   * Useful if frontend is opened using
+   * 127.0.0.1 instead of localhost.
+   */
+  "http://127.0.0.1:3000",
+
+  /*
+   * Production frontend
+   */
   "https://digital-payment-system-web.vercel.app",
 ];
 
+/* =========================================================
+   CORS OPTIONS
+========================================================= */
+
+const corsOptions: cors.CorsOptions = {
+  origin: (
+    origin,
+    callback
+  ) => {
+    /*
+     * Requests from Postman, server-to-server calls,
+     * health checks etc. may not contain Origin.
+     */
+    if (!origin) {
+      callback(
+        null,
+        true
+      );
+
+      return;
+    }
+
+    if (
+      allowedOrigins.includes(
+        origin
+      )
+    ) {
+      callback(
+        null,
+        true
+      );
+
+      return;
+    }
+
+    console.warn(
+      `CORS blocked origin: ${origin}`
+    );
+
+    callback(
+      new Error(
+        "Origin is not allowed by CORS."
+      )
+    );
+  },
+
+  /*
+   * Required because authentication
+   * uses HttpOnly cookies.
+   */
+  credentials: true,
+
+  methods: [
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+  ],
+
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+
+    /*
+     * Required for duplicate-transfer protection.
+     */
+    "Idempotency-Key",
+  ],
+
+  optionsSuccessStatus: 204,
+};
+
+/* =========================================================
+   ENABLE CORS
+========================================================= */
+
 app.use(
-  cors({
-    origin: allowedOrigins,
+  cors(
+    corsOptions
+  )
+);
 
-    credentials: true,
-
-    methods: [
-      "GET",
-      "POST",
-      "PUT",
-      "PATCH",
-      "DELETE",
-      "OPTIONS",
-    ],
-
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-    ],
-  })
+/*
+ * Explicit preflight support.
+ *
+ * Important for custom headers such as:
+ * Idempotency-Key
+ */
+app.options(
+  /{*any}/,
+  cors(
+    corsOptions
+  )
 );
 
 /* =========================================================
@@ -79,6 +164,7 @@ app.use(
 app.use(
   express.urlencoded({
     extended: true,
+
     limit: "2mb",
   })
 );
@@ -87,14 +173,20 @@ app.use(
    COOKIE PARSER
 ========================================================= */
 
-app.use(cookieParser());
+app.use(
+  cookieParser()
+);
 
 /* =========================================================
    REQUEST LOGGER
 ========================================================= */
 
 app.use(
-  (req, _res, next) => {
+  (
+    req,
+    _res,
+    next
+  ) => {
     console.log(
       `${req.method} ${req.originalUrl}`
     );
@@ -108,19 +200,28 @@ app.use(
 ========================================================= */
 
 app.use(
-  async (_req, res, next) => {
+  async (
+    _req,
+    res,
+    next
+  ) => {
     try {
       await connectDB();
 
       next();
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "DB CONNECTION ERROR:",
         error
       );
 
-      res.status(503).json({
+      res.status(
+        503
+      ).json({
         success: false,
+
         message:
           "Database connection failed. Please try again shortly.",
       });
@@ -135,9 +236,12 @@ app.use(
 const apiLimiter =
   rateLimit({
     windowMs:
-      15 * 60 * 1000,
+      15 *
+      60 *
+      1000,
 
-    max: 100,
+    max:
+      100,
 
     standardHeaders:
       true,
@@ -146,7 +250,9 @@ const apiLimiter =
       false,
 
     message: {
-      success: false,
+      success:
+        false,
+
       message:
         "Too many requests. Please try again after 15 minutes.",
     },
@@ -163,9 +269,16 @@ app.use(
 
 app.get(
   "/",
-  (_req, res) => {
-    res.status(200).json({
-      status: "Success",
+  (
+    _req,
+    res
+  ) => {
+    res.status(
+      200
+    ).json({
+      status:
+        "Success",
+
       message:
         "Digital Wallet API is running",
     });
@@ -174,9 +287,16 @@ app.get(
 
 app.get(
   "/api",
-  (_req, res) => {
-    res.status(200).json({
-      success: true,
+  (
+    _req,
+    res
+  ) => {
+    res.status(
+      200
+    ).json({
+      success:
+        true,
+
       message:
         "Digital Wallet API is running",
     });
@@ -185,11 +305,19 @@ app.get(
 
 app.get(
   "/api/health",
-  (_req, res) => {
-    res.status(200).json({
-      success: true,
+  (
+    _req,
+    res
+  ) => {
+    res.status(
+      200
+    ).json({
+      success:
+        true,
+
       message:
         "Digital Wallet API is healthy",
+
       timestamp:
         new Date().toISOString(),
     });
@@ -269,12 +397,16 @@ app.use(
    404
 ========================================================= */
 
-app.use(notFound);
+app.use(
+  notFound
+);
 
 /* =========================================================
    ERROR HANDLER
 ========================================================= */
 
-app.use(errorHandler);
+app.use(
+  errorHandler
+);
 
 export default app;
