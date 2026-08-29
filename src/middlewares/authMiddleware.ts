@@ -18,6 +18,7 @@ export interface AuthRequest
   extends Request {
   user?: {
     _id: string;
+
     role:
       | "user"
       | "admin";
@@ -34,6 +35,13 @@ interface DecodedToken {
   role:
     | "user"
     | "admin";
+
+  /*
+   * Optional for backward compatibility with
+   * JWTs created before authVersion existed.
+   */
+  authVersion?:
+    number;
 
   iat?: number;
   exp?: number;
@@ -85,12 +93,10 @@ export const protect =
           req.cookies.access_token;
       }
 
-      /* =====================================================
-         NO TOKEN
-      ====================================================== */
-
       if (!token) {
-        res.status(401).json({
+        res.status(
+          401
+        ).json({
           success: false,
           message:
             "Not authorized, no token provided",
@@ -98,10 +104,6 @@ export const protect =
 
         return;
       }
-
-      /* =====================================================
-         JWT SECRET
-      ====================================================== */
 
       const jwtSecret =
         process.env.JWT_SECRET;
@@ -111,7 +113,9 @@ export const protect =
           "JWT_SECRET is missing"
         );
 
-        res.status(500).json({
+        res.status(
+          500
+        ).json({
           success: false,
           message:
             "Authentication service is not configured.",
@@ -120,18 +124,18 @@ export const protect =
         return;
       }
 
-      /* =====================================================
-         VERIFY JWT
-      ====================================================== */
-
       const decoded =
         jwt.verify(
           token,
           jwtSecret
         ) as DecodedToken;
 
-      if (!decoded?.id) {
-        res.status(401).json({
+      if (
+        !decoded?.id
+      ) {
+        res.status(
+          401
+        ).json({
           success: false,
           message:
             "Not authorized, invalid token",
@@ -140,19 +144,17 @@ export const protect =
         return;
       }
 
-      /* =====================================================
-         FIND USER
-      ====================================================== */
-
       const foundUser =
         await User.findById(
           decoded.id
         ).select(
-          "-password"
+          "role authVersion accountStatus"
         );
 
       if (!foundUser) {
-        res.status(401).json({
+        res.status(
+          401
+        ).json({
           success: false,
           message:
             "Not authorized, user not found",
@@ -161,9 +163,48 @@ export const protect =
         return;
       }
 
-      /* =====================================================
-         ATTACH USER
-      ====================================================== */
+      if (
+        foundUser.accountStatus ===
+        "deleted"
+      ) {
+        res.status(
+          401
+        ).json({
+          success: false,
+          message:
+            "This account is no longer active.",
+        });
+
+        return;
+      }
+
+      /*
+       * JWTs created before authVersion existed
+       * behave as version 0. This avoids forcing an
+       * immediate logout during the migration.
+       */
+      const tokenVersion =
+        decoded.authVersion ??
+        0;
+
+      const userVersion =
+        foundUser.authVersion ??
+        0;
+
+      if (
+        tokenVersion !==
+        userVersion
+      ) {
+        res.status(
+          401
+        ).json({
+          success: false,
+          message:
+            "Session has been revoked. Please sign in again.",
+        });
+
+        return;
+      }
 
       req.user = {
         _id:
@@ -174,15 +215,20 @@ export const protect =
       };
 
       next();
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "AUTH MIDDLEWARE ERROR:",
-        error instanceof Error
+        error instanceof
+          Error
           ? error.message
           : error
       );
 
-      res.status(401).json({
+      res.status(
+        401
+      ).json({
         success: false,
         message:
           "Not authorized, token failed",

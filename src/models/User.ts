@@ -24,25 +24,46 @@ export interface IUser extends Document {
      SECURE EMAIL
   ======================================================== */
 
-  emailEncrypted: IEncryptedData;
-  emailLookup: string;
+  emailEncrypted:
+    IEncryptedData;
+
+  emailLookup:
+    string;
 
   /* =======================================================
      SECURE PHONE
   ======================================================== */
 
-  phoneEncrypted?: IEncryptedData;
-  phoneLookup?: string;
+  phoneEncrypted?:
+    IEncryptedData;
+
+  phoneLookup?:
+    string;
 
   /* =======================================================
      AUTH
   ======================================================== */
 
-  password: string;
+  password:
+    string;
 
   role:
     | "user"
     | "admin";
+
+  /*
+   * Incrementing this invalidates every JWT
+   * issued with an older authVersion.
+   */
+  authVersion:
+    number;
+
+  accountStatus:
+    | "active"
+    | "deleted";
+
+  deletedAt?:
+    Date;
 
   /* =======================================================
      KYC
@@ -58,21 +79,28 @@ export interface IUser extends Document {
      WALLET
   ======================================================== */
 
-  walletId?: mongoose.Types.ObjectId;
+  walletId?:
+    mongoose.Types.ObjectId;
 
   /* =======================================================
      PASSWORD RESET
   ======================================================== */
 
-  resetPasswordTokenHash?: string;
-  resetPasswordExpires?: Date;
+  resetPasswordTokenHash?:
+    string;
+
+  resetPasswordExpires?:
+    Date;
 
   /* =======================================================
      TIMESTAMPS
   ======================================================== */
 
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt:
+    Date;
+
+  updatedAt:
+    Date;
 }
 
 /* =========================================================
@@ -109,21 +137,11 @@ const encryptedDataSchema =
 const userSchema =
   new Schema<IUser>(
     {
-      /* =====================================================
-         BASIC INFO
-      ====================================================== */
-
       name: {
         type: String,
         required: true,
         trim: true,
       },
-
-      /* =====================================================
-         SECURE EMAIL
-
-         Original email is AES-256-GCM encrypted.
-      ====================================================== */
 
       emailEncrypted: {
         type:
@@ -133,52 +151,25 @@ const userSchema =
           true,
       },
 
-      /*
-       * HMAC-SHA256 lookup value.
-       *
-       * Login / Forgot Password /
-       * Duplicate check use this field.
-       */
       emailLookup: {
         type: String,
         required: true,
       },
-
-      /* =====================================================
-         SECURE PHONE
-      ====================================================== */
 
       phoneEncrypted: {
         type:
           encryptedDataSchema,
       },
 
-      /*
-       * Send Money recipient lookup
-       * uses this HMAC value.
-       */
       phoneLookup: {
         type: String,
       },
 
-      /* =====================================================
-         PASSWORD
-      ====================================================== */
-
       password: {
         type: String,
         required: true,
-
-        /*
-         * Password hash normally
-         * query result-এ আসবে না।
-         */
         select: false,
       },
-
-      /* =====================================================
-         ROLE
-      ====================================================== */
 
       role: {
         type: String,
@@ -192,9 +183,30 @@ const userSchema =
           "user",
       },
 
-      /* =====================================================
-         KYC STATUS
-      ====================================================== */
+      authVersion: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      accountStatus: {
+        type: String,
+
+        enum: [
+          "active",
+          "deleted",
+        ],
+
+        default:
+          "active",
+
+        index:
+          true,
+      },
+
+      deletedAt: {
+        type: Date,
+      },
 
       kycStatus: {
         type: String,
@@ -210,10 +222,6 @@ const userSchema =
           "not_started",
       },
 
-      /* =====================================================
-         WALLET
-      ====================================================== */
-
       walletId: {
         type:
           Schema.Types.ObjectId,
@@ -222,18 +230,10 @@ const userSchema =
           "Wallet",
       },
 
-      /* =====================================================
-         PASSWORD RESET TOKEN HASH
-      ====================================================== */
-
       resetPasswordTokenHash: {
         type: String,
         select: false,
       },
-
-      /* =====================================================
-         PASSWORD RESET EXPIRATION
-      ====================================================== */
 
       resetPasswordExpires: {
         type: Date,
@@ -241,15 +241,13 @@ const userSchema =
       },
     },
     {
-      timestamps: true,
+      timestamps:
+        true,
     }
   );
 
 /* =========================================================
-   SECURE EMAIL LOOKUP INDEX
-
-   Email is required for every user,
-   therefore sparse is not needed anymore.
+   LOOKUP INDEXES
 ========================================================= */
 
 userSchema.index(
@@ -260,13 +258,6 @@ userSchema.index(
     unique: true,
   }
 );
-
-/* =========================================================
-   SECURE PHONE LOOKUP INDEX
-
-   Phone is optional,
-   therefore sparse stays enabled.
-========================================================= */
 
 userSchema.index(
   {
@@ -279,7 +270,7 @@ userSchema.index(
 );
 
 /* =========================================================
-   USER MODEL
+   MODEL
 ========================================================= */
 
 export const User =

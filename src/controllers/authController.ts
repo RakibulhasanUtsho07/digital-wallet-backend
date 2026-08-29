@@ -107,7 +107,8 @@ const isProductionEnvironment =
 
 const generateToken = (
   id: string,
-  role: "user" | "admin"
+  role: "user" | "admin",
+  authVersion: number = 0
 ): string => {
   const secret =
     process.env.JWT_SECRET;
@@ -122,6 +123,7 @@ const generateToken = (
     {
       id,
       role,
+      authVersion,
     },
     secret,
     {
@@ -393,19 +395,6 @@ export const registerUser =
           name:
             normalizedName,
 
-          /*
-           * TEMPORARY LEGACY FIELDS
-           *
-           * User.ts cleanup করার পর
-           * এগুলো remove হবে।
-           */
-          email:
-            normalizedEmail,
-
-          phone:
-            normalizedPhone ||
-            undefined,
-
           /* Secure fields */
 
           emailEncrypted,
@@ -461,7 +450,8 @@ export const registerUser =
       const token =
         generateToken(
           user._id.toString(),
-          user.role
+          user.role,
+          user.authVersion ?? 0
         );
 
       setAuthCookie(
@@ -605,6 +595,19 @@ export const loginUser =
         return;
       }
 
+      if (
+        user.accountStatus ===
+        "deleted"
+      ) {
+        res.status(401).json({
+          success: false,
+          message:
+            "Invalid email or password.",
+        });
+
+        return;
+      }
+
       /* =====================================================
          PASSWORD
       ====================================================== */
@@ -661,7 +664,8 @@ export const loginUser =
       const token =
         generateToken(
           user._id.toString(),
-          user.role
+          user.role,
+          user.authVersion ?? 0
         );
 
       setAuthCookie(
@@ -1065,7 +1069,8 @@ export const resetPassword =
       const newToken =
         generateToken(
           user._id.toString(),
-          user.role
+          user.role,
+          user.authVersion ?? 0
         );
 
       setAuthCookie(

@@ -22,6 +22,7 @@ import auditRoutes from "./routes/auditRoutes.js";
 import receiptRoutes from "./routes/receiptRoutes.js";
 import insightsRoutes from "./routes/insightsRoutes.js";
 import cashFlowRoutes from "./routes/cashFlowRoutes.js";
+import settingsRoutes from "./routes/settingsRoutes.js";
 
 // Error middleware
 import {
@@ -308,6 +309,11 @@ app.use(
 app.use(
   "/api/users",
   userRoutes
+);
+
+app.use(
+  "/api/settings",
+  settingsRoutes
 );
 
 app.use(
