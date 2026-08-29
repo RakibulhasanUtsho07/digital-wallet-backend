@@ -21,6 +21,8 @@ import budgetRoutes from "./routes/budgetRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import receiptRoutes from "./routes/receiptRoutes.js";
 import insightsRoutes from "./routes/insightsRoutes.js";
+import cashFlowRoutes from "./routes/cashFlowRoutes.js";
+
 // Error middleware
 import {
   notFound,
@@ -41,16 +43,7 @@ app.set("trust proxy", 1);
 
 const allowedOrigins = [
   "http://localhost:3000",
-
-  /*
-   * Useful if frontend is opened using
-   * 127.0.0.1 instead of localhost.
-   */
   "http://127.0.0.1:3000",
-
-  /*
-   * Production frontend
-   */
   "https://digital-payment-system-web.vercel.app",
 ];
 
@@ -63,10 +56,6 @@ const corsOptions: cors.CorsOptions = {
     origin,
     callback
   ) => {
-    /*
-     * Requests from Postman, server-to-server calls,
-     * health checks etc. may not contain Origin.
-     */
     if (!origin) {
       callback(
         null,
@@ -100,10 +89,6 @@ const corsOptions: cors.CorsOptions = {
     );
   },
 
-  /*
-   * Required because authentication
-   * uses HttpOnly cookies.
-   */
   credentials: true,
 
   methods: [
@@ -118,10 +103,6 @@ const corsOptions: cors.CorsOptions = {
   allowedHeaders: [
     "Content-Type",
     "Authorization",
-
-    /*
-     * Required for duplicate-transfer protection.
-     */
     "Idempotency-Key",
   ],
 
@@ -138,12 +119,6 @@ app.use(
   )
 );
 
-/*
- * Explicit preflight support.
- *
- * Important for custom headers such as:
- * Idempotency-Key
- */
 app.options(
   /{*any}/,
   cors(
@@ -164,7 +139,6 @@ app.use(
 app.use(
   express.urlencoded({
     extended: true,
-
     limit: "2mb",
   })
 );
@@ -207,7 +181,6 @@ app.use(
   ) => {
     try {
       await connectDB();
-
       next();
     } catch (
       error
@@ -221,7 +194,6 @@ app.use(
         503
       ).json({
         success: false,
-
         message:
           "Database connection failed. Please try again shortly.",
       });
@@ -377,10 +349,17 @@ app.use(
   "/api/ai",
   aiRoutes
 );
+
 app.use(
   "/api/insights",
   insightsRoutes
 );
+
+app.use(
+  "/api/cash-flow",
+  cashFlowRoutes
+);
+
 app.use(
   "/api/notifications",
   notificationRoutes
