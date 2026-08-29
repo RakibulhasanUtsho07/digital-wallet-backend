@@ -23,7 +23,7 @@ import receiptRoutes from "./routes/receiptRoutes.js";
 import insightsRoutes from "./routes/insightsRoutes.js";
 import cashFlowRoutes from "./routes/cashFlowRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
-
+import platformSettingsRoutes from "./routes/platformSettingsRoutes.js";
 // Error middleware
 import {
   notFound,
@@ -342,10 +342,14 @@ app.use(
 );
 
 app.use(
+  "/api/admin/settings",
+  platformSettingsRoutes
+);
+
+app.use(
   "/api/admin",
   adminRoutes
 );
-
 app.use(
   "/api/admin/audit-logs",
   auditRoutes
