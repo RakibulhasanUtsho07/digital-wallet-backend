@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Response } from "express";
 
 import {
@@ -29,6 +30,10 @@ interface SafeTransactionUser {
   phone: string;
 }
 
+type TransactionDirection =
+  | "IN"
+  | "OUT";
+
 interface TransactionLike {
   _id?: unknown;
 
@@ -38,10 +43,6 @@ interface TransactionLike {
 
   amountEncrypted?: unknown;
 
-  /*
-   * Plaintext reference removed.
-   * Only encrypted reference is supported.
-   */
   referenceEncrypted?: unknown;
 
   currency?: unknown;
@@ -50,11 +51,32 @@ interface TransactionLike {
 
   status?: unknown;
 
-  riskScore?: unknown;
-
   createdAt?: unknown;
 
   updatedAt?: unknown;
+}
+
+/* =========================================================
+   RESPONSE CACHE POLICY
+========================================================= */
+
+function setPrivateNoStore(
+  res: Response
+): void {
+  res.setHeader(
+    "Cache-Control",
+    "private, no-store, max-age=0"
+  );
+
+  res.setHeader(
+    "Pragma",
+    "no-cache"
+  );
+
+  res.setHeader(
+    "Expires",
+    "0"
+  );
 }
 
 /* =========================================================
@@ -96,11 +118,91 @@ function safeDecrypt(
   } catch (error) {
     console.error(
       "TRANSACTION DATA DECRYPT ERROR:",
-      error
+      error instanceof Error
+        ? error.message
+        : error
     );
 
     return "";
   }
+}
+
+/* =========================================================
+   MASK PERSONAL DATA
+========================================================= */
+
+function maskEmail(
+  email: string
+): string {
+  const normalized =
+    email.trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  const atIndex =
+    normalized.indexOf("@");
+
+  if (atIndex <= 0) {
+    if (normalized.length <= 2) {
+      return "**";
+    }
+
+    return `${normalized.slice(
+      0,
+      2
+    )}${"*".repeat(
+      Math.max(
+        3,
+        normalized.length - 2
+      )
+    )}`;
+  }
+
+  const local =
+    normalized.slice(
+      0,
+      atIndex
+    );
+
+  const domain =
+    normalized.slice(
+      atIndex + 1
+    );
+
+  const visibleLocal =
+    local.slice(
+      0,
+      Math.min(
+        2,
+        local.length
+      )
+    );
+
+  return `${visibleLocal}${"*".repeat(
+    Math.max(
+      3,
+      local.length -
+      visibleLocal.length
+    )
+  )}@${domain}`;
+}
+
+function maskPhone(
+  phone: string
+): string {
+  const normalized =
+    phone.trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  const lastFour =
+    normalized.slice(-4);
+
+  return `******${lastFour}`;
 }
 
 /* =========================================================
@@ -137,10 +239,7 @@ function getTransactionAmount(
     );
   }
 
-  return (
-    minorUnits /
-    100
-  );
+  return minorUnits / 100;
 }
 
 /* =========================================================
@@ -150,9 +249,6 @@ function getTransactionAmount(
 function getTransactionReference(
   transaction: TransactionLike
 ): string | undefined {
-  /*
-   * Reference is optional.
-   */
   if (
     !transaction.referenceEncrypted
   ) {
@@ -196,11 +292,20 @@ function getSafeUser(
     };
 
   if (
-    user._id ==
-    null
+    user._id == null
   ) {
     return null;
   }
+
+  const email =
+    safeDecrypt(
+      user.emailEncrypted
+    );
+
+  const phone =
+    safeDecrypt(
+      user.phoneEncrypted
+    );
 
   return {
     _id:
@@ -213,14 +318,18 @@ function getSafeUser(
         ? user.name
         : "",
 
+    /*
+     * Transaction APIs only return masked PII.
+     * Full encrypted values never leave the backend.
+     */
     email:
-      safeDecrypt(
-        user.emailEncrypted
+      maskEmail(
+        email
       ),
 
     phone:
-      safeDecrypt(
-        user.phoneEncrypted
+      maskPhone(
+        phone
       ),
   };
 }
@@ -263,18 +372,95 @@ function getPopulatedUserId(
 }
 
 /* =========================================================
+   DIRECTION
+========================================================= */
+
+function getTransactionDirection(
+  transaction: TransactionLike,
+  currentUserId: string
+): TransactionDirection {
+  if (
+    transaction.type ===
+    "DEPOSIT"
+  ) {
+    return "IN";
+  }
+
+  if (
+    transaction.type ===
+    "WITHDRAW"
+  ) {
+    return "OUT";
+  }
+
+  const senderId =
+    getPopulatedUserId(
+      transaction.senderId
+    );
+
+  return senderId ===
+    currentUserId
+    ? "OUT"
+    : "IN";
+}
+
+/* =========================================================
+   COUNTERPARTY
+========================================================= */
+
+function getCounterparty(
+  transaction: TransactionLike,
+  currentUserId: string
+): SafeTransactionUser | string | null {
+  if (
+    transaction.type !==
+    "TRANSFER"
+  ) {
+    return null;
+  }
+
+  const direction =
+    getTransactionDirection(
+      transaction,
+      currentUserId
+    );
+
+  const value =
+    direction === "OUT"
+      ? transaction.receiverId
+      : transaction.senderId;
+
+  return (
+    getSafeUser(
+      value
+    ) ||
+    getPopulatedUserId(
+      value
+    ) ||
+    null
+  );
+}
+
+/* =========================================================
    SAFE TRANSACTION RESPONSE
 ========================================================= */
 
 function toSafeTransaction(
-  transaction: TransactionLike
+  transaction: TransactionLike,
+  currentUserId: string
 ) {
+  const direction =
+    getTransactionDirection(
+      transaction,
+      currentUserId
+    );
+
   return {
     _id:
       transaction._id != null
         ? String(
-            transaction._id
-          )
+          transaction._id
+        )
         : "",
 
     senderId:
@@ -293,6 +479,14 @@ function toSafeTransaction(
         transaction.receiverId
       ),
 
+    counterparty:
+      getCounterparty(
+        transaction,
+        currentUserId
+      ),
+
+    direction,
+
     amount:
       getTransactionAmount(
         transaction
@@ -300,7 +494,7 @@ function toSafeTransaction(
 
     currency:
       typeof transaction.currency ===
-      "string"
+        "string"
         ? transaction.currency
         : "BDT",
 
@@ -314,9 +508,6 @@ function toSafeTransaction(
       getTransactionReference(
         transaction
       ),
-
-    riskScore:
-      transaction.riskScore,
 
     createdAt:
       transaction.createdAt,
@@ -337,6 +528,10 @@ export const getMyTransactions =
     res: Response
   ): Promise<void> => {
     try {
+      setPrivateNoStore(
+        res
+      );
+
       if (!req.user?._id) {
         res.status(401).json({
           success: false,
@@ -350,6 +545,9 @@ export const getMyTransactions =
 
       const userId =
         req.user._id;
+
+      const currentUserId =
+        userId.toString();
 
       const transactions =
         await Transaction.find({
@@ -383,7 +581,8 @@ export const getMyTransactions =
             transaction
           ) =>
             toSafeTransaction(
-              transaction as TransactionLike
+              transaction as TransactionLike,
+              currentUserId
             )
         );
 
@@ -397,20 +596,24 @@ export const getMyTransactions =
           safeTransactions,
       });
     } catch (
-      error: unknown
+    error: unknown
     ) {
       console.error(
         "Get transactions error:",
-        error
+        error instanceof Error
+          ? error.message
+          : error
       );
 
+      /*
+       * Do not return decryption/internal database errors
+       * to the client.
+       */
       res.status(500).json({
         success: false,
 
         message:
-          error instanceof Error
-            ? error.message
-            : "Failed to fetch transactions.",
+          "Failed to fetch transactions.",
       });
     }
   };
@@ -418,6 +621,11 @@ export const getMyTransactions =
 /* =========================================================
    GET TRANSACTION BY ID
    GET /api/transactions/:id
+
+   Security:
+   - validates ObjectId
+   - ownership is enforced in the database query
+   - another user's transaction is not revealed
 ========================================================= */
 
 export const getTransactionById =
@@ -426,6 +634,10 @@ export const getTransactionById =
     res: Response
   ): Promise<void> => {
     try {
+      setPrivateNoStore(
+        res
+      );
+
       if (!req.user?._id) {
         res.status(401).json({
           success: false,
@@ -436,18 +648,53 @@ export const getTransactionById =
 
         return;
       }
+      const rawId = req.params.id;
 
-      const {
-        id,
-      } = req.params;
+      const id =
+        Array.isArray(rawId)
+          ? rawId[0]
+          : rawId;
+
+      if (
+        typeof id !== "string" ||
+        !id ||
+        !mongoose.Types.ObjectId.isValid(id)
+      ) {
+        res.status(400).json({
+          success: false,
+          message: "Invalid transaction ID.",
+        });
+
+        return;
+      }
 
       const userId =
-        req.user._id.toString();
+        req.user._id;
 
+      const currentUserId =
+        userId.toString();
+
+      /*
+       * Ownership is part of the lookup itself.
+       * This prevents an IDOR-style detail lookup and avoids
+       * confirming that another user's transaction exists.
+       */
       const transaction =
-        await Transaction.findById(
-          id
-        )
+        await Transaction.findOne({
+          _id:
+            id,
+
+          $or: [
+            {
+              senderId:
+                userId,
+            },
+            {
+              receiverId:
+                userId,
+            },
+          ],
+        })
           .populate(
             "senderId",
             "name emailEncrypted phoneEncrypted"
@@ -463,43 +710,7 @@ export const getTransactionById =
           success: false,
 
           message:
-            "Transaction not found",
-        });
-
-        return;
-      }
-
-      /* =====================================================
-         AUTHORIZATION
-      ====================================================== */
-
-      const senderId =
-        getPopulatedUserId(
-          transaction.senderId
-        );
-
-      const receiverId =
-        getPopulatedUserId(
-          transaction.receiverId
-        );
-
-      const isSender =
-        senderId ===
-        userId;
-
-      const isReceiver =
-        receiverId ===
-        userId;
-
-      if (
-        !isSender &&
-        !isReceiver
-      ) {
-        res.status(403).json({
-          success: false,
-
-          message:
-            "Not authorized to view this transaction",
+            "Transaction not found.",
         });
 
         return;
@@ -507,7 +718,8 @@ export const getTransactionById =
 
       const safeTransaction =
         toSafeTransaction(
-          transaction as TransactionLike
+          transaction as TransactionLike,
+          currentUserId
         );
 
       res.status(200).json({
@@ -517,20 +729,20 @@ export const getTransactionById =
           safeTransaction,
       });
     } catch (
-      error: unknown
+    error: unknown
     ) {
       console.error(
         "Get transaction details error:",
-        error
+        error instanceof Error
+          ? error.message
+          : error
       );
 
       res.status(500).json({
         success: false,
 
         message:
-          error instanceof Error
-            ? error.message
-            : "Failed to fetch transaction.",
+          "Failed to fetch transaction.",
       });
     }
   };
