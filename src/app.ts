@@ -20,7 +20,7 @@ import walletRoutes from "./routes/walletRoutes.js";
 import budgetRoutes from "./routes/budgetRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import receiptRoutes from "./routes/receiptRoutes.js";
-
+import insightsRoutes from "./routes/insightsRoutes.js";
 // Error middleware
 import {
   notFound,
@@ -377,7 +377,10 @@ app.use(
   "/api/ai",
   aiRoutes
 );
-
+app.use(
+  "/api/insights",
+  insightsRoutes
+);
 app.use(
   "/api/notifications",
   notificationRoutes
