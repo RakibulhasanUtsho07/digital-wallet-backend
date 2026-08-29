@@ -25,6 +25,10 @@ import {
   updateKYCStatus,
 } from "../services/kycService.js";
 
+import {
+  createKYCDownloadUrl,
+} from "../services/cloudinaryService.js";
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -1629,6 +1633,26 @@ const getTransactionReference = (
  
 };
 
+
+/* =========================================================
+   KYC DOCUMENT NUMBER READ
+
+   Document numbers are stored only as AES-256-GCM encrypted
+   values. Plaintext storage is not supported.
+========================================================= */
+
+const getKYCDocumentNumber = (
+  kyc: {
+    documentNumberEncrypted?: unknown;
+  }
+): string => {
+  return (
+    safeDecrypt(
+      kyc.documentNumberEncrypted
+    ) || ""
+  );
+};
+
 /* =========================================================
    MASK SENSITIVE VALUE
 ========================================================= */
@@ -1750,7 +1774,9 @@ export const getPendingKYCs =
 
               documentNumber:
                 maskSensitiveValue(
-                  kyc.documentNumber
+                  getKYCDocumentNumber(
+                    kyc
+                  )
                 ),
 
               provider:
@@ -1818,6 +1844,181 @@ export const getPendingKYCs =
           error instanceof Error
             ? error.message
             : "Failed to load pending KYCs.",
+      });
+    }
+  };
+
+/* =========================================================
+   GET PRIVATE KYC DOCUMENTS
+   GET /api/admin/kyc/:id/documents
+
+   - Admin only (enforced by adminRoutes)
+   - Never returns Cloudinary public IDs
+   - Returns temporary signed URLs only
+   - URLs expire after about 10 minutes
+========================================================= */
+
+export const getKYCDocuments =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      const id =
+        req.params.id;
+
+      if (
+        !mongoose.isValidObjectId(
+          id
+        )
+      ) {
+        res.status(400).json({
+          success:
+            false,
+
+          message:
+            "Invalid KYC record id.",
+        });
+
+        return;
+      }
+
+      const kyc =
+        await KYC.findById(
+          id
+        )
+          .select(
+            [
+              "frontImagePublicId",
+              "backImagePublicId",
+              "selfieImagePublicId",
+            ].join(
+              " "
+            )
+          )
+          .lean();
+
+      if (!kyc) {
+        res.status(404).json({
+          success:
+            false,
+
+          message:
+            "KYC record not found.",
+        });
+
+        return;
+      }
+
+      const [
+        frontResult,
+        backResult,
+        selfieResult,
+      ] =
+        await Promise.allSettled([
+          kyc.frontImagePublicId
+            ? createKYCDownloadUrl(
+                kyc.frontImagePublicId
+              )
+            : Promise.resolve(
+                undefined
+              ),
+
+          kyc.backImagePublicId
+            ? createKYCDownloadUrl(
+                kyc.backImagePublicId
+              )
+            : Promise.resolve(
+                undefined
+              ),
+
+          kyc.selfieImagePublicId
+            ? createKYCDownloadUrl(
+                kyc.selfieImagePublicId
+              )
+            : Promise.resolve(
+                undefined
+              ),
+        ]);
+
+      const getValue = (
+        result:
+          PromiseSettledResult<
+            string | undefined
+          >
+      ): string | undefined => {
+        if (
+          result.status ===
+          "fulfilled"
+        ) {
+          return result.value;
+        }
+
+        console.error(
+          "KYC SIGNED URL ERROR:",
+          result.reason
+        );
+
+        return undefined;
+      };
+
+      const frontUrl =
+        getValue(
+          frontResult
+        );
+
+      const backUrl =
+        getValue(
+          backResult
+        );
+
+      const selfieUrl =
+        getValue(
+          selfieResult
+        );
+
+      /*
+       * Sensitive signed URLs should not be cached by browsers,
+       * CDNs or shared proxies.
+       */
+      res.set({
+        "Cache-Control":
+          "private, no-store, max-age=0",
+
+        Pragma:
+          "no-cache",
+
+        Expires:
+          "0",
+      });
+
+      res.status(200).json({
+        success:
+          true,
+
+        expiresIn:
+          10 * 60,
+
+        documents: {
+          frontUrl,
+          backUrl,
+          selfieUrl,
+        },
+      });
+    } catch (
+      error: unknown
+    ) {
+      console.error(
+        "GET KYC DOCUMENTS ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success:
+          false,
+
+        message:
+          "Failed to generate temporary KYC document access.",
       });
     }
   };
@@ -2013,7 +2214,9 @@ export const reviewKYC =
 
           documentNumber:
             maskSensitiveValue(
-              updatedKYC.documentNumber
+              getKYCDocumentNumber(
+                updatedKYC
+              )
             ),
 
           provider:

@@ -23,6 +23,11 @@ import {
   uploadKYCImage,
 } from "../services/cloudinaryService.js";
 
+import {
+  createLookupHash,
+  encryptData,
+} from "../utils/crypto.js";
+
 /* =========================================================
    ALLOWED DOCUMENT TYPES
 ========================================================= */
@@ -45,6 +50,102 @@ const getUserId = (
   }
 
   return req.user._id.toString();
+};
+
+
+/* =========================================================
+   DOCUMENT NUMBER NORMALIZATION
+========================================================= */
+
+const normalizeDocumentNumber = (
+  value: string
+): string => {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "");
+};
+
+/* =========================================================
+   SAFE KYC DTO
+
+   Never expose:
+   - documentNumberEncrypted
+   - documentNumberLookup
+   - Cloudinary private public IDs
+========================================================= */
+
+const toSafeKYC = (
+  kyc: {
+    _id?: unknown;
+    userId?: unknown;
+    documentType?: unknown;
+    provider?: unknown;
+    status?: unknown;
+    rejectionReason?: unknown;
+    submittedAt?: unknown;
+    verifiedAt?: unknown;
+    createdAt?: unknown;
+    updatedAt?: unknown;
+    frontImagePublicId?: unknown;
+    backImagePublicId?: unknown;
+    selfieImagePublicId?: unknown;
+  }
+) => {
+  return {
+    _id:
+      kyc._id,
+
+    userId:
+      kyc.userId,
+
+    documentType:
+      typeof kyc.documentType === "string"
+        ? kyc.documentType
+        : undefined,
+
+    provider:
+      typeof kyc.provider === "string"
+        ? kyc.provider
+        : undefined,
+
+    status:
+      typeof kyc.status === "string"
+        ? kyc.status
+        : "not_started",
+
+    rejectionReason:
+      typeof kyc.rejectionReason === "string"
+        ? kyc.rejectionReason
+        : undefined,
+
+    submittedAt:
+      kyc.submittedAt,
+
+    verifiedAt:
+      kyc.verifiedAt,
+
+    createdAt:
+      kyc.createdAt,
+
+    updatedAt:
+      kyc.updatedAt,
+
+    hasFrontImage:
+      Boolean(
+        kyc.frontImagePublicId
+      ),
+
+    hasBackImage:
+      Boolean(
+        kyc.backImagePublicId
+      ),
+
+    hasSelfieImage:
+      Boolean(
+        kyc.selfieImagePublicId
+      ),
+  };
 };
 
 /* =========================================================
@@ -112,7 +213,10 @@ export const getKYCStatus =
       res.status(200).json({
         success: true,
 
-        kyc,
+        kyc:
+          toSafeKYC(
+            kyc
+          ),
 
         userKycStatus:
           user.kycStatus ??
@@ -215,7 +319,10 @@ export const startKYC =
           message:
             "Your identity is already verified.",
 
-          kyc,
+          kyc:
+            toSafeKYC(
+              kyc
+            ),
 
           userKycStatus:
             user.kycStatus,
@@ -238,7 +345,10 @@ export const startKYC =
           message:
             "Your KYC application is already under review.",
 
-          kyc,
+          kyc:
+            toSafeKYC(
+              kyc
+            ),
 
           userKycStatus:
             user.kycStatus,
@@ -260,7 +370,10 @@ export const startKYC =
         message:
           "KYC verification started successfully.",
 
-        kyc,
+        kyc:
+          toSafeKYC(
+            kyc
+          ),
 
         userKycStatus:
           user.kycStatus ??
@@ -404,8 +517,9 @@ export const submitKYC =
         typeof req.body
           ?.documentNumber ===
         "string"
-          ? req.body.documentNumber
-              .trim()
+          ? normalizeDocumentNumber(
+              req.body.documentNumber
+            )
           : "";
 
       /* ===============================================
@@ -551,8 +665,20 @@ export const submitKYC =
       kyc.documentType =
         documentType;
 
-      kyc.documentNumber =
-        normalizedDocumentNumber;
+      /*
+       * Store the document number only as encrypted data.
+       * The lookup HMAC supports future equality checks without
+       * putting the original identity number in MongoDB.
+       */
+      kyc.documentNumberEncrypted =
+        encryptData(
+          normalizedDocumentNumber
+        );
+
+      kyc.documentNumberLookup =
+        createLookupHash(
+          normalizedDocumentNumber
+        );
 
       kyc.provider =
         "manual";

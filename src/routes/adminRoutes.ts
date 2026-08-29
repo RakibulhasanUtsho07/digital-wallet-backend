@@ -5,6 +5,7 @@ import {
   getAllUsers,
   getAllTransactions,
   getPendingKYCs,
+  getKYCDocuments,
   reviewKYC,
 } from "../controllers/adminController.js";
 
@@ -58,6 +59,13 @@ router.get(
   protect,
   adminOnly,
   getPendingKYCs
+);
+
+router.get(
+  "/kyc/:id/documents",
+  protect,
+  adminOnly,
+  getKYCDocuments
 );
 
 router.patch(

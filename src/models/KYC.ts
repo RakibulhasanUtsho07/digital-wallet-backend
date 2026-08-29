@@ -24,6 +24,12 @@ export type DocumentType =
   | "passport"
   | "driving_license";
 
+export interface IEncryptedKYCData {
+  encrypted: string;
+  iv: string;
+  authTag: string;
+}
+
 /* =========================================================
    INTERFACE
 ========================================================= */
@@ -33,38 +39,77 @@ export interface IKYC extends Document {
 
   documentType?: DocumentType;
 
+  /*
+   * TEMPORARY LEGACY FIELD.
+   *
+   * Keep only while existing KYC records are being migrated.
+   * New submissions must NOT write plaintext here.
+   */
   documentNumber?: string;
+
+  /*
+   * AES-256-GCM encrypted identity-document number.
+   */
+  documentNumberEncrypted?: IEncryptedKYCData;
+
+  /*
+   * HMAC-SHA256 lookup value.
+   * Supports equality checks without storing plaintext.
+   */
+  documentNumberLookup?: string;
 
   /*
    * Cloudinary private asset IDs
    */
   frontImagePublicId?: string;
-
   backImagePublicId?: string;
-
   selfieImagePublicId?: string;
 
   /*
    * Keep these temporarily for backward compatibility.
    */
   frontImageUrl?: string;
-
   backImageUrl?: string;
-
   selfieImageUrl?: string;
 
   verificationSessionId?: string;
 
   provider: KYCProvider;
-
   status: KYCStatus;
-
   rejectionReason?: string;
-
   submittedAt?: Date;
-
   verifiedAt?: Date;
+
+  createdAt?: Date;
+  updatedAt?: Date;
 }
+
+/* =========================================================
+   ENCRYPTED VALUE SCHEMA
+========================================================= */
+
+const encryptedDataSchema =
+  new Schema<IEncryptedKYCData>(
+    {
+      encrypted: {
+        type: String,
+        required: true,
+      },
+
+      iv: {
+        type: String,
+        required: true,
+      },
+
+      authTag: {
+        type: String,
+        required: true,
+      },
+    },
+    {
+      _id: false,
+    }
+  );
 
 /* =========================================================
    SCHEMA
@@ -90,14 +135,34 @@ const kycSchema =
         ],
       },
 
+      /* =====================================================
+         LEGACY PLAINTEXT DOCUMENT NUMBER
+
+         Do not remove yet. Existing records need migration.
+         New writes use documentNumberEncrypted only.
+      ====================================================== */
+
       documentNumber: {
         type: String,
         trim: true,
+        required: false,
       },
 
       /* =====================================================
-         CLOUDINARY PRIVATE ASSET IDS
+         SECURE DOCUMENT NUMBER
       ====================================================== */
+
+      documentNumberEncrypted: {
+        type: encryptedDataSchema,
+        required: false,
+      },
+
+      documentNumberLookup: {
+        type: String,
+        trim: true,
+        required: false,
+        index: true,
+      },
 
       frontImagePublicId: {
         type: String,
@@ -110,10 +175,6 @@ const kycSchema =
       selfieImagePublicId: {
         type: String,
       },
-
-      /* =====================================================
-         LEGACY IMAGE URL FIELDS
-      ====================================================== */
 
       frontImageUrl: {
         type: String,
@@ -167,7 +228,6 @@ const kycSchema =
         type: Date,
       },
     },
-
     {
       timestamps: true,
     }

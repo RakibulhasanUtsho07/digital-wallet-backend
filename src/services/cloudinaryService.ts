@@ -4,6 +4,10 @@ import type {
 
 import cloudinary from "../config/cloudinary/cloudinary.js";
 
+/* =========================================================
+   KYC IMAGE UPLOAD
+========================================================= */
+
 export const uploadKYCImage = (
   buffer: Buffer,
   userId: string,
@@ -23,11 +27,17 @@ export const uploadKYCImage = (
             resource_type:
               "image",
 
-            type: "private",
+            /*
+             * KYC evidence must not be publicly accessible.
+             */
+            type:
+              "private",
 
-            overwrite: true,
+            overwrite:
+              true,
 
-            invalidate: true,
+            invalidate:
+              true,
           },
 
           (
@@ -40,7 +50,10 @@ export const uploadKYCImage = (
                 error
               );
 
-              reject(error);
+              reject(
+                error
+              );
+
               return;
             }
 
@@ -54,36 +67,93 @@ export const uploadKYCImage = (
               return;
             }
 
-            resolve(result);
+            resolve(
+              result
+            );
           }
         );
 
-      uploadStream.end(buffer);
+      uploadStream.end(
+        buffer
+      );
     }
   );
 };
 
 /* =========================================================
-   TEMPORARY SIGNED URL
+   TEMPORARY PRIVATE KYC URL
+
+   Why the Cloudinary resource lookup is needed:
+   ---------------------------------------------------------
+   KYC uploads may be JPG, PNG or WEBP. The KYC model stores
+   the private public_id, but it does not currently store the
+   Cloudinary format. private_download_url requires the exact
+   format, so we resolve it server-side before signing.
+
+   The generated URL expires after 10 minutes.
 ========================================================= */
 
-export const createKYCDownloadUrl = (
-  publicId: string,
-  format = "jpg"
-): string => {
-  const expiresAt =
-    Math.floor(
-      Date.now() / 1000
-    ) + 10 * 60;
-
-  return cloudinary.utils.private_download_url(
-    publicId,
-    format,
-    {
-      resource_type: "image",
-      type: "private",
-      attachment: false,
-      expires_at: expiresAt,
+export const createKYCDownloadUrl =
+  async (
+    publicId: string
+  ): Promise<string> => {
+    if (
+      !publicId ||
+      !publicId.trim()
+    ) {
+      throw new Error(
+        "KYC image public id is missing."
+      );
     }
-  );
-};
+
+    const resource =
+      await cloudinary.api.resource(
+        publicId,
+        {
+          resource_type:
+            "image",
+
+          type:
+            "private",
+        }
+      );
+
+    const format =
+      typeof resource.format ===
+        "string" &&
+      resource.format.trim()
+        ? resource.format
+        : "";
+
+    if (!format) {
+      throw new Error(
+        "Unable to determine KYC image format."
+      );
+    }
+
+    const expiresAt =
+      Math.floor(
+        Date.now() /
+          1000
+      ) +
+      10 *
+        60;
+
+    return cloudinary.utils.private_download_url(
+      publicId,
+      format,
+      {
+        resource_type:
+          "image",
+
+        type:
+          "private",
+
+        attachment:
+          false,
+
+        expires_at:
+          expiresAt,
+      }
+    );
+  };
