@@ -24,6 +24,17 @@ import insightsRoutes from "./routes/insightsRoutes.js";
 import cashFlowRoutes from "./routes/cashFlowRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
 import platformSettingsRoutes from "./routes/platformSettingsRoutes.js";
+import systemLogsRoutes from "./routes/systemLogsRoutes.js";
+
+// Telemetry middleware
+import {
+  systemTelemetryMiddleware,
+} from "./middlewares/systemTelemetryMiddleware.js";
+
+import {
+  systemErrorTelemetry,
+} from "./middlewares/systemErrorTelemetry.js";
+
 // Error middleware
 import {
   notFound,
@@ -105,6 +116,17 @@ const corsOptions: cors.CorsOptions = {
     "Content-Type",
     "Authorization",
     "Idempotency-Key",
+    "X-Request-Id",
+    "X-Trace-Id",
+  ],
+
+  /*
+   * Allow frontend/dev tools to read observability IDs
+   * returned by the API.
+   */
+  exposedHeaders: [
+    "X-Request-Id",
+    "X-Trace-Id",
   ],
 
   optionsSuccessStatus: 204,
@@ -182,6 +204,7 @@ app.use(
   ) => {
     try {
       await connectDB();
+
       next();
     } catch (
       error
@@ -195,11 +218,30 @@ app.use(
         503
       ).json({
         success: false,
+
         message:
           "Database connection failed. Please try again shortly.",
       });
     }
   }
+);
+
+/* =========================================================
+   SYSTEM TELEMETRY
+
+   Keep this AFTER database connection and BEFORE rate-limit
+   + application routes.
+
+   This allows request duration/status telemetry to include
+   rate-limit responses and normal API responses.
+
+   /api/admin/logs itself is ignored inside the middleware
+   to prevent the logs dashboard from generating recursive
+   monitoring noise.
+========================================================= */
+
+app.use(
+  systemTelemetryMiddleware
 );
 
 /* =========================================================
@@ -298,7 +340,7 @@ app.get(
 );
 
 /* =========================================================
-   ROUTES
+   USER ROUTES
 ========================================================= */
 
 app.use(
@@ -342,20 +384,6 @@ app.use(
 );
 
 app.use(
-  "/api/admin/settings",
-  platformSettingsRoutes
-);
-
-app.use(
-  "/api/admin",
-  adminRoutes
-);
-app.use(
-  "/api/admin/audit-logs",
-  auditRoutes
-);
-
-app.use(
   "/api/ai",
   aiRoutes
 );
@@ -386,6 +414,37 @@ app.use(
 );
 
 /* =========================================================
+   ADMIN ROUTES
+
+   IMPORTANT:
+   Specific /api/admin/... routes stay BEFORE the generic
+   /api/admin router.
+
+   This avoids a broad admin router accidentally intercepting
+   the settings/logs/audit paths.
+========================================================= */
+
+app.use(
+  "/api/admin/logs",
+  systemLogsRoutes
+);
+
+app.use(
+  "/api/admin/settings",
+  platformSettingsRoutes
+);
+
+app.use(
+  "/api/admin/audit-logs",
+  auditRoutes
+);
+
+app.use(
+  "/api/admin",
+  adminRoutes
+);
+
+/* =========================================================
    404
 ========================================================= */
 
@@ -394,7 +453,20 @@ app.use(
 );
 
 /* =========================================================
-   ERROR HANDLER
+   ERROR TELEMETRY
+
+   Must stay BEFORE the final error handler.
+
+   It records a sanitized operational error and forwards
+   the same error to errorHandler.
+========================================================= */
+
+app.use(
+  systemErrorTelemetry
+);
+
+/* =========================================================
+   FINAL ERROR HANDLER
 ========================================================= */
 
 app.use(
