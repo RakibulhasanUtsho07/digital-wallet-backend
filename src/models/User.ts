@@ -3,71 +3,45 @@ import mongoose, {
   Schema,
 } from "mongoose";
 
-/* =========================================================
-   ENCRYPTED DATA TYPE
-========================================================= */
-
 export interface IEncryptedData {
   encrypted: string;
   iv: string;
   authTag: string;
 }
 
-/* =========================================================
-   USER INTERFACE
-========================================================= */
-
 export interface IUser extends Document {
   name: string;
 
-  /* =======================================================
-     SECURE EMAIL
-  ======================================================== */
+  emailEncrypted: IEncryptedData;
+  emailLookup: string;
+  phoneEncrypted?: IEncryptedData;
+  phoneLookup?: string;
 
-  emailEncrypted:
-    IEncryptedData;
-
-  emailLookup:
-    string;
-
-  /* =======================================================
-     SECURE PHONE
-  ======================================================== */
-
-  phoneEncrypted?:
-    IEncryptedData;
-
-  phoneLookup?:
-    string;
-
-  /* =======================================================
-     AUTH
-  ======================================================== */
-
-  password:
-    string;
-
+  password: string;
   role:
     | "user"
     | "admin";
 
-  /*
-   * Incrementing this invalidates every JWT
-   * issued with an older authVersion.
-   */
-  authVersion:
-    number;
-
+  authVersion: number;
   accountStatus:
     | "active"
     | "deleted";
+  deletedAt?: Date;
 
-  deletedAt?:
-    Date;
+  /*
+   * Email verification is intentionally separate from the fact
+   * that an encrypted email exists. Existing accounts remain false
+   * until a real verification flow marks them verified.
+   */
+  emailVerified: boolean;
+  emailVerifiedAt?: Date;
 
-  /* =======================================================
-     KYC
-  ======================================================== */
+  /*
+   * Version 2 means the password was created/changed under the
+   * Security Center password policy.
+   */
+  passwordPolicyVersion: number;
+  passwordChangedAt?: Date;
 
   kycStatus:
     | "not_started"
@@ -75,37 +49,14 @@ export interface IUser extends Document {
     | "verified"
     | "rejected";
 
-  /* =======================================================
-     WALLET
-  ======================================================== */
+  walletId?: mongoose.Types.ObjectId;
 
-  walletId?:
-    mongoose.Types.ObjectId;
+  resetPasswordTokenHash?: string;
+  resetPasswordExpires?: Date;
 
-  /* =======================================================
-     PASSWORD RESET
-  ======================================================== */
-
-  resetPasswordTokenHash?:
-    string;
-
-  resetPasswordExpires?:
-    Date;
-
-  /* =======================================================
-     TIMESTAMPS
-  ======================================================== */
-
-  createdAt:
-    Date;
-
-  updatedAt:
-    Date;
+  createdAt: Date;
+  updatedAt: Date;
 }
-
-/* =========================================================
-   ENCRYPTED DATA SUB-SCHEMA
-========================================================= */
 
 const encryptedDataSchema =
   new Schema<IEncryptedData>(
@@ -114,12 +65,10 @@ const encryptedDataSchema =
         type: String,
         required: true,
       },
-
       iv: {
         type: String,
         required: true,
       },
-
       authTag: {
         type: String,
         required: true,
@@ -129,10 +78,6 @@ const encryptedDataSchema =
       _id: false,
     }
   );
-
-/* =========================================================
-   USER SCHEMA
-========================================================= */
 
 const userSchema =
   new Schema<IUser>(
@@ -144,23 +89,17 @@ const userSchema =
       },
 
       emailEncrypted: {
-        type:
-          encryptedDataSchema,
-
-        required:
-          true,
+        type: encryptedDataSchema,
+        required: true,
       },
-
       emailLookup: {
         type: String,
         required: true,
       },
 
       phoneEncrypted: {
-        type:
-          encryptedDataSchema,
+        type: encryptedDataSchema,
       },
-
       phoneLookup: {
         type: String,
       },
@@ -173,14 +112,11 @@ const userSchema =
 
       role: {
         type: String,
-
         enum: [
           "user",
           "admin",
         ],
-
-        default:
-          "user",
+        default: "user",
       },
 
       authVersion: {
@@ -191,43 +127,51 @@ const userSchema =
 
       accountStatus: {
         type: String,
-
         enum: [
           "active",
           "deleted",
         ],
-
-        default:
-          "active",
-
-        index:
-          true,
+        default: "active",
+        index: true,
       },
 
       deletedAt: {
         type: Date,
       },
 
+      emailVerified: {
+        type: Boolean,
+        default: false,
+      },
+
+      emailVerifiedAt: {
+        type: Date,
+      },
+
+      passwordPolicyVersion: {
+        type: Number,
+        default: 1,
+        min: 1,
+      },
+
+      passwordChangedAt: {
+        type: Date,
+      },
+
       kycStatus: {
         type: String,
-
         enum: [
           "not_started",
           "pending",
           "verified",
           "rejected",
         ],
-
-        default:
-          "not_started",
+        default: "not_started",
       },
 
       walletId: {
-        type:
-          Schema.Types.ObjectId,
-
-        ref:
-          "Wallet",
+        type: Schema.Types.ObjectId,
+        ref: "Wallet",
       },
 
       resetPasswordTokenHash: {
@@ -241,14 +185,9 @@ const userSchema =
       },
     },
     {
-      timestamps:
-        true,
+      timestamps: true,
     }
   );
-
-/* =========================================================
-   LOOKUP INDEXES
-========================================================= */
 
 userSchema.index(
   {
@@ -268,10 +207,6 @@ userSchema.index(
     sparse: true,
   }
 );
-
-/* =========================================================
-   MODEL
-========================================================= */
 
 export const User =
   mongoose.models.User ||

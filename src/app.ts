@@ -3,10 +3,16 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 
-// Database
+// =========================================================
+// DATABASE
+// =========================================================
+
 import connectDB from "./config/db.js";
 
-// Routes
+// =========================================================
+// ROUTES
+// =========================================================
+
 import authRoutes from "./routes/authRoutes.js";
 import transactionRoutes from "./routes/transactionRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -26,7 +32,15 @@ import settingsRoutes from "./routes/settingsRoutes.js";
 import platformSettingsRoutes from "./routes/platformSettingsRoutes.js";
 import systemLogsRoutes from "./routes/systemLogsRoutes.js";
 
-// Telemetry middleware
+/*
+ * Revenue Intelligence
+ */
+import revenueRoutes from "./routes/revenueRoutes.js";
+
+// =========================================================
+// TELEMETRY MIDDLEWARE
+// =========================================================
+
 import {
   systemTelemetryMiddleware,
 } from "./middlewares/systemTelemetryMiddleware.js";
@@ -35,11 +49,18 @@ import {
   systemErrorTelemetry,
 } from "./middlewares/systemErrorTelemetry.js";
 
-// Error middleware
+// =========================================================
+// ERROR MIDDLEWARE
+// =========================================================
+
 import {
   notFound,
   errorHandler,
 } from "./middlewares/errorMiddleware.js";
+
+/* =========================================================
+   APP
+========================================================= */
 
 const app = express();
 
@@ -47,7 +68,10 @@ const app = express();
    TRUST PROXY
 ========================================================= */
 
-app.set("trust proxy", 1);
+app.set(
+  "trust proxy",
+  1
+);
 
 /* =========================================================
    CORS
@@ -63,12 +87,23 @@ const allowedOrigins = [
    CORS OPTIONS
 ========================================================= */
 
-const corsOptions: cors.CorsOptions = {
+const corsOptions:
+  cors.CorsOptions = {
   origin: (
     origin,
     callback
   ) => {
-    if (!origin) {
+    /*
+     * Allow requests without an Origin header.
+     *
+     * Examples:
+     * Postman
+     * server-to-server
+     * same-origin tooling
+     */
+    if (
+      !origin
+    ) {
       callback(
         null,
         true
@@ -101,7 +136,8 @@ const corsOptions: cors.CorsOptions = {
     );
   },
 
-  credentials: true,
+  credentials:
+    true,
 
   methods: [
     "GET",
@@ -121,15 +157,15 @@ const corsOptions: cors.CorsOptions = {
   ],
 
   /*
-   * Allow frontend/dev tools to read observability IDs
-   * returned by the API.
+   * Allow frontend to read telemetry IDs.
    */
   exposedHeaders: [
     "X-Request-Id",
     "X-Trace-Id",
   ],
 
-  optionsSuccessStatus: 204,
+  optionsSuccessStatus:
+    204,
 };
 
 /* =========================================================
@@ -155,14 +191,18 @@ app.options(
 
 app.use(
   express.json({
-    limit: "2mb",
+    limit:
+      "2mb",
   })
 );
 
 app.use(
   express.urlencoded({
-    extended: true,
-    limit: "2mb",
+    extended:
+      true,
+
+    limit:
+      "2mb",
   })
 );
 
@@ -214,14 +254,17 @@ app.use(
         error
       );
 
-      res.status(
-        503
-      ).json({
-        success: false,
+      res
+        .status(
+          503
+        )
+        .json({
+          success:
+            false,
 
-        message:
-          "Database connection failed. Please try again shortly.",
-      });
+          message:
+            "Database connection failed. Please try again shortly.",
+        });
     }
   }
 );
@@ -229,15 +272,7 @@ app.use(
 /* =========================================================
    SYSTEM TELEMETRY
 
-   Keep this AFTER database connection and BEFORE rate-limit
-   + application routes.
-
-   This allows request duration/status telemetry to include
-   rate-limit responses and normal API responses.
-
-   /api/admin/logs itself is ignored inside the middleware
-   to prevent the logs dashboard from generating recursive
-   monitoring noise.
+   Keep AFTER DB connection and BEFORE rate limiter/routes.
 ========================================================= */
 
 app.use(
@@ -245,7 +280,7 @@ app.use(
 );
 
 /* =========================================================
-   RATE LIMIT
+   GLOBAL API RATE LIMIT
 ========================================================= */
 
 const apiLimiter =
@@ -279,7 +314,7 @@ app.use(
 );
 
 /* =========================================================
-   ROOT
+   ROOT ROUTE
 ========================================================= */
 
 app.get(
@@ -288,17 +323,23 @@ app.get(
     _req,
     res
   ) => {
-    res.status(
-      200
-    ).json({
-      status:
-        "Success",
+    res
+      .status(
+        200
+      )
+      .json({
+        status:
+          "Success",
 
-      message:
-        "Digital Wallet API is running",
-    });
+        message:
+          "Digital Wallet API is running",
+      });
   }
 );
+
+/* =========================================================
+   API ROOT
+========================================================= */
 
 app.get(
   "/api",
@@ -306,17 +347,23 @@ app.get(
     _req,
     res
   ) => {
-    res.status(
-      200
-    ).json({
-      success:
-        true,
+    res
+      .status(
+        200
+      )
+      .json({
+        success:
+          true,
 
-      message:
-        "Digital Wallet API is running",
-    });
+        message:
+          "Digital Wallet API is running",
+      });
   }
 );
+
+/* =========================================================
+   HEALTH CHECK
+========================================================= */
 
 app.get(
   "/api/health",
@@ -324,23 +371,26 @@ app.get(
     _req,
     res
   ) => {
-    res.status(
-      200
-    ).json({
-      success:
-        true,
+    res
+      .status(
+        200
+      )
+      .json({
+        success:
+          true,
 
-      message:
-        "Digital Wallet API is healthy",
+        message:
+          "Digital Wallet API is healthy",
 
-      timestamp:
-        new Date().toISOString(),
-    });
+        timestamp:
+          new Date()
+            .toISOString(),
+      });
   }
 );
 
 /* =========================================================
-   USER ROUTES
+   AUTH
 ========================================================= */
 
 app.use(
@@ -348,65 +398,117 @@ app.use(
   authRoutes
 );
 
+/* =========================================================
+   USERS
+========================================================= */
+
 app.use(
   "/api/users",
   userRoutes
 );
+
+/* =========================================================
+   USER SETTINGS
+========================================================= */
 
 app.use(
   "/api/settings",
   settingsRoutes
 );
 
+/* =========================================================
+   WALLET
+========================================================= */
+
 app.use(
   "/api/wallet",
   walletRoutes
 );
+
+/* =========================================================
+   FUNDS
+========================================================= */
 
 app.use(
   "/api/funds",
   fundsRoutes
 );
 
+/* =========================================================
+   TRANSFERS
+========================================================= */
+
 app.use(
   "/api/transfers",
   transferRoutes
 );
+
+/* =========================================================
+   TRANSACTIONS
+========================================================= */
 
 app.use(
   "/api/transactions",
   transactionRoutes
 );
 
+/* =========================================================
+   KYC
+========================================================= */
+
 app.use(
   "/api/kyc",
   kycRoutes
 );
+
+/* =========================================================
+   AI
+========================================================= */
 
 app.use(
   "/api/ai",
   aiRoutes
 );
 
+/* =========================================================
+   INSIGHTS
+========================================================= */
+
 app.use(
   "/api/insights",
   insightsRoutes
 );
+
+/* =========================================================
+   CASH FLOW
+========================================================= */
 
 app.use(
   "/api/cash-flow",
   cashFlowRoutes
 );
 
+/* =========================================================
+   NOTIFICATIONS
+========================================================= */
+
 app.use(
   "/api/notifications",
   notificationRoutes
 );
 
+/* =========================================================
+   BUDGETS
+========================================================= */
+
 app.use(
   "/api/budgets",
   budgetRoutes
 );
+
+/* =========================================================
+   RECEIPTS
+========================================================= */
 
 app.use(
   "/api/receipts",
@@ -417,11 +519,16 @@ app.use(
    ADMIN ROUTES
 
    IMPORTANT:
-   Specific /api/admin/... routes stay BEFORE the generic
-   /api/admin router.
 
-   This avoids a broad admin router accidentally intercepting
-   the settings/logs/audit paths.
+   Specific admin routes MUST stay before:
+
+   /api/admin
+
+   because /api/admin is the generic admin router.
+========================================================= */
+
+/* =========================================================
+   ADMIN SYSTEM LOGS
 ========================================================= */
 
 app.use(
@@ -429,15 +536,38 @@ app.use(
   systemLogsRoutes
 );
 
+/* =========================================================
+   ADMIN PLATFORM SETTINGS
+========================================================= */
+
 app.use(
   "/api/admin/settings",
   platformSettingsRoutes
 );
 
+/* =========================================================
+   ADMIN AUDIT LOGS
+========================================================= */
+
 app.use(
   "/api/admin/audit-logs",
   auditRoutes
 );
+
+/* =========================================================
+   ADMIN REVENUE INTELLIGENCE
+========================================================= */
+
+app.use(
+  "/api/admin/revenue",
+  revenueRoutes
+);
+
+/* =========================================================
+   GENERIC ADMIN ROUTER
+
+   KEEP THIS LAST among /api/admin routes.
+========================================================= */
 
 app.use(
   "/api/admin",
@@ -445,7 +575,7 @@ app.use(
 );
 
 /* =========================================================
-   404
+   404 HANDLER
 ========================================================= */
 
 app.use(
@@ -453,12 +583,9 @@ app.use(
 );
 
 /* =========================================================
-   ERROR TELEMETRY
+   SYSTEM ERROR TELEMETRY
 
-   Must stay BEFORE the final error handler.
-
-   It records a sanitized operational error and forwards
-   the same error to errorHandler.
+   Keep before final errorHandler.
 ========================================================= */
 
 app.use(
@@ -472,5 +599,9 @@ app.use(
 app.use(
   errorHandler
 );
+
+/* =========================================================
+   EXPORT
+========================================================= */
 
 export default app;
