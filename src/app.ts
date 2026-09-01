@@ -37,6 +37,11 @@ import systemLogsRoutes from "./routes/systemLogsRoutes.js";
  */
 import revenueRoutes from "./routes/revenueRoutes.js";
 
+/*
+ * Admin Support Operations
+ */
+import supportRoutes from "./routes/supportRoutes.js";
+
 // =========================================================
 // TELEMETRY MIDDLEWARE
 // =========================================================
@@ -561,6 +566,15 @@ app.use(
 app.use(
   "/api/admin/revenue",
   revenueRoutes
+);
+
+/* =========================================================
+   ADMIN SUPPORT OPERATIONS
+========================================================= */
+
+app.use(
+  "/api/admin/support",
+  supportRoutes
 );
 
 /* =========================================================
