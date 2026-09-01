@@ -8,7 +8,7 @@ import cookieParser from "cookie-parser";
 // =========================================================
 
 import connectDB from "./config/db.js";
-
+import analyticsRoutes from "./routes/analyticsRoutes.js";
 // =========================================================
 // ROUTES
 // =========================================================
@@ -576,7 +576,10 @@ app.use(
   "/api/admin/support",
   supportRoutes
 );
-
+app.use(
+  "/api/admin/analytics",
+  analyticsRoutes
+);
 /* =========================================================
    GENERIC ADMIN ROUTER
 
