@@ -14,6 +14,7 @@ import analyticsRoutes from "./routes/analyticsRoutes.js";
 // =========================================================
 
 import authRoutes from "./routes/authRoutes.js";
+import currentUserRoutes from "./routes/currentUserRoutes.js";
 import transactionRoutes from "./routes/transactionRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import fundsRoutes from "./routes/fundsRoutes.js";
@@ -31,6 +32,7 @@ import cashFlowRoutes from "./routes/cashFlowRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
 import platformSettingsRoutes from "./routes/platformSettingsRoutes.js";
 import systemLogsRoutes from "./routes/systemLogsRoutes.js";
+import userManagementRoutes from "./routes/userManagementRoutes.js";
 
 /*
  * Revenue Intelligence
@@ -41,6 +43,11 @@ import revenueRoutes from "./routes/revenueRoutes.js";
  * Admin Support Operations
  */
 import supportRoutes from "./routes/supportRoutes.js";
+
+/*
+ * Admin KYC Intelligence / Automated Review
+ */
+import kycIntelligenceRoutes from "./routes/kycIntelligenceRoutes.js";
 
 // =========================================================
 // TELEMETRY MIDDLEWARE
@@ -404,6 +411,17 @@ app.use(
 );
 
 /* =========================================================
+   CURRENT AUTHENTICATED USER
+
+   Provides GET /api/auth/me for the frontend.
+========================================================= */
+
+app.use(
+  "/api/auth",
+  currentUserRoutes
+);
+
+/* =========================================================
    USERS
 ========================================================= */
 
@@ -580,6 +598,29 @@ app.use(
   "/api/admin/analytics",
   analyticsRoutes
 );
+
+/* =========================================================
+   ADMIN KYC INTELLIGENCE / AUTOMATED REVIEW
+
+   Keep BEFORE the generic /api/admin router.
+========================================================= */
+
+app.use(
+  "/api/admin/kyc",
+  kycIntelligenceRoutes
+);
+
+/* =========================================================
+   ADMIN USER MANAGEMENT
+
+   Keep BEFORE the generic /api/admin router.
+========================================================= */
+
+app.use(
+  "/api/admin/users",
+  userManagementRoutes
+);
+
 /* =========================================================
    GENERIC ADMIN ROUTER
 

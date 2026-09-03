@@ -9,36 +9,42 @@ export interface IEncryptedData {
   authTag: string;
 }
 
+export type UserRole =
+  | "user"
+  | "support"
+  | "analyst"
+  | "admin";
+
 export interface IUser extends Document {
   name: string;
 
   emailEncrypted: IEncryptedData;
   emailLookup: string;
+
   phoneEncrypted?: IEncryptedData;
   phoneLookup?: string;
 
   password: string;
-  role:
-    | "user"
-    | "admin";
+  role: UserRole;
 
   authVersion: number;
+
   accountStatus:
     | "active"
     | "deleted";
+
   deletedAt?: Date;
 
   /*
    * Email verification is intentionally separate from the fact
-   * that an encrypted email exists. Existing accounts remain false
-   * until a real verification flow marks them verified.
+   * that an encrypted email exists.
    */
   emailVerified: boolean;
   emailVerifiedAt?: Date;
 
   /*
-   * Version 2 means the password was created/changed under the
-   * Security Center password policy.
+   * Version 2 means the password was created or changed under
+   * the Security Center password policy.
    */
   passwordPolicyVersion: number;
   passwordChangedAt?: Date;
@@ -65,10 +71,12 @@ const encryptedDataSchema =
         type: String,
         required: true,
       },
+
       iv: {
         type: String,
         required: true,
       },
+
       authTag: {
         type: String,
         required: true,
@@ -76,7 +84,7 @@ const encryptedDataSchema =
     },
     {
       _id: false,
-    }
+    },
   );
 
 const userSchema =
@@ -92,6 +100,7 @@ const userSchema =
         type: encryptedDataSchema,
         required: true,
       },
+
       emailLookup: {
         type: String,
         required: true,
@@ -100,6 +109,7 @@ const userSchema =
       phoneEncrypted: {
         type: encryptedDataSchema,
       },
+
       phoneLookup: {
         type: String,
       },
@@ -114,9 +124,13 @@ const userSchema =
         type: String,
         enum: [
           "user",
+          "support",
+          "analyst",
           "admin",
         ],
         default: "user",
+        required: true,
+        index: true,
       },
 
       authVersion: {
@@ -132,6 +146,7 @@ const userSchema =
           "deleted",
         ],
         default: "active",
+        required: true,
         index: true,
       },
 
@@ -167,6 +182,8 @@ const userSchema =
           "rejected",
         ],
         default: "not_started",
+        required: true,
+        index: true,
       },
 
       walletId: {
@@ -186,18 +203,25 @@ const userSchema =
     },
     {
       timestamps: true,
-    }
+      versionKey: false,
+    },
   );
 
+/*
+ * Unique lookup index for encrypted email addresses.
+ */
 userSchema.index(
   {
     emailLookup: 1,
   },
   {
     unique: true,
-  }
+  },
 );
 
+/*
+ * Phone is optional, therefore the unique index is sparse.
+ */
 userSchema.index(
   {
     phoneLookup: 1,
@@ -205,14 +229,27 @@ userSchema.index(
   {
     unique: true,
     sparse: true,
-  }
+  },
 );
+
+/*
+ * Useful indexes for administrator user filtering.
+ */
+userSchema.index({
+  role: 1,
+  createdAt: -1,
+});
+
+userSchema.index({
+  accountStatus: 1,
+  createdAt: -1,
+});
 
 export const User =
   mongoose.models.User ||
   mongoose.model<IUser>(
     "User",
-    userSchema
+    userSchema,
   );
 
 export default User;

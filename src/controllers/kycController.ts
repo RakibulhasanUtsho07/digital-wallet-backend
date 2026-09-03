@@ -1,13 +1,12 @@
-import {
+import type {
   Response,
 } from "express";
 
-import {
+import type {
   AuthRequest,
 } from "../middlewares/authMiddleware.js";
 
-import {
-  KYC,
+import type {
   DocumentType,
 } from "../models/KYC.js";
 
@@ -27,6 +26,10 @@ import {
   createLookupHash,
   encryptData,
 } from "../utils/crypto.js";
+
+import {
+  runKycAiReviewForKyc,
+} from "../services/kycAIReviewService.js";
 
 /* =========================================================
    ALLOWED DOCUMENT TYPES
@@ -801,6 +804,36 @@ export const submitKYC =
             "pending",
         }
       );
+
+      /* ===============================================
+         AUTOMATED KYC SCREENING
+
+         IMPORTANT:
+         - Best-effort only.
+         - AI failure MUST NOT fail the KYC submission.
+         - AI does NOT approve/reject the applicant.
+         - Final decision stays in the protected admin review route.
+
+         Awaiting here is intentional because post-response
+         fire-and-forget work may be unreliable on serverless.
+      =============================================== */
+
+      try {
+        await runKycAiReviewForKyc({
+          kycId:
+            kyc._id.toString(),
+
+          triggeredBy:
+            "automatic_submission",
+        });
+      } catch (
+        aiError
+      ) {
+        console.error(
+          "AUTOMATIC KYC AI REVIEW ERROR:",
+          aiError
+        );
+      }
 
       /* ===============================================
          RESPONSE
