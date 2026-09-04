@@ -33,6 +33,7 @@ import settingsRoutes from "./routes/settingsRoutes.js";
 import platformSettingsRoutes from "./routes/platformSettingsRoutes.js";
 import systemLogsRoutes from "./routes/systemLogsRoutes.js";
 import userManagementRoutes from "./routes/userManagementRoutes.js";
+import adminOverviewRoutes from "./routes/adminOverviewRoutes.js";
 
 /*
  * Revenue Intelligence
@@ -48,7 +49,7 @@ import supportRoutes from "./routes/supportRoutes.js";
  * Admin KYC Intelligence / Automated Review
  */
 import kycIntelligenceRoutes from "./routes/kycIntelligenceRoutes.js";
-
+import supportTicketRoutes from "./routes/supportTicketRoutes.js";
 // =========================================================
 // TELEMETRY MIDDLEWARE
 // =========================================================
@@ -586,6 +587,12 @@ app.use(
   revenueRoutes
 );
 
+
+app.use(
+  "/api/support/tickets",
+  supportTicketRoutes
+);
+
 /* =========================================================
    ADMIN SUPPORT OPERATIONS
 ========================================================= */
@@ -619,6 +626,20 @@ app.use(
 app.use(
   "/api/admin/users",
   userManagementRoutes
+);
+
+/* =========================================================
+   ADMIN DASHBOARD OVERVIEW
+
+   Provides GET /api/admin/overview and
+   GET /api/admin/overview/export.
+
+   Keep BEFORE the generic /api/admin router.
+========================================================= */
+
+app.use(
+  "/api/admin/overview",
+  adminOverviewRoutes
 );
 
 /* =========================================================
