@@ -1,22 +1,71 @@
-import { Response } from "express";
-import { AuthRequest } from "../middlewares/authMiddleware.js";
+import type { Response } from "express";
+
+import type { AuthRequest } from "../middlewares/authMiddleware.js";
 import { Wallet } from "../models/Wallet.js";
 
-// @desc    Get user wallet details
-// @route   GET /api/wallet
-// @access  Private
-export const getMyWallet = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const userId = req.user?._id;
-    const wallet = await Wallet.findOne({ userId });
+/* =========================================================
+   RESPONSE CACHE POLICY
+========================================================= */
 
-    if (!wallet) {
-      res.status(404).json({ message: "Wallet not found" });
+function setPrivateNoStore(res: Response): void {
+  res.setHeader("Cache-Control", "private, no-store, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+}
+
+/* =========================================================
+   GET MY WALLET
+   GET /api/wallet
+
+   Only fields required by the authenticated wallet UI are
+   returned. Receiving remains a server-controlled operation;
+   this endpoint never accepts or changes a balance.
+========================================================= */
+
+export const getMyWallet = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    setPrivateNoStore(res);
+
+    const userId = req.user?._id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: "Not authorized.",
+      });
       return;
     }
 
-    res.status(200).json({ success: true, wallet });
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    const wallet = await Wallet.findOne({ userId })
+      .select(
+        "_id userId balance pendingBalance currency status createdAt updatedAt"
+      )
+      .lean();
+
+    if (!wallet) {
+      res.status(404).json({
+        success: false,
+        message: "Wallet not found.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      wallet,
+    });
+  } catch (error: unknown) {
+    console.error(
+      "GET WALLET ERROR:",
+      error instanceof Error ? error.message : error
+    );
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch wallet information.",
+    });
   }
 };
