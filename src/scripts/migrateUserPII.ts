@@ -1,7 +1,12 @@
 import "dotenv/config";
+
 import mongoose from "mongoose";
 
-import { User } from "../models/User.js";
+import connectDB from "../config/db.js";
+
+import type {
+  IEncryptedData,
+} from "../models/User.js";
 
 import {
   createLookupHash,
@@ -11,217 +16,419 @@ import {
 } from "../utils/crypto.js";
 
 /* =========================================================
-   GET DATABASE URI
+   LEGACY USER TYPES
+
+   Current IUser intentionally does not contain plaintext
+   email and phone. Therefore, this migration uses the raw
+   MongoDB users collection with a local legacy type.
 ========================================================= */
 
-function getDatabaseUri(): string {
-  const uri =
-    process.env.MONGODB_URI ||
-    process.env.MONGO_URI ||
-    process.env.MONGO_DB_URI;
+interface LegacyUserRecord {
+  [key: string]: unknown;
 
-  if (!uri) {
-    throw new Error(
-      "MongoDB connection URI is missing."
-    );
+  _id: mongoose.Types.ObjectId;
+
+  email?: string;
+  phone?: string;
+
+  emailEncrypted?: IEncryptedData;
+  emailLookup?: string;
+
+  phoneEncrypted?: IEncryptedData;
+  phoneLookup?: string;
+
+  updatedAt?: Date;
+}
+interface MigrationSetFields {
+  /*
+   * MongoDB $set operator expects an object supporting
+   * arbitrary string field names.
+   */
+  [key: string]: unknown;
+
+  emailEncrypted?: IEncryptedData;
+  emailLookup?: string;
+
+  phoneEncrypted?: IEncryptedData;
+  phoneLookup?: string;
+
+  updatedAt?: Date;
+}
+
+interface MigrationStats {
+  scanned: number;
+  pendingChanges: number;
+  modified: number;
+  skipped: number;
+  invalidEmail: number;
+  invalidPhone: number;
+  duplicate: number;
+  failed: number;
+}
+
+/* =========================================================
+   SCRIPT MODE
+
+   Default:
+   npx tsx src/scripts/migrateUserPII.ts
+   -> Dry run only
+
+   Apply:
+   npx tsx src/scripts/migrateUserPII.ts --apply
+   -> Writes encrypted fields into MongoDB
+========================================================= */
+
+const APPLY_CHANGES =
+  process.argv.includes(
+    "--apply"
+  );
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function isEncryptedData(
+  value: unknown
+): value is IEncryptedData {
+  if (
+    !value ||
+    typeof value !==
+      "object"
+  ) {
+    return false;
   }
 
-  return uri;
+  const candidate =
+    value as Partial<IEncryptedData>;
+
+  return (
+    typeof candidate.encrypted ===
+      "string" &&
+    candidate.encrypted.length >
+      0 &&
+    typeof candidate.iv ===
+      "string" &&
+    candidate.iv.length >
+      0 &&
+    typeof candidate.authTag ===
+      "string" &&
+    candidate.authTag.length >
+      0
+  );
+}
+
+function hasMigrationChanges(
+  fields: MigrationSetFields
+): boolean {
+  return (
+    fields.emailEncrypted !==
+      undefined ||
+    fields.emailLookup !==
+      undefined ||
+    fields.phoneEncrypted !==
+      undefined ||
+    fields.phoneLookup !==
+      undefined
+  );
+}
+
+function isDuplicateKeyError(
+  error: unknown
+): boolean {
+  return (
+    error instanceof
+      mongoose.mongo
+        .MongoServerError &&
+    error.code === 11000
+  );
+}
+
+/* =========================================================
+   BUILD UPDATE FIELDS
+========================================================= */
+
+function buildMigrationFields(
+  user: LegacyUserRecord,
+  stats: MigrationStats
+): MigrationSetFields {
+  const fields:
+    MigrationSetFields = {};
+
+  /* -------------------------------------------------------
+     EMAIL MIGRATION
+  ------------------------------------------------------- */
+
+  if (
+    typeof user.email ===
+      "string" &&
+    user.email.trim()
+  ) {
+    const normalizedEmail =
+      normalizeEmail(
+        user.email
+      );
+
+    if (!normalizedEmail) {
+      stats.invalidEmail += 1;
+    } else {
+      if (
+        !isEncryptedData(
+          user.emailEncrypted
+        )
+      ) {
+        fields.emailEncrypted =
+          encryptData(
+            normalizedEmail
+          );
+      }
+
+      if (
+        typeof user.emailLookup !==
+          "string" ||
+        !user.emailLookup.trim()
+      ) {
+        fields.emailLookup =
+          createLookupHash(
+            normalizedEmail
+          );
+      }
+    }
+  }
+
+  /* -------------------------------------------------------
+     PHONE MIGRATION
+  ------------------------------------------------------- */
+
+  if (
+    typeof user.phone ===
+      "string" &&
+    user.phone.trim()
+  ) {
+    const normalizedPhone =
+      normalizePhone(
+        user.phone
+      );
+
+    if (!normalizedPhone) {
+      stats.invalidPhone += 1;
+    } else {
+      if (
+        !isEncryptedData(
+          user.phoneEncrypted
+        )
+      ) {
+        fields.phoneEncrypted =
+          encryptData(
+            normalizedPhone
+          );
+      }
+
+      if (
+        typeof user.phoneLookup !==
+          "string" ||
+        !user.phoneLookup.trim()
+      ) {
+        fields.phoneLookup =
+          createLookupHash(
+            normalizedPhone
+          );
+      }
+    }
+  }
+
+  return fields;
 }
 
 /* =========================================================
    MIGRATION
 ========================================================= */
 
-async function migrateUserPII(): Promise<void> {
-  try {
-    const mongoUri =
-      getDatabaseUri();
+async function migrateUserPII():
+  Promise<void> {
+  const stats: MigrationStats = {
+    scanned: 0,
+    pendingChanges: 0,
+    modified: 0,
+    skipped: 0,
+    invalidEmail: 0,
+    invalidPhone: 0,
+    duplicate: 0,
+    failed: 0,
+  };
 
+  try {
     console.log(
       "Connecting to database..."
     );
 
-    await mongoose.connect(
-      mongoUri
-    );
+    await connectDB();
+
+    const database =
+      mongoose.connection.db;
+
+    if (!database) {
+      throw new Error(
+        "MongoDB connection is unavailable."
+      );
+    }
 
     console.log(
-      "✅ Database connected"
+      "Database connected."
     );
 
-    /* =====================================================
-       FIND USERS
-    ====================================================== */
-
+    /*
+     * User.find() ব্যবহার করা হচ্ছে না, কারণ বর্তমান
+     * IUser type-এ legacy plaintext email/phone নেই।
+     */
     const users =
-      await User.find({});
+      database.collection<LegacyUserRecord>(
+        "users"
+      );
+
+    const cursor =
+      users.find(
+        {},
+        {
+          projection: {
+            _id: 1,
+
+            email: 1,
+            phone: 1,
+
+            emailEncrypted: 1,
+            emailLookup: 1,
+
+            phoneEncrypted: 1,
+            phoneLookup: 1,
+
+            updatedAt: 1,
+          },
+        }
+      );
 
     console.log(
-      `Found ${users.length} users`
+      APPLY_CHANGES
+        ? "User PII migration running in APPLY mode."
+        : "User PII migration running in DRY-RUN mode."
     );
 
-    let migrated = 0;
-    let skipped = 0;
-    let failed = 0;
-
     /* =====================================================
-       MIGRATE EACH USER
+       PROCESS USERS
     ====================================================== */
 
-    for (const user of users) {
+    for await (
+      const user of cursor
+    ) {
+      stats.scanned += 1;
+
+      let fields:
+        MigrationSetFields;
+
       try {
-        const updates: Record<
-          string,
-          unknown
-        > = {};
+        fields =
+          buildMigrationFields(
+            user,
+            stats
+          );
+      } catch (error) {
+        stats.failed += 1;
 
-        /* =================================================
-           EMAIL
-        ================================================= */
+        console.error(
+          `Unable to prepare user ${user._id.toString()}:`,
+          error instanceof Error
+            ? error.message
+            : "Unknown migration error."
+        );
+
+        continue;
+      }
+
+      if (
+        !hasMigrationChanges(
+          fields
+        )
+      ) {
+        stats.skipped += 1;
+        continue;
+      }
+
+      stats.pendingChanges += 1;
+
+      /* ===================================================
+         DRY RUN
+      =================================================== */
+
+      if (!APPLY_CHANGES) {
+        console.log(
+          `[DRY RUN] User ${user._id.toString()} requires PII migration.`
+        );
+
+        continue;
+      }
+
+      /* ===================================================
+         APPLY UPDATE
+      =================================================== */
+
+      try {
+        /*
+         * updatedAt সরাসরি $set-এর মধ্যে দেওয়া হয়েছে।
+         * এটি MongoDB driver-এর $currentDate `never`
+         * TypeScript error এড়ায়।
+         */
+        const updateFields:
+          MigrationSetFields = {
+          ...fields,
+          updatedAt:
+            new Date(),
+        };
+
+        const result =
+          await users.updateOne(
+            {
+              _id:
+                user._id,
+            },
+            {
+              $set:
+                updateFields,
+            }
+          );
 
         if (
-          user.email &&
-          (
-            !user.emailLookup ||
-            !user.emailEncrypted
+          result.modifiedCount >
+          0
+        ) {
+          stats.modified += 1;
+
+          console.log(
+            `Migrated user ${user._id.toString()}.`
+          );
+        } else {
+          stats.skipped += 1;
+        }
+      } catch (error) {
+        if (
+          isDuplicateKeyError(
+            error
           )
         ) {
-          const normalizedEmail =
-            normalizeEmail(
-              user.email
-            );
+          stats.duplicate += 1;
 
-          if (normalizedEmail) {
-            const emailLookup =
-              createLookupHash(
-                normalizedEmail
-              );
-
-            /*
-             * Check that another user
-             * doesn't already own this lookup.
-             */
-            const existingEmail =
-              await User.findOne({
-                _id: {
-                  $ne:
-                    user._id,
-                },
-
-                emailLookup,
-              });
-
-            if (existingEmail) {
-              throw new Error(
-                "Duplicate normalized email detected."
-              );
-            }
-
-            updates.emailLookup =
-              emailLookup;
-
-            updates.emailEncrypted =
-              encryptData(
-                normalizedEmail
-              );
-          }
-        }
-
-        /* =================================================
-           PHONE
-        ================================================= */
-
-        if (
-          user.phone &&
-          (
-            !user.phoneLookup ||
-            !user.phoneEncrypted
-          )
-        ) {
-          const normalizedPhone =
-            normalizePhone(
-              user.phone
-            );
-
-          if (normalizedPhone) {
-            const phoneLookup =
-              createLookupHash(
-                normalizedPhone
-              );
-
-            const existingPhone =
-              await User.findOne({
-                _id: {
-                  $ne:
-                    user._id,
-                },
-
-                phoneLookup,
-              });
-
-            if (existingPhone) {
-              throw new Error(
-                "Duplicate normalized phone detected."
-              );
-            }
-
-            updates.phoneLookup =
-              phoneLookup;
-
-            updates.phoneEncrypted =
-              encryptData(
-                normalizedPhone
-              );
-          }
-        }
-
-        /* =================================================
-           NOTHING TO MIGRATE
-        ================================================= */
-
-        if (
-          Object.keys(
-            updates
-          ).length === 0
-        ) {
-          skipped++;
+          console.error(
+            `Skipped user ${user._id.toString()}: normalized email or phone already belongs to another account.`
+          );
 
           continue;
         }
 
-        /* =================================================
-           UPDATE USER
-        ================================================= */
-
-        await User.updateOne(
-          {
-            _id:
-              user._id,
-          },
-          {
-            $set:
-              updates,
-          }
-        );
-
-        migrated++;
-
-        /*
-         * Deliberately don't print
-         * email / phone to terminal.
-         */
-        console.log(
-          `✅ Migrated user ${user._id.toString()}`
-        );
-      } catch (error) {
-        failed++;
+        stats.failed += 1;
 
         console.error(
-          `❌ Failed user ${user._id.toString()}:`,
+          `Failed user ${user._id.toString()}:`,
           error instanceof Error
             ? error.message
-            : "Unknown error"
+            : "Unknown database error."
         );
       }
     }
@@ -231,33 +438,68 @@ async function migrateUserPII(): Promise<void> {
     ====================================================== */
 
     console.log(
-      "\n========== MIGRATION RESULT =========="
+      "\n========== USER PII MIGRATION =========="
     );
 
     console.log(
-      `Migrated: ${migrated}`
+      `Mode: ${
+        APPLY_CHANGES
+          ? "APPLY"
+          : "DRY RUN"
+      }`
     );
 
     console.log(
-      `Skipped: ${skipped}`
+      `Scanned: ${stats.scanned}`
     );
 
     console.log(
-      `Failed: ${failed}`
+      `Pending changes: ${stats.pendingChanges}`
     );
 
     console.log(
-      "======================================"
-    );
-  } catch (error) {
-    console.error(
-      "MIGRATION ERROR:",
-      error instanceof Error
-        ? error.message
-        : error
+      `Modified: ${stats.modified}`
     );
 
-    process.exitCode = 1;
+    console.log(
+      `Skipped: ${stats.skipped}`
+    );
+
+    console.log(
+      `Invalid email: ${stats.invalidEmail}`
+    );
+
+    console.log(
+      `Invalid phone: ${stats.invalidPhone}`
+    );
+
+    console.log(
+      `Duplicate: ${stats.duplicate}`
+    );
+
+    console.log(
+      `Failed: ${stats.failed}`
+    );
+
+    console.log(
+      "========================================"
+    );
+
+    if (!APPLY_CHANGES) {
+      console.log(
+        "Dry run completed. No database records were modified."
+      );
+
+      console.log(
+        "Review the result, take a database backup, then run again with --apply."
+      );
+    }
+
+    /*
+     * Plaintext email এবং phone এই migration থেকে
+     * delete করা হচ্ছে না। verifyUserPII.ts সফল হওয়ার
+     * পরেই removeLegacyUserPII.ts চালাতে হবে।
+     */
   } finally {
     await mongoose.disconnect();
 
@@ -271,4 +513,15 @@ async function migrateUserPII(): Promise<void> {
    RUN
 ========================================================= */
 
-void migrateUserPII();
+void migrateUserPII().catch(
+  (error: unknown) => {
+    console.error(
+      "USER PII MIGRATION FAILED:",
+      error instanceof Error
+        ? error.message
+        : error
+    );
+
+    process.exitCode = 1;
+  }
+);

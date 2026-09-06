@@ -6,10 +6,10 @@ import type {
 import type {
   AuthRequest,
 } from "../middlewares/authMiddleware.js";
-
 import {
   User,
 } from "../models/User.js";
+
 import {
   AuthSession,
 } from "../models/AuthSession.js";

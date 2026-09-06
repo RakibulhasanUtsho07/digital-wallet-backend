@@ -157,3 +157,58 @@ export const createKYCDownloadUrl =
       }
     );
   };
+/* =========================================================
+   PROFILE IMAGE UPLOAD
+========================================================= */
+
+export const uploadProfileImage = (
+  buffer: Buffer,
+  publicId: string,
+): Promise<UploadApiResponse> => {
+  return new Promise((resolve, reject) => {
+    const uploadStream =
+      cloudinary.uploader.upload_stream(
+        {
+          folder: "digital-payment/profile-images",
+          public_id: publicId,
+          resource_type: "image",
+          type: "upload",
+          overwrite: false,
+
+          transformation: [
+            {
+              width: 600,
+              height: 600,
+              crop: "limit",
+              quality: "auto",
+              fetch_format: "auto",
+            },
+          ],
+        },
+        (error, result) => {
+          if (error) {
+            console.error(
+              "Profile image upload error:",
+              error,
+            );
+
+            reject(error);
+            return;
+          }
+
+          if (!result) {
+            reject(
+              new Error(
+                "Cloudinary profile image upload failed.",
+              ),
+            );
+            return;
+          }
+
+          resolve(result);
+        },
+      );
+
+    uploadStream.end(buffer);
+  });
+};

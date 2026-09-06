@@ -1,4 +1,5 @@
-import crypto from "crypto";
+import crypto from "node:crypto";
+
 import jwt from "jsonwebtoken";
 
 import type {
@@ -7,26 +8,51 @@ import type {
   CookieOptions,
 } from "express";
 
+import type {
+  UserRole,
+} from "../models/User.js";
+
 import {
   AuthSession,
 } from "../models/AuthSession.js";
-import { getSecurityRequestMetadata } from "./securityRequestMetadata.js";
 
-
+import {
+  getSecurityRequestMetadata,
+} from "./securityRequestMetadata.js";
 
 /* =========================================================
-   CONSTANTS / TYPES
+   CONSTANTS
 ========================================================= */
 
 export const AUTH_SESSION_DAYS =
   30;
 
+const AUTH_COOKIE_NAME =
+  "access_token";
+
+const JWT_ALGORITHM =
+  "HS256" as const;
+
+const VALID_USER_ROLES:
+  ReadonlySet<string> =
+  new Set([
+    "user",
+    "support",
+    "analyst",
+    "admin",
+  ]);
+
+/* =========================================================
+   TYPES
+========================================================= */
+
 export interface SessionTokenPayload {
   id: string;
 
-  role:
-    | "user"
-    | "admin";
+  /*
+   * Must remain synchronized with models/User.ts.
+   */
+  role: UserRole;
 
   authVersion: number;
 
@@ -41,15 +67,41 @@ interface SessionUserInput {
     toString(): string;
   };
 
-  role:
-    | "user"
-    | "admin";
+  role: UserRole;
 
   authVersion?: number;
 }
 
 /* =========================================================
-   COOKIE
+   TYPE VALIDATION
+========================================================= */
+
+function isUserRole(
+  value: unknown
+): value is UserRole {
+  return (
+    typeof value ===
+      "string" &&
+    VALID_USER_ROLES.has(
+      value
+    )
+  );
+}
+
+function isValidUserId(
+  value: unknown
+): value is string {
+  return (
+    typeof value ===
+      "string" &&
+    /^[a-f\d]{24}$/i.test(
+      value
+    )
+  );
+}
+
+/* =========================================================
+   ENVIRONMENT
 ========================================================= */
 
 const isProductionEnvironment =
@@ -57,9 +109,14 @@ const isProductionEnvironment =
     return (
       process.env.NODE_ENV ===
         "production" ||
-      process.env.VERCEL === "1"
+      process.env.VERCEL ===
+        "1"
     );
   };
+
+/* =========================================================
+   COOKIE
+========================================================= */
 
 const getCookieOptions =
   (): CookieOptions => {
@@ -72,6 +129,10 @@ const getCookieOptions =
       secure:
         isProduction,
 
+      /*
+       * Production frontend/backend may be deployed on
+       * different origins, so SameSite=None is required.
+       */
       sameSite:
         isProduction
           ? "none"
@@ -100,7 +161,7 @@ export const clearAuthCookie = (
     getCookieOptions();
 
   res.clearCookie(
-    "access_token",
+    AUTH_COOKIE_NAME,
     {
       httpOnly,
       secure,
@@ -111,23 +172,29 @@ export const clearAuthCookie = (
 };
 
 /* =========================================================
-   JWT
+   JWT SECRET
 ========================================================= */
 
 const getJwtSecret =
   (): string => {
     const secret =
-      process.env
-        .JWT_SECRET;
+      process.env.JWT_SECRET;
 
-    if (!secret) {
+    if (
+      !secret ||
+      secret.length < 32
+    ) {
       throw new Error(
-        "JWT_SECRET is not defined."
+        "JWT_SECRET must contain at least 32 characters."
       );
     }
 
     return secret;
   };
+
+/* =========================================================
+   CREATE SESSION TOKEN
+========================================================= */
 
 export const createSessionToken = ({
   userId,
@@ -136,25 +203,71 @@ export const createSessionToken = ({
   sessionId,
 }: {
   userId: string;
-  role: "user" | "admin";
+  role: UserRole;
   authVersion: number;
   sessionId: string;
 }): string => {
+  if (
+    !isValidUserId(
+      userId
+    )
+  ) {
+    throw new Error(
+      "Cannot create session token for an invalid user ID."
+    );
+  }
+
+  if (
+    !isUserRole(
+      role
+    )
+  ) {
+    throw new Error(
+      "Cannot create session token with an invalid user role."
+    );
+  }
+
+  if (
+    !Number.isInteger(
+      authVersion
+    ) ||
+    authVersion < 0
+  ) {
+    throw new Error(
+      "Cannot create session token with an invalid authentication version."
+    );
+  }
+
+  const normalizedSessionId =
+    sessionId.trim();
+
+  if (
+    !normalizedSessionId ||
+    normalizedSessionId.length >
+      128
+  ) {
+    throw new Error(
+      "Cannot create session token with an invalid session ID."
+    );
+  }
+
   return jwt.sign(
     {
       id:
         userId,
+
       role,
+
       authVersion,
+
       sid:
-        sessionId,
+        normalizedSessionId,
     },
     getJwtSecret(),
     {
-      /*
-       * Numeric expiresIn avoids @types/jsonwebtoken string
-       * literal compatibility problems on newer TypeScript.
-       */
+      algorithm:
+        JWT_ALGORITHM,
+
       expiresIn:
         AUTH_SESSION_DAYS *
         24 *
@@ -165,7 +278,7 @@ export const createSessionToken = ({
 };
 
 /* =========================================================
-   ISSUE SESSION
+   ISSUE AUTHENTICATED SESSION
 ========================================================= */
 
 export const issueAuthenticatedSession =
@@ -181,6 +294,31 @@ export const issueAuthenticatedSession =
     sessionId: string;
     token: string;
   }> => {
+    const userId =
+      user._id
+        .toString()
+        .trim();
+
+    if (
+      !isValidUserId(
+        userId
+      )
+    ) {
+      throw new Error(
+        "Cannot create an authentication session for an invalid user."
+      );
+    }
+
+    if (
+      !isUserRole(
+        user.role
+      )
+    ) {
+      throw new Error(
+        "Cannot create an authentication session for an invalid role."
+      );
+    }
+
     const metadata =
       getSecurityRequestMetadata(
         req
@@ -202,8 +340,7 @@ export const issueAuthenticatedSession =
       );
 
     await AuthSession.create({
-      userId:
-        user._id.toString(),
+      userId,
 
       sessionId,
 
@@ -217,20 +354,20 @@ export const issueAuthenticatedSession =
 
     const token =
       createSessionToken({
-        userId:
-          user._id.toString(),
+        userId,
 
         role:
           user.role,
 
         authVersion:
-          user.authVersion ?? 0,
+          user.authVersion ??
+          0,
 
         sessionId,
       });
 
     res.cookie(
-      "access_token",
+      AUTH_COOKIE_NAME,
       token,
       getCookieOptions()
     );
@@ -242,7 +379,7 @@ export const issueAuthenticatedSession =
   };
 
 /* =========================================================
-   REVOKE SESSIONS
+   REVOKE ALL SESSIONS
 ========================================================= */
 
 export const revokeAllSessions =
@@ -255,7 +392,8 @@ export const revokeAllSessions =
           userId,
 
           revokedAt: {
-            $exists: false,
+            $exists:
+              false,
           },
         },
         {
@@ -271,6 +409,10 @@ export const revokeAllSessions =
       0
     );
   };
+
+/* =========================================================
+   REVOKE OTHER SESSIONS
+========================================================= */
 
 export const revokeAllOtherSessions =
   async ({
@@ -291,7 +433,8 @@ export const revokeAllOtherSessions =
           },
 
           revokedAt: {
-            $exists: false,
+            $exists:
+              false,
           },
         },
         {
@@ -308,6 +451,10 @@ export const revokeAllOtherSessions =
     );
   };
 
+/* =========================================================
+   REVOKE ONE SESSION
+========================================================= */
+
 export const revokeSessionById =
   async ({
     userId,
@@ -316,14 +463,23 @@ export const revokeSessionById =
     userId: string;
     sessionId: string;
   }): Promise<boolean> => {
+    if (
+      !userId.trim() ||
+      !sessionId.trim()
+    ) {
+      return false;
+    }
+
     const result =
       await AuthSession.updateOne(
         {
           userId,
+
           sessionId,
 
           revokedAt: {
-            $exists: false,
+            $exists:
+              false,
           },
         },
         {
@@ -341,45 +497,158 @@ export const revokeSessionById =
   };
 
 /* =========================================================
-   TOKEN READ / DECODE
+   READ TOKEN FROM REQUEST
 ========================================================= */
 
 export const readTokenFromRequest = (
   req: Request
 ): string | undefined => {
   const authorization =
-    req.headers
-      .authorization;
+    req.headers.authorization;
 
   if (
-    authorization?.startsWith(
-      "Bearer "
-    )
+    typeof authorization ===
+    "string"
   ) {
-    return authorization
-      .slice(
-        "Bearer ".length
-      )
-      .trim();
+    const match =
+      authorization.match(
+        /^Bearer\s+(.+)$/i
+      );
+
+    const bearerToken =
+      match?.[1]?.trim();
+
+    if (bearerToken) {
+      return bearerToken;
+    }
   }
 
   const cookieToken =
-    req.cookies
-      ?.access_token;
+    req.cookies?.[
+      AUTH_COOKIE_NAME
+    ];
 
   return typeof cookieToken ===
-    "string"
-    ? cookieToken
+      "string" &&
+    cookieToken.trim()
+    ? cookieToken.trim()
     : undefined;
 };
+
+/* =========================================================
+   DECODE AND VALIDATE TOKEN
+========================================================= */
 
 export const decodeSessionToken = (
   token: string
 ): SessionTokenPayload => {
-  return jwt.verify(
-    token,
-    getJwtSecret()
-  ) as SessionTokenPayload;
+  const decoded =
+    jwt.verify(
+      token,
+      getJwtSecret(),
+      {
+        algorithms: [
+          JWT_ALGORITHM,
+        ],
+      }
+    );
+
+  if (
+    typeof decoded ===
+      "string" ||
+    !decoded
+  ) {
+    throw new Error(
+      "Invalid authentication token payload."
+    );
+  }
+
+  if (
+    !isValidUserId(
+      decoded.id
+    )
+  ) {
+    throw new Error(
+      "Authentication token contains an invalid user ID."
+    );
+  }
+
+  if (
+    !isUserRole(
+      decoded.role
+    )
+  ) {
+    throw new Error(
+      "Authentication token contains an invalid user role."
+    );
+  }
+
+  if (
+    typeof decoded.authVersion !==
+      "number" ||
+    !Number.isInteger(
+      decoded.authVersion
+    ) ||
+    decoded.authVersion < 0
+  ) {
+    throw new Error(
+      "Authentication token contains an invalid authentication version."
+    );
+  }
+
+  if (
+    decoded.sid !==
+      undefined &&
+    (
+      typeof decoded.sid !==
+        "string" ||
+      !decoded.sid.trim() ||
+      decoded.sid.length >
+        128
+    )
+  ) {
+    throw new Error(
+      "Authentication token contains an invalid session ID."
+    );
+  }
+
+  const payload:
+    SessionTokenPayload = {
+    id:
+      decoded.id,
+
+    role:
+      decoded.role,
+
+    authVersion:
+      decoded.authVersion,
+  };
+
+  if (
+    typeof decoded.sid ===
+    "string"
+  ) {
+    payload.sid =
+      decoded.sid;
+  }
+
+  if (
+    typeof decoded.iat ===
+    "number"
+  ) {
+    payload.iat =
+      decoded.iat;
+  }
+
+  if (
+    typeof decoded.exp ===
+    "number"
+  ) {
+    payload.exp =
+      decoded.exp;
+  }
+
+  return payload;
 };
 
 /* =========================================================
@@ -419,8 +688,8 @@ export const revokeCurrentSessionFromRequest =
       }
     } catch {
       /*
-       * Logout must still be allowed to clear stale/expired
-       * browser cookies even if JWT verification fails.
+       * Logout must still clear expired, malformed or
+       * revoked browser cookies.
        */
     }
   };

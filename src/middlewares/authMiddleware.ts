@@ -6,6 +6,7 @@ import type {
 
 import {
   User,
+  type UserRole,
 } from "../models/User.js";
 
 import {
@@ -26,9 +27,11 @@ export interface AuthRequest
   user?: {
     _id: string;
 
-    role:
-      | "user"
-      | "admin";
+    /*
+     * Keep this synchronized with UserRole:
+     * user | support | analyst | admin
+     */
+    role: UserRole;
 
     /*
      * Added by the session-backed authentication system.
@@ -37,7 +40,7 @@ export interface AuthRequest
      */
     sessionId?: string;
 
-    /* JWT iat value (seconds since epoch). */
+    /* JWT iat value, expressed as seconds since epoch. */
     tokenIssuedAt?: number;
   };
 }
@@ -142,10 +145,7 @@ export const protect =
 
       /*
        * sid is present on all new security-enabled JWTs.
-       * Old tokens without sid remain temporarily compatible
-       * so the upgrade does not instantly sign everyone out.
-       * After a fresh login, the user receives a session-backed
-       * JWT and Security Center session controls become active.
+       * Old tokens without sid remain temporarily compatible.
        */
       if (decoded.sid) {
         const session =
@@ -157,7 +157,8 @@ export const protect =
               decoded.sid,
 
             revokedAt: {
-              $exists: false,
+              $exists:
+                false,
             },
 
             expiresAt: {
@@ -179,8 +180,8 @@ export const protect =
         }
 
         /*
-         * Do not write on every API request. Refresh activity
-         * at most once every five minutes.
+         * Avoid a database write on every API request.
+         * Refresh session activity at most once per 5 minutes.
          */
         if (
           Date.now() -

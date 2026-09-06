@@ -82,8 +82,10 @@ const twoFactorChallengeSchema =
 
       consumedAt: {
         type: Date,
+        default: undefined,
       },
     },
+
     {
       timestamps: true,
       versionKey: false,

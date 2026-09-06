@@ -1,7 +1,12 @@
 import mongoose, {
   Document,
+  Model,
   Schema,
 } from "mongoose";
+
+/* =========================================================
+   TYPES
+========================================================= */
 
 export interface IEncryptedData {
   encrypted: string;
@@ -15,54 +20,64 @@ export type UserRole =
   | "analyst"
   | "admin";
 
+export type AccountStatus =
+  | "active"
+  | "deleted";
+
+export type KYCStatus =
+  | "not_started"
+  | "pending"
+  | "verified"
+  | "rejected";
+
 export interface IUser extends Document {
   name: string;
 
+  /* Cloudinary */
+  avatarUrl?: string;
+  avatarPublicId?: string;
+
+  /* Secure contact storage */
   emailEncrypted: IEncryptedData;
   emailLookup: string;
 
   phoneEncrypted?: IEncryptedData;
   phoneLookup?: string;
 
+  /* Authentication */
   password: string;
   role: UserRole;
-
   authVersion: number;
 
-  accountStatus:
-    | "active"
-    | "deleted";
-
+  /* Account */
+  accountStatus: AccountStatus;
   deletedAt?: Date;
 
-  /*
-   * Email verification is intentionally separate from the fact
-   * that an encrypted email exists.
-   */
+  /* Email verification */
   emailVerified: boolean;
   emailVerifiedAt?: Date;
 
-  /*
-   * Version 2 means the password was created or changed under
-   * the Security Center password policy.
-   */
+  /* Security */
   passwordPolicyVersion: number;
   passwordChangedAt?: Date;
 
-  kycStatus:
-    | "not_started"
-    | "pending"
-    | "verified"
-    | "rejected";
+  /* KYC */
+  kycStatus: KYCStatus;
 
+  /* Wallet */
   walletId?: mongoose.Types.ObjectId;
 
+  /* Password reset */
   resetPasswordTokenHash?: string;
   resetPasswordExpires?: Date;
 
   createdAt: Date;
   updatedAt: Date;
 }
+
+/* =========================================================
+   ENCRYPTED DATA SCHEMA
+========================================================= */
 
 const encryptedDataSchema =
   new Schema<IEncryptedData>(
@@ -84,8 +99,12 @@ const encryptedDataSchema =
     },
     {
       _id: false,
-    },
+    }
   );
+
+/* =========================================================
+   USER SCHEMA
+========================================================= */
 
 const userSchema =
   new Schema<IUser>(
@@ -94,7 +113,26 @@ const userSchema =
         type: String,
         required: true,
         trim: true,
+        minlength: 2,
+        maxlength: 100,
       },
+
+      avatarUrl: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      avatarPublicId: {
+        type: String,
+        trim: true,
+        default: "",
+        select: false,
+      },
+
+      /* =====================================================
+         EMAIL
+      ====================================================== */
 
       emailEncrypted: {
         type: encryptedDataSchema,
@@ -104,21 +142,37 @@ const userSchema =
       emailLookup: {
         type: String,
         required: true,
+        trim: true,
       },
+
+      /* =====================================================
+         PHONE
+      ====================================================== */
 
       phoneEncrypted: {
         type: encryptedDataSchema,
+        default: undefined,
       },
 
       phoneLookup: {
         type: String,
+        trim: true,
+        default: undefined,
       },
+
+      /* =====================================================
+         PASSWORD
+      ====================================================== */
 
       password: {
         type: String,
         required: true,
         select: false,
       },
+
+      /* =====================================================
+         ROLE
+      ====================================================== */
 
       role: {
         type: String,
@@ -139,6 +193,10 @@ const userSchema =
         min: 0,
       },
 
+      /* =====================================================
+         ACCOUNT STATUS
+      ====================================================== */
+
       accountStatus: {
         type: String,
         enum: [
@@ -152,16 +210,27 @@ const userSchema =
 
       deletedAt: {
         type: Date,
+        default: undefined,
       },
+
+      /* =====================================================
+         EMAIL VERIFICATION
+      ====================================================== */
 
       emailVerified: {
         type: Boolean,
         default: false,
+        index: true,
       },
 
       emailVerifiedAt: {
         type: Date,
+        default: undefined,
       },
+
+      /* =====================================================
+         PASSWORD SECURITY
+      ====================================================== */
 
       passwordPolicyVersion: {
         type: Number,
@@ -171,7 +240,12 @@ const userSchema =
 
       passwordChangedAt: {
         type: Date,
+        default: undefined,
       },
+
+      /* =====================================================
+         KYC
+      ====================================================== */
 
       kycStatus: {
         type: String,
@@ -186,42 +260,98 @@ const userSchema =
         index: true,
       },
 
+      /* =====================================================
+         WALLET
+      ====================================================== */
+
       walletId: {
         type: Schema.Types.ObjectId,
         ref: "Wallet",
+        default: undefined,
       },
+
+      /* =====================================================
+         RESET PASSWORD
+      ====================================================== */
 
       resetPasswordTokenHash: {
         type: String,
         select: false,
+        default: undefined,
       },
 
       resetPasswordExpires: {
         type: Date,
         select: false,
+        default: undefined,
       },
     },
+
     {
       timestamps: true,
       versionKey: false,
-    },
+      strict: true,
+
+      /* =====================================================
+         SAFE JSON
+      ====================================================== */
+
+      toJSON: {
+        virtuals: true,
+
+        transform: (
+          _document,
+          returnedObject
+        ) => {
+          const rawObject =
+            returnedObject as unknown as Record<
+              string,
+              unknown
+            >;
+
+          const {
+            password: _password,
+            avatarPublicId:
+              _avatarPublicId,
+            resetPasswordTokenHash:
+              _resetPasswordTokenHash,
+            resetPasswordExpires:
+              _resetPasswordExpires,
+            emailEncrypted:
+              _emailEncrypted,
+            phoneEncrypted:
+              _phoneEncrypted,
+            emailLookup:
+              _emailLookup,
+            phoneLookup:
+              _phoneLookup,
+            ...safeObject
+          } = rawObject;
+
+          return safeObject;
+        },
+      },
+
+      toObject: {
+        virtuals: true,
+      },
+    }
   );
 
-/*
- * Unique lookup index for encrypted email addresses.
- */
+/* =========================================================
+   INDEXES
+========================================================= */
+
 userSchema.index(
   {
     emailLookup: 1,
   },
   {
     unique: true,
-  },
+    name: "unique_user_email_lookup",
+  }
 );
 
-/*
- * Phone is optional, therefore the unique index is sparse.
- */
 userSchema.index(
   {
     phoneLookup: 1,
@@ -229,27 +359,61 @@ userSchema.index(
   {
     unique: true,
     sparse: true,
-  },
+    name: "unique_user_phone_lookup",
+  }
 );
 
-/*
- * Useful indexes for administrator user filtering.
- */
-userSchema.index({
-  role: 1,
-  createdAt: -1,
-});
+userSchema.index(
+  {
+    role: 1,
+    createdAt: -1,
+  },
+  {
+    name: "user_role_created_at",
+  }
+);
 
-userSchema.index({
-  accountStatus: 1,
-  createdAt: -1,
-});
+userSchema.index(
+  {
+    accountStatus: 1,
+    createdAt: -1,
+  },
+  {
+    name: "user_status_created_at",
+  }
+);
 
-export const User =
-  mongoose.models.User ||
+userSchema.index(
+  {
+    kycStatus: 1,
+    createdAt: -1,
+  },
+  {
+    name: "user_kyc_status_created_at",
+  }
+);
+
+userSchema.index(
+  {
+    emailVerified: 1,
+    createdAt: -1,
+  },
+  {
+    name: "user_email_verified_created_at",
+  }
+);
+
+/* =========================================================
+   MODEL
+========================================================= */
+
+const UserModel: Model<IUser> =
+  (mongoose.models.User as Model<IUser>) ||
   mongoose.model<IUser>(
     "User",
-    userSchema,
+    userSchema
   );
 
-export default User;
+export const User = UserModel;
+
+export default UserModel;

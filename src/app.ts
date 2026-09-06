@@ -39,7 +39,7 @@ import adminOverviewRoutes from "./routes/adminOverviewRoutes.js";
  * Revenue Intelligence
  */
 import revenueRoutes from "./routes/revenueRoutes.js";
-
+import { createAdminEKYCRouter } from "./modules/ekyc/routes/adminEkycRoutes.js";
 /*
  * Admin Support Operations
  */
@@ -576,6 +576,16 @@ app.use(
 app.use(
   "/api/admin/audit-logs",
   auditRoutes
+);
+/* =========================================================
+   ADMIN E-KYC (ADVANCED VERIFICATION REVIEW)
+
+   Keep BEFORE the generic /api/admin router.
+========================================================= */
+
+app.use(
+  "/api/admin/ekyc",
+  createAdminEKYCRouter()
 );
 
 /* =========================================================

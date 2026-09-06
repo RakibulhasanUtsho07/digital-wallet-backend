@@ -5,6 +5,11 @@ import { supportTicketRateLimiter } from "../middlewares/supportTicketRateLimite
 
 const router = express.Router();
 
+router.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
 router.post("/", supportTicketRateLimiter, createSupportTicket);
 
 export default router;

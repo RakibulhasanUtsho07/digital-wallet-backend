@@ -12,5 +12,3 @@ export const supportTicketRateLimiter = rateLimit({
       "Too many support requests. Please wait before submitting another one.",
   },
 });
-
-

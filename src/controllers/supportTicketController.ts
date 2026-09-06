@@ -1,9 +1,7 @@
-import { randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
 import { z } from "zod";
 
-import { PublicSupportTicket } from "../models/PublicSupportTicket.js";
-import { encryptData } from "../utils/crypto.js";
+import { createPublicSupportTicket } from "../services/publicSupportTicketService.js";
 
 const supportTicketSchema = z
   .object({
@@ -20,103 +18,107 @@ const supportTicketSchema = z
       .min(10, "Please describe the problem in at least 10 characters.")
       .max(600, "The support message cannot exceed 600 characters."),
     email: z
-      .union([
-        z.string().trim().email("Enter a valid email address.").max(254),
-        z.literal(""),
-      ])
-      .optional(),
+      .string()
+      .trim()
+      .email("Enter the email address connected to your Coffer account.")
+      .max(254),
     website: z.string().trim().max(200).optional(),
   })
   .strict();
 
-function createTicketNumber(): string {
-  const date = new Date();
-  const datePart = [
-    date.getUTCFullYear(),
-    String(date.getUTCMonth() + 1).padStart(2, "0"),
-    String(date.getUTCDate()).padStart(2, "0"),
-  ].join("");
+function mapServiceError(error: unknown): {
+  status: number;
+  message: string;
+} {
+  const code = error instanceof Error ? error.message : "";
 
-  const randomPart = randomBytes(4).toString("hex").toUpperCase();
+  const errors: Record<string, { status: number; message: string }> = {
+    CUSTOMER_NOT_FOUND: {
+      status: 404,
+      message: "No active Coffer account was found for that email address.",
+    },
+    INVALID_CATEGORY: {
+      status: 400,
+      message: "Choose a valid support category.",
+    },
+    INVALID_MESSAGE: {
+      status: 400,
+      message: "Please describe the problem in at least 10 characters.",
+    },
+    TICKET_CREATE_FAILED: {
+      status: 503,
+      message: "Support is temporarily unavailable. Please try again.",
+    },
+  };
 
-  return `COF-${datePart}-${randomPart}`;
+  return (
+    errors[code] || {
+      status: 500,
+      message: "Unable to create the support request. Please try again.",
+    }
+  );
 }
 
-function getSafeUserAgent(req: Request): string | undefined {
-  const userAgent = req.get("user-agent")?.trim();
-  return userAgent ? userAgent.slice(0, 220) : undefined;
-}
-
-// @desc    Create a public support ticket
+// @desc    Create a support ticket from the public landing-page chat
 // @route   POST /api/support/tickets
-// @access  Public (rate limited)
-export const createSupportTicket = async (
+// @access  Public, rate limited; requires an existing account email
+export async function createSupportTicket(
   req: Request,
   res: Response
-): Promise<void> => {
+): Promise<void> {
+  res.setHeader("Cache-Control", "no-store");
+
+  const parsed = supportTicketSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      success: false,
+      message: parsed.error.issues[0]?.message || "Invalid support request.",
+    });
+    return;
+  }
+
+  const { category, message, email, website } = parsed.data;
+
+  // Honeypot: real users never see or fill this field.
+  if (website) {
+    res.status(201).json({
+      success: true,
+      message: "Support request received.",
+      ticket: {
+        ticketNumber: "COF-RECEIVED",
+        status: "Open",
+        createdAt: new Date().toISOString(),
+      },
+    });
+    return;
+  }
+
   try {
-    res.setHeader("Cache-Control", "no-store");
-
-    const parsed = supportTicketSchema.safeParse(req.body);
-
-    if (!parsed.success) {
-      res.status(400).json({
-        success: false,
-        message:
-          parsed.error.issues[0]?.message || "Invalid support request.",
-      });
-      return;
-    }
-
-    const { category, message, email, website } = parsed.data;
-
-    /*
-     * Honeypot field. Human users never see or fill this input.
-     * Return a generic success response so automated spam clients
-     * cannot use the response to tune their submission.
-     */
-    if (website) {
-      res.status(201).json({
-        success: true,
-        message: "Support request received.",
-        ticket: {
-          ticketNumber: "COF-RECEIVED",
-          status: "open",
-          createdAt: new Date().toISOString(),
-        },
-      });
-      return;
-    }
-
-    const ticket = await PublicSupportTicket.create({
-      ticketNumber: createTicketNumber(),
+    const ticket = await createPublicSupportTicket({
       category,
-      messageEncrypted: encryptData(message),
-      contactEmailEncrypted: email ? encryptData(email.toLowerCase()) : undefined,
-      status: "open",
-      priority: "normal",
-      source: "landing_page",
-      userAgent: getSafeUserAgent(req),
+      message,
+      accountEmail: email,
     });
 
     res.status(201).json({
       success: true,
       message: "Your support request has been created.",
-      ticket: {
-        ticketNumber: ticket.ticketNumber,
-        status: ticket.status,
-        createdAt: ticket.createdAt,
-      },
+      ticket,
     });
   } catch (error: unknown) {
-    console.error(
-      "CREATE SUPPORT TICKET ERROR:",
-      error instanceof Error ? error.message : error
-    );
+    const mapped = mapServiceError(error);
 
-    res.status(500).json({
+    if (mapped.status === 500) {
+      console.error(
+        "CREATE PUBLIC SUPPORT TICKET ERROR:",
+        error instanceof Error ? error.message : error
+      );
+    }
+
+    res.status(mapped.status).json({
       success: false,
-      message: "Unable to create the support request. Please try again.",
+      message: mapped.message,
     });
   }
-};
+}
