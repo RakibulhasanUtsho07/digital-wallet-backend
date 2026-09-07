@@ -7,12 +7,7 @@ import type {
 
 import {
   PendingRegistration,
-} from "../models/PendingRegistration";
-
-import {
-  sendEmailVerificationOtp,
-  sendPasswordResetEmail,
-} from "../utils/email.js";
+} from "../models/PendingRegistration.js";
 
 import {
   User,
@@ -34,6 +29,26 @@ import {
   TwoFactorChallenge,
 } from "../models/TwoFactorChallenge.js";
 
+import type {
+  AuthRequest,
+} from "../middlewares/authMiddleware.js";
+
+import {
+  issueAuthenticatedSession,
+  clearAuthCookie,
+  revokeAllSessions,
+  revokeCurrentSessionFromRequest,
+  revokeAllOtherSessions,
+  revokeSessionById,
+  readTokenFromRequest,
+  decodeSessionToken,
+} from "../services/authSessionService.js";
+
+import {
+  sendEmailVerificationOtp,
+  sendPasswordResetEmail,
+} from "../utils/email.js";
+
 import {
   createLookupHash,
   encryptData,
@@ -46,13 +61,6 @@ import {
   hashPassword,
   verifyPassword,
 } from "../utils/password.js";
-
-import {
-  issueAuthenticatedSession,
-  clearAuthCookie,
-  revokeAllSessions,
-  revokeCurrentSessionFromRequest,
-} from "../services/authSessionService.js";
 
 import {
   recordSecurityEvent,
@@ -158,7 +166,7 @@ const getChallengeHashKey = (): string => {
 };
 
 /* =========================================================
-   BACKUP / ONE-TIME CODE NORMALIZATION
+   BACKUP CODE NORMALIZATION
 ========================================================= */
 
 const normalizeBackupCode = (
@@ -216,7 +224,7 @@ const safeEqualHex = (
 };
 
 /* =========================================================
-   STRONG PASSWORD CHECK
+   STRONG PASSWORD
 ========================================================= */
 
 const isStrongSecurityPassword = (
@@ -252,6 +260,20 @@ const maskTarget = (
   return value.length > 4
     ? `***${value.slice(-4)}`
     : "***";
+};
+
+/* =========================================================
+   GET CURRENT SESSION ID
+========================================================= */
+
+const getCurrentSessionId = (
+  req: AuthRequest
+): string | null => {
+  return req.user?.sessionId
+    ? String(
+        req.user.sessionId
+      )
+    : null;
 };
 
 /* =========================================================
@@ -448,24 +470,14 @@ const respondWithAuthenticatedUser =
           user.kycStatus,
 
         avatarUrl:
-          user.avatarUrl ?? "",
+          user.avatarUrl ??
+          "",
       },
     });
   };
 
 /* =========================================================
    REGISTER
-   POST /api/auth/register
-
-   IMPORTANT — DOES NOT WRITE TO THE `users` COLLECTION.
-
-   Registration data (name, encrypted email/phone, password
-   hash, avatar info) is stored in `PendingRegistration`
-   only. A real User document is created in verifyEmailOtp,
-   after the OTP has been confirmed. If the OTP is never
-   verified, the TTL index on PendingRegistration removes
-   the attempt automatically — no leftover user record, no
-   409 conflicts from abandoned sign-ups.
 ========================================================= */
 
 export const registerUser =
@@ -474,36 +486,6 @@ export const registerUser =
     res: Response
   ): Promise<void> => {
     try {
-      console.log(
-        "========== REGISTER REQUEST =========="
-      );
-
-      console.log({
-        contentType:
-          req.headers[
-            "content-type"
-          ],
-
-        hasFile:
-          Boolean(req.file),
-
-        fileName:
-          req.file?.originalname,
-
-        fieldName:
-          req.file?.fieldname,
-
-        mimeType:
-          req.file?.mimetype,
-
-        fileSize:
-          req.file?.size,
-      });
-
-      /* ===================================================
-         INPUT
-      ==================================================== */
-
       const normalizedName =
         toStringValue(
           req.body?.name
@@ -527,10 +509,6 @@ export const registerUser =
         toStringValue(
           req.body?.password
         );
-
-      /* ===================================================
-         VALIDATION
-      ==================================================== */
 
       if (
         !normalizedName ||
@@ -576,10 +554,6 @@ export const registerUser =
         return;
       }
 
-      /* ===================================================
-         PROFILE IMAGE
-      ==================================================== */
-
       if (!req.file?.buffer) {
         res.status(400).json({
           success: false,
@@ -589,10 +563,6 @@ export const registerUser =
 
         return;
       }
-
-      /* ===================================================
-         LOOKUP HASHES
-      ==================================================== */
 
       const emailLookup =
         createLookupHash(
@@ -606,21 +576,19 @@ export const registerUser =
             )
           : undefined;
 
-      /* ===================================================
-         REJECT IF A REAL, VERIFIED ACCOUNT ALREADY EXISTS
-
-         PendingRegistration is intentionally NOT part of
-         this check — a pending, unverified attempt should
-         never block someone from registering.
-      ==================================================== */
-
       const existingUser =
         await User.findOne({
           $or: [
-            { emailLookup },
+            {
+              emailLookup,
+            },
 
             ...(phoneLookup
-              ? [{ phoneLookup }]
+              ? [
+                  {
+                    phoneLookup,
+                  },
+                ]
               : []),
           ],
         }).lean();
@@ -628,7 +596,8 @@ export const registerUser =
       if (existingUser) {
         res.status(409).json({
           success: false,
-          code: "ACCOUNT_EXISTS",
+          code:
+            "ACCOUNT_EXISTS",
           message:
             "An account with this email or phone already exists.",
         });
@@ -636,16 +605,14 @@ export const registerUser =
         return;
       }
 
-      /* ===================================================
-         THROTTLE REPEATED REGISTER ATTEMPTS FOR THE SAME
-         EMAIL BEFORE DOING ANY EXPENSIVE WORK (Cloudinary
-         upload, password hashing).
-      ==================================================== */
-
       const existingPending =
         await PendingRegistration.findOne(
-          { emailLookup }
-        ).select("lastSentAt");
+          {
+            emailLookup,
+          }
+        ).select(
+          "lastSentAt"
+        );
 
       if (existingPending) {
         const elapsed =
@@ -658,9 +625,10 @@ export const registerUser =
         ) {
           const remaining =
             Math.ceil(
-              (OTP_RESEND_COOLDOWN_MS -
-                elapsed) /
-                1000
+              (
+                OTP_RESEND_COOLDOWN_MS -
+                elapsed
+              ) / 1000
             );
 
           res.status(429).json({
@@ -672,10 +640,6 @@ export const registerUser =
           return;
         }
       }
-
-      /* ===================================================
-         CLOUDINARY
-      ==================================================== */
 
       const uploadedAvatar =
         await uploadProfileImage(
@@ -694,10 +658,6 @@ export const registerUser =
         );
       }
 
-      /* ===================================================
-         HASH PASSWORD
-      ==================================================== */
-
       const passwordHash =
         await hashPassword(
           normalizedPassword
@@ -710,22 +670,14 @@ export const registerUser =
           ? 2
           : 1;
 
-      /* ===================================================
-         GENERATE + SEND OTP FIRST
-
-         Nothing is written to PendingRegistration until the
-         email has actually gone out. If sending fails, the
-         request simply fails — there is no partial record
-         to clean up.
-      ==================================================== */
-
       const otp =
         generateEmailOtp();
 
       const otpHash =
         hashOtp(otp);
 
-      const now = new Date();
+      const now =
+        new Date();
 
       const expiresAt =
         new Date(
@@ -733,36 +685,22 @@ export const registerUser =
             REGISTRATION_OTP_TTL_MS
         );
 
-      try {
-        await sendEmailVerificationOtp({
-          email:
-            normalizedEmail,
+      await sendEmailVerificationOtp({
+        email:
+          normalizedEmail,
 
-          otp,
-        });
-      } catch (emailError) {
-        console.error(
-          "SEND REGISTER OTP ERROR:",
-          emailError
-        );
-
-        throw emailError;
-      }
-
-      /* ===================================================
-         PERSIST THE PENDING REGISTRATION ONLY NOW,
-         AFTER THE OTP EMAIL WAS SUCCESSFULLY SENT.
-
-         `users` collection is untouched at this point.
-      ==================================================== */
+        otp,
+      });
 
       await PendingRegistration.findOneAndUpdate(
-        { emailLookup },
-
+        {
+          emailLookup,
+        },
         {
           emailLookup,
 
-          name: normalizedName,
+          name:
+            normalizedName,
 
           emailEncrypted:
             encryptData(
@@ -788,7 +726,8 @@ export const registerUser =
           avatarPublicId:
             uploadedAvatar.public_id,
 
-          codeHash: otpHash,
+          codeHash:
+            otpHash,
 
           attempts: 0,
 
@@ -796,18 +735,15 @@ export const registerUser =
 
           expiresAt,
 
-          lastSentAt: now,
+          lastSentAt:
+            now,
         },
-
         {
           upsert: true,
           new: true,
-          setDefaultsOnInsert: true,
+          setDefaultsOnInsert:
+            true,
         }
-      );
-
-      console.log(
-        "========== PENDING REGISTRATION SAVED, OTP SENT =========="
       );
 
       res.status(201).json({
@@ -822,28 +758,24 @@ export const registerUser =
         email:
           normalizedEmail,
       });
-    } catch (error: any) {
+    } catch (
+      error: any
+    ) {
       console.error(
-        "========== REGISTER ERROR =========="
+        "REGISTER ERROR:",
+        error
       );
 
-      console.error(error);
-
-      if (error?.code === 11000) {
-        console.error(
-          "MONGO DUPLICATE KEY:",
-          {
-            keyPattern:
-              error?.keyPattern,
-
-            keyValue:
-              error?.keyValue,
-          }
-        );
-
+      if (
+        error?.code ===
+        11000
+      ) {
         res.status(409).json({
           success: false,
-          code: "DUPLICATE_KEY",
+
+          code:
+            "DUPLICATE_KEY",
+
           message:
             "An account with this email or phone already exists.",
         });
@@ -863,12 +795,6 @@ export const registerUser =
 
 /* =========================================================
    VERIFY EMAIL OTP
-   POST /api/auth/verify-otp
-
-   IMPORTANT — THIS IS WHERE THE USER IS ACTUALLY CREATED.
-
-   Until this succeeds, nothing exists in the `users`
-   collection for this registration attempt.
 ========================================================= */
 
 export const verifyEmailOtp =
@@ -888,12 +814,11 @@ export const verifyEmailOtp =
         toStringValue(
           req.body?.otp
         )
-          .replace(/\s+/g, "")
+          .replace(
+            /\s+/g,
+            ""
+          )
           .trim();
-
-      /* ===================================================
-         VALIDATION
-      ==================================================== */
 
       if (!normalizedEmail) {
         res.status(400).json({
@@ -906,7 +831,9 @@ export const verifyEmailOtp =
       }
 
       if (
-        !/^\d{6}$/.test(code)
+        !/^\d{6}$/.test(
+          code
+        )
       ) {
         res.status(400).json({
           success: false,
@@ -921,10 +848,6 @@ export const verifyEmailOtp =
         createLookupHash(
           normalizedEmail
         );
-
-      /* ===================================================
-         ALREADY A REAL, VERIFIED ACCOUNT?
-      ==================================================== */
 
       const existingUser =
         await User.findOne({
@@ -943,17 +866,14 @@ export const verifyEmailOtp =
         return;
       }
 
-      /* ===================================================
-         PENDING REGISTRATION
-      ==================================================== */
-
       const pending =
         await PendingRegistration.findOne(
           {
             emailLookup,
 
             expiresAt: {
-              $gt: new Date(),
+              $gt:
+                new Date(),
             },
           }
         ).select(
@@ -970,10 +890,6 @@ export const verifyEmailOtp =
         return;
       }
 
-      /* ===================================================
-         ATTEMPT LIMIT
-      ==================================================== */
-
       if (
         pending.attempts >=
         pending.maxAttempts
@@ -987,10 +903,6 @@ export const verifyEmailOtp =
         return;
       }
 
-      /* ===================================================
-         VERIFY CODE
-      ==================================================== */
-
       const incomingHash =
         hashOtp(code);
 
@@ -1001,7 +913,8 @@ export const verifyEmailOtp =
         );
 
       if (!valid) {
-        pending.attempts += 1;
+        pending.attempts +=
+          1;
 
         await pending.save();
 
@@ -1022,24 +935,18 @@ export const verifyEmailOtp =
         return;
       }
 
-      /* ===================================================
-         CREATE THE REAL USER NOW
-
-         This is the first and only point in the whole
-         registration flow where the `users` collection is
-         written to.
-      ==================================================== */
-
       let createdUserId:
         | string
         | null = null;
 
-      let createdWallet = false;
+      let createdWallet =
+        false;
 
       try {
         const user =
           await User.create({
-            name: pending.name,
+            name:
+              pending.name,
 
             emailEncrypted:
               pending.emailEncrypted,
@@ -1056,14 +963,17 @@ export const verifyEmailOtp =
             password:
               pending.passwordHash,
 
-            role: "user",
+            role:
+              "user",
 
-            authVersion: 0,
+            authVersion:
+              0,
 
             accountStatus:
               "active",
 
-            emailVerified: true,
+            emailVerified:
+              true,
 
             emailVerifiedAt:
               new Date(),
@@ -1089,50 +999,40 @@ export const verifyEmailOtp =
 
         const wallet =
           await Wallet.create({
-            userId: user._id,
-            balance: 0,
+            userId:
+              user._id,
+
+            balance:
+              0,
           });
 
-        createdWallet = true;
+        createdWallet =
+          true;
 
         user.walletId =
           wallet._id;
 
         await user.save();
 
-        await SecurityPreferences.create(
-          {
-            userId: user._id,
-          }
-        );
+        await SecurityPreferences.create({
+          userId:
+            user._id,
+        });
 
-        /* ===============================================
-           CONSUME THE PENDING REGISTRATION
-
-           Only deleted after the real user was created
-           successfully, so a failure above leaves the
-           pending record intact and retryable.
-        ================================================ */
-
-        await PendingRegistration.deleteOne(
-          { emailLookup }
-        );
-
-        /* ===============================================
-           SESSION + RESPONSE
-        ================================================ */
+        await PendingRegistration.deleteOne({
+          emailLookup,
+        });
 
         const session =
-          await issueAuthenticatedSession(
-            {
-              user,
-              req,
-              res,
-            }
-          );
+          await issueAuthenticatedSession({
+            user,
+            req,
+            res,
+          });
 
         await recordSecurityEvent({
-          userId: createdUserId,
+          userId:
+            createdUserId,
 
           eventType:
             "LOGIN_SUCCESS",
@@ -1140,7 +1040,8 @@ export const verifyEmailOtp =
           title:
             "Email verification completed",
 
-          status: "success",
+          status:
+            "success",
 
           detail:
             "The user completed email verification and an authenticated session was created.",
@@ -1168,15 +1069,18 @@ export const verifyEmailOtp =
             "Email verified successfully.",
 
           user: {
-            _id: createdUserId,
+            _id:
+              createdUserId,
 
-            name: user.name,
+            name:
+              user.name,
 
             email,
 
             phone,
 
-            role: user.role,
+            role:
+              user.role,
 
             kycStatus:
               user.kycStatus,
@@ -1193,25 +1097,21 @@ export const verifyEmailOtp =
               null,
           },
         });
-      } catch (createError: any) {
+      } catch (
+        createError: any
+      ) {
         console.error(
           "USER CREATION AFTER OTP VERIFY FAILED:",
           createError
         );
 
-        /* ===============================================
-           ROLL BACK PARTIAL USER CREATION
-
-           The pending registration is deliberately NOT
-           deleted here, so the person can retry without
-           re-uploading their profile image or re-entering
-           their details.
-        ================================================ */
-
         if (createdUserId) {
-          if (createdWallet) {
+          if (
+            createdWallet
+          ) {
             await Wallet.deleteOne({
-              userId: createdUserId,
+              userId:
+                createdUserId,
             }).catch(
               (cleanupError) =>
                 console.error(
@@ -1222,7 +1122,8 @@ export const verifyEmailOtp =
           }
 
           await User.deleteOne({
-            _id: createdUserId,
+            _id:
+              createdUserId,
           }).catch(
             (cleanupError) =>
               console.error(
@@ -1238,7 +1139,8 @@ export const verifyEmailOtp =
         ) {
           res.status(409).json({
             success: false,
-            code: "ACCOUNT_EXISTS",
+            code:
+              "ACCOUNT_EXISTS",
             message:
               "An account with this email or phone already exists.",
           });
@@ -1248,11 +1150,19 @@ export const verifyEmailOtp =
 
         throw createError;
       }
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "VERIFY EMAIL OTP ERROR:",
         error
       );
+
+      if (
+        res.headersSent
+      ) {
+        return;
+      }
 
       res.status(500).json({
         success: false,
@@ -1264,10 +1174,6 @@ export const verifyEmailOtp =
 
 /* =========================================================
    RESEND EMAIL OTP
-   POST /api/auth/resend-otp
-
-   Operates on PendingRegistration, not on User — because at
-   this stage no User document exists yet.
 ========================================================= */
 
 export const resendEmailOtp =
@@ -1298,10 +1204,6 @@ export const resendEmailOtp =
           normalizedEmail
         );
 
-      /* ===================================================
-         ALREADY A REAL, VERIFIED ACCOUNT?
-      ==================================================== */
-
       const existingUser =
         await User.findOne({
           emailLookup,
@@ -1321,14 +1223,10 @@ export const resendEmailOtp =
         return;
       }
 
-      /* ===================================================
-         PENDING REGISTRATION
-      ==================================================== */
-
       const pending =
-        await PendingRegistration.findOne(
-          { emailLookup }
-        );
+        await PendingRegistration.findOne({
+          emailLookup,
+        });
 
       if (!pending) {
         res.status(404).json({
@@ -1340,10 +1238,6 @@ export const resendEmailOtp =
         return;
       }
 
-      /* ===================================================
-         THROTTLE
-      ==================================================== */
-
       const elapsed =
         Date.now() -
         pending.lastSentAt.getTime();
@@ -1354,14 +1248,14 @@ export const resendEmailOtp =
       ) {
         const remaining =
           Math.ceil(
-            (OTP_RESEND_COOLDOWN_MS -
-              elapsed) /
-              1000
+            (
+              OTP_RESEND_COOLDOWN_MS -
+              elapsed
+            ) / 1000
           );
 
         res.status(429).json({
           success: false,
-
           message:
             `Please wait ${remaining} seconds before requesting another code.`,
         });
@@ -1369,39 +1263,23 @@ export const resendEmailOtp =
         return;
       }
 
-      /* ===================================================
-         GENERATE + SEND NEW OTP FIRST
-
-         The stored codeHash / expiresAt are only updated
-         after the email has actually been sent, so a failed
-         send leaves the previous, still-valid code intact.
-      ==================================================== */
-
       const otp =
         generateEmailOtp();
 
-      try {
-        await sendEmailVerificationOtp(
-          {
-            email: normalizedEmail,
-            otp,
-          }
-        );
-      } catch (emailError) {
-        console.error(
-          "RESEND OTP SEND ERROR:",
-          emailError
-        );
+      await sendEmailVerificationOtp({
+        email:
+          normalizedEmail,
+        otp,
+      });
 
-        throw emailError;
-      }
-
-      const now = new Date();
+      const now =
+        new Date();
 
       pending.codeHash =
         hashOtp(otp);
 
-      pending.attempts = 0;
+      pending.attempts =
+        0;
 
       pending.expiresAt =
         new Date(
@@ -1409,17 +1287,19 @@ export const resendEmailOtp =
             REGISTRATION_OTP_TTL_MS
         );
 
-      pending.lastSentAt = now;
+      pending.lastSentAt =
+        now;
 
       await pending.save();
 
       res.status(200).json({
         success: true,
-
         message:
           "A new verification code has been sent to your email.",
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "RESEND EMAIL OTP ERROR:",
         error
@@ -1427,7 +1307,6 @@ export const resendEmailOtp =
 
       res.status(500).json({
         success: false,
-
         message:
           "Unable to resend verification code.",
       });
@@ -1436,7 +1315,6 @@ export const resendEmailOtp =
 
 /* =========================================================
    LOGIN
-   POST /api/auth/login
 ========================================================= */
 
 export const loginUser =
@@ -1457,10 +1335,6 @@ export const loginUser =
           req.body?.password
         );
 
-      /* ===================================================
-         VALIDATION
-      ==================================================== */
-
       if (
         !normalizedEmail ||
         !normalizedPassword
@@ -1473,10 +1347,6 @@ export const loginUser =
 
         return;
       }
-
-      /* ===================================================
-         USER
-      ==================================================== */
 
       const emailLookup =
         createLookupHash(
@@ -1503,10 +1373,6 @@ export const loginUser =
 
         return;
       }
-
-      /* ===================================================
-         PASSWORD
-      ==================================================== */
 
       const storedPassword =
         user.get("password") as
@@ -1564,10 +1430,6 @@ export const loginUser =
         return;
       }
 
-      /* ===================================================
-         EMAIL VERIFICATION
-      ==================================================== */
-
       if (!user.emailVerified) {
         res.status(403).json({
           success: false,
@@ -1581,10 +1443,6 @@ export const loginUser =
 
         return;
       }
-
-      /* ===================================================
-         2FA
-      ==================================================== */
 
       const preferences =
         await SecurityPreferences.findOne({
@@ -1683,10 +1541,6 @@ export const loginUser =
         return;
       }
 
-      /* ===================================================
-         DEVICE / LOCATION
-      ==================================================== */
-
       const metadata =
         getSecurityRequestMetadata(
           req
@@ -1731,20 +1585,12 @@ export const loginUser =
             metadata.location
         );
 
-      /* ===================================================
-         CREATE SESSION
-      ==================================================== */
-
       const session =
         await issueAuthenticatedSession({
           user,
           req,
           res,
         });
-
-      /* ===================================================
-         SUCCESS EVENT
-      ==================================================== */
 
       await recordSecurityEvent({
         userId:
@@ -1767,10 +1613,6 @@ export const loginUser =
 
         req,
       });
-
-      /* ===================================================
-         SECURITY ALERTS BEFORE RESPONSE
-      ==================================================== */
 
       if (!knownDevice) {
         try {
@@ -1795,7 +1637,9 @@ export const loginUser =
 
             req,
           });
-        } catch (eventError) {
+        } catch (
+          eventError
+        ) {
           console.error(
             "NEW DEVICE EVENT ERROR:",
             eventError
@@ -1816,7 +1660,9 @@ export const loginUser =
             message:
               `A new ${metadata.device} session signed in from ${metadata.location}.`,
           });
-        } catch (alertError) {
+        } catch (
+          alertError
+        ) {
           console.error(
             "NEW DEVICE ALERT ERROR:",
             alertError
@@ -1839,17 +1685,15 @@ export const loginUser =
             message:
               `A successful sign-in was detected from ${metadata.location}. Review your active sessions if this was not you.`,
           });
-        } catch (alertError) {
+        } catch (
+          alertError
+        ) {
           console.error(
             "LOCATION ALERT ERROR:",
             alertError
           );
         }
       }
-
-      /* ===================================================
-         CONTACT
-      ==================================================== */
 
       const email =
         decryptContactValue(
@@ -1860,10 +1704,6 @@ export const loginUser =
         decryptContactValue(
           user.phoneEncrypted
         );
-
-      /* ===================================================
-         FINAL RESPONSE
-      ==================================================== */
 
       res.status(200).json({
         success: true,
@@ -1893,7 +1733,9 @@ export const loginUser =
             "",
         },
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "LOGIN ERROR:",
         error
@@ -1916,7 +1758,6 @@ export const loginUser =
 
 /* =========================================================
    VERIFY LOGIN 2FA
-   POST /api/auth/verify-2fa
 ========================================================= */
 
 export const verifyLoginTwoFactor =
@@ -1949,10 +1790,6 @@ export const verifyLoginTwoFactor =
         return;
       }
 
-      /* ===================================================
-         CHALLENGE
-      ==================================================== */
-
       const challenge =
         await TwoFactorChallenge.findOne({
           challengeId,
@@ -1983,10 +1820,6 @@ export const verifyLoginTwoFactor =
         return;
       }
 
-      /* ===================================================
-         ATTEMPT LIMIT
-      ==================================================== */
-
       if (
         challenge.attempts >=
         challenge.maxAttempts
@@ -2000,10 +1833,6 @@ export const verifyLoginTwoFactor =
 
         return;
       }
-
-      /* ===================================================
-         USER + PREFS
-      ==================================================== */
 
       const [
         user,
@@ -2037,15 +1866,7 @@ export const verifyLoginTwoFactor =
         return;
       }
 
-      /* ===================================================
-         VERIFY
-      ==================================================== */
-
       let verified = false;
-
-      /* ===================================================
-         BACKUP CODE
-      ==================================================== */
 
       const backupHash =
         hashOneTimeCode(code);
@@ -2075,13 +1896,7 @@ export const verifyLoginTwoFactor =
         );
 
         await preferences.save();
-      }
-
-      /* ===================================================
-         AUTHENTICATOR APP
-      ==================================================== */
-
-      else if (
+      } else if (
         challenge.method ===
         "app"
       ) {
@@ -2091,24 +1906,22 @@ export const verifyLoginTwoFactor =
             .secretEncrypted;
 
         if (encrypted) {
-          const secret =
-            decryptData(
-              encrypted
-            );
+          try {
+            const secret =
+              decryptData(
+                encrypted
+              );
 
-          verified =
-            verifyTotp(
-              secret,
-              code
-            );
+            verified =
+              verifyTotp(
+                secret,
+                code
+              );
+          } catch {
+            verified = false;
+          }
         }
-      }
-
-      /* ===================================================
-         EMAIL / SMS CODE
-      ==================================================== */
-
-      else {
+      } else {
         const providedHash =
           hashOneTimeCode(code);
 
@@ -2128,10 +1941,6 @@ export const verifyLoginTwoFactor =
               )
           );
       }
-
-      /* ===================================================
-         INVALID
-      ==================================================== */
 
       if (!verified) {
         challenge.attempts +=
@@ -2183,28 +1992,206 @@ export const verifyLoginTwoFactor =
         return;
       }
 
-      /* ===================================================
-         CONSUME CHALLENGE
-      ==================================================== */
-
       challenge.consumedAt =
         new Date();
 
       await challenge.save();
 
-      /* ===================================================
-         SESSION
-      ==================================================== */
+      const metadata =
+        getSecurityRequestMetadata(
+          req
+        );
 
-      await respondWithAuthenticatedUser({
-        user,
+      const [
+        knownDevice,
+        previousSessions,
+      ] =
+        await Promise.all([
+          AuthSession.exists({
+            userId:
+              user._id,
+
+            userAgentHash:
+              metadata.userAgentHash,
+          }),
+
+          AuthSession.find({
+            userId:
+              user._id,
+          })
+            .select(
+              "location"
+            )
+            .sort({
+              createdAt:
+                -1,
+            })
+            .limit(10)
+            .lean(),
+        ]);
+
+      const locationChanged =
+        metadata.location !==
+          "Unknown location" &&
+        previousSessions.length >
+          0 &&
+        !previousSessions.some(
+          (session) =>
+            session.location ===
+            metadata.location
+        );
+
+      const session =
+        await issueAuthenticatedSession({
+          user,
+          req,
+          res,
+        });
+
+      await recordSecurityEvent({
+        userId:
+          user._id.toString(),
+
+        eventType:
+          "LOGIN_SUCCESS",
+
+        title:
+          "Successful login",
+
+        status:
+          "success",
+
+        detail:
+          "A new authenticated session was created after two-factor verification.",
+
+        sessionId:
+          session.sessionId,
+
         req,
-        res,
+      });
+
+      if (!knownDevice) {
+        try {
+          await recordSecurityEvent({
+            userId:
+              user._id.toString(),
+
+            eventType:
+              "SUSPICIOUS_LOGIN",
+
+            title:
+              "New device sign-in",
+
+            status:
+              "info",
+
+            detail:
+              "A successful two-factor login was created from a device fingerprint not seen in previous sessions.",
+
+            sessionId:
+              session.sessionId,
+
+            req,
+          });
+        } catch (
+          eventError
+        ) {
+          console.error(
+            "2FA NEW DEVICE EVENT ERROR:",
+            eventError
+          );
+        }
+
+        try {
+          await dispatchSecurityAlert({
+            userId:
+              user._id.toString(),
+
+            kind:
+              "newDevice",
+
+            title:
+              "New device signed in",
+
+            message:
+              `A new ${metadata.device} session signed in from ${metadata.location}.`,
+          });
+        } catch (
+          alertError
+        ) {
+          console.error(
+            "2FA NEW DEVICE ALERT ERROR:",
+            alertError
+          );
+        }
+      }
+
+      if (locationChanged) {
+        try {
+          await dispatchSecurityAlert({
+            userId:
+              user._id.toString(),
+
+            kind:
+              "suspiciousActivity",
+
+            title:
+              "New sign-in location detected",
+
+            message:
+              `A successful sign-in was detected from ${metadata.location}. Review your active sessions if this was not you.`,
+          });
+        } catch (
+          alertError
+        ) {
+          console.error(
+            "2FA LOCATION ALERT ERROR:",
+            alertError
+          );
+        }
+      }
+
+      const email =
+        decryptContactValue(
+          user.emailEncrypted
+        );
+
+      const phone =
+        decryptContactValue(
+          user.phoneEncrypted
+        );
+
+      res.status(200).json({
+        success: true,
 
         message:
           "Login successful.",
+
+        user: {
+          _id:
+            user._id.toString(),
+
+          name:
+            user.name,
+
+          email,
+
+          phone,
+
+          role:
+            user.role,
+
+          kycStatus:
+            user.kycStatus,
+
+          avatarUrl:
+            user.avatarUrl ??
+            "",
+        },
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "VERIFY LOGIN 2FA ERROR:",
         error
@@ -2227,7 +2214,6 @@ export const verifyLoginTwoFactor =
 
 /* =========================================================
    FORGOT PASSWORD
-   POST /api/auth/forgot-password
 ========================================================= */
 
 export const forgotPassword =
@@ -2278,10 +2264,6 @@ export const forgotPassword =
         return;
       }
 
-      /* ===================================================
-         TOKEN
-      ==================================================== */
-
       const rawToken =
         crypto
           .randomBytes(32)
@@ -2292,7 +2274,9 @@ export const forgotPassword =
           .createHash(
             "sha256"
           )
-          .update(rawToken)
+          .update(
+            rawToken
+          )
           .digest("hex");
 
       user.resetPasswordTokenHash =
@@ -2306,10 +2290,6 @@ export const forgotPassword =
 
       await user.save();
 
-      /* ===================================================
-         FRONTEND URL
-      ==================================================== */
-
       const frontendUrl =
         process.env.FRONTEND_URL ||
         "http://localhost:3000";
@@ -2321,10 +2301,6 @@ export const forgotPassword =
           normalizedEmail
         )}`;
 
-      /* ===================================================
-         SEND EMAIL
-      ==================================================== */
-
       try {
         await sendPasswordResetEmail({
           email:
@@ -2332,7 +2308,9 @@ export const forgotPassword =
 
           resetUrl,
         });
-      } catch (error) {
+      } catch (
+        error
+      ) {
         user.resetPasswordTokenHash =
           undefined;
 
@@ -2344,17 +2322,15 @@ export const forgotPassword =
         throw error;
       }
 
-      /* ===================================================
-         RESPONSE
-      ==================================================== */
-
       res.status(200).json({
         success: true,
 
         message:
           genericMessage,
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "FORGOT PASSWORD ERROR:",
         error
@@ -2371,7 +2347,6 @@ export const forgotPassword =
 
 /* =========================================================
    RESET PASSWORD
-   POST /api/auth/reset-password
 ========================================================= */
 
 export const resetPassword =
@@ -2396,10 +2371,6 @@ export const resetPassword =
         toStringValue(
           req.body?.password
         );
-
-      /* ===================================================
-         VALIDATION
-      ==================================================== */
 
       if (
         !normalizedEmail ||
@@ -2430,10 +2401,6 @@ export const resetPassword =
         return;
       }
 
-      /* ===================================================
-         TOKEN HASH
-      ==================================================== */
-
       const tokenHash =
         crypto
           .createHash(
@@ -2443,10 +2410,6 @@ export const resetPassword =
             normalizedToken
           )
           .digest("hex");
-
-      /* ===================================================
-         USER
-      ==================================================== */
 
       const user =
         await User.findOne({
@@ -2477,10 +2440,6 @@ export const resetPassword =
         return;
       }
 
-      /* ===================================================
-         UPDATE PASSWORD
-      ==================================================== */
-
       user.password =
         await hashPassword(
           normalizedPassword
@@ -2508,17 +2467,9 @@ export const resetPassword =
 
       await user.save();
 
-      /* ===================================================
-         REVOKE ALL SESSIONS
-      ==================================================== */
-
       await revokeAllSessions(
         user._id.toString()
       );
-
-      /* ===================================================
-         CREATE FRESH SESSION
-      ==================================================== */
 
       await respondWithAuthenticatedUser({
         user,
@@ -2528,7 +2479,9 @@ export const resetPassword =
         message:
           "Password reset successfully.",
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "RESET PASSWORD ERROR:",
         error
@@ -2550,8 +2503,7 @@ export const resetPassword =
   };
 
 /* =========================================================
-   LOGOUT
-   POST /api/auth/logout
+   LOGOUT CURRENT SESSION
 ========================================================= */
 
 export const logoutUser =
@@ -2564,7 +2516,9 @@ export const logoutUser =
         req
       );
 
-      clearAuthCookie(res);
+      clearAuthCookie(
+        res
+      );
 
       res.status(200).json({
         success: true,
@@ -2572,23 +2526,413 @@ export const logoutUser =
         message:
           "Logged out successfully.",
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "LOGOUT ERROR:",
         error
       );
 
-      /* ===============================================
-         ALWAYS CLEAR COOKIE
-      ================================================ */
-
-      clearAuthCookie(res);
+      clearAuthCookie(
+        res
+      );
 
       res.status(200).json({
         success: true,
 
         message:
           "Logged out.",
+      });
+    }
+  };
+
+/* =========================================================
+   GET ACTIVE SESSIONS
+   GET /api/auth/sessions
+========================================================= */
+
+export const getActiveSessions =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      res.setHeader(
+        "Cache-Control",
+        "private, no-store, max-age=0"
+      );
+
+      if (!req.user?._id) {
+        res.status(401).json({
+          success: false,
+
+          message:
+            "Not authorized",
+        });
+
+        return;
+      }
+
+      const userId =
+        req.user._id.toString();
+
+      const currentSessionId =
+        getCurrentSessionId(
+          req
+        );
+
+      const sessions =
+        await AuthSession.find({
+          userId,
+
+          revokedAt: {
+            $exists:
+              false,
+          },
+
+          expiresAt: {
+            $gt:
+              new Date(),
+          },
+        })
+          .sort({
+            lastActiveAt:
+              -1,
+          })
+          .select(
+            [
+              "sessionId",
+              "device",
+              "browser",
+              "os",
+              "location",
+              "maskedIp",
+              "lastActiveAt",
+              "expiresAt",
+              "createdAt",
+              "updatedAt",
+            ].join(" ")
+          )
+          .lean();
+
+      const safeSessions =
+        sessions.map(
+          (
+            session
+          ) => ({
+            sessionId:
+              session.sessionId,
+
+            device:
+              session.device,
+
+            browser:
+              session.browser,
+
+            os:
+              session.os,
+
+            location:
+              session.location,
+
+            maskedIp:
+              session.maskedIp,
+
+            lastActiveAt:
+              session.lastActiveAt,
+
+            expiresAt:
+              session.expiresAt,
+
+            createdAt:
+              session.createdAt,
+
+            isCurrent:
+              session.sessionId ===
+              currentSessionId,
+          })
+        );
+
+      res.status(200).json({
+        success: true,
+
+        count:
+          safeSessions.length,
+
+        sessions:
+          safeSessions,
+      });
+    } catch (
+      error
+    ) {
+      console.error(
+        "GET ACTIVE SESSIONS ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+
+        message:
+          "Unable to load active sessions.",
+      });
+    }
+  };
+
+/* =========================================================
+   LOGOUT ONE SESSION
+   DELETE /api/auth/sessions/:sessionId
+========================================================= */
+
+export const logoutSession =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      res.setHeader(
+        "Cache-Control",
+        "private, no-store, max-age=0"
+      );
+
+      if (!req.user?._id) {
+        res.status(401).json({
+          success: false,
+
+          message:
+            "Not authorized",
+        });
+
+        return;
+      }
+
+      const userId =
+        req.user._id.toString();
+
+      const rawSessionId =
+        req.params.sessionId;
+
+      const sessionId =
+        Array.isArray(
+          rawSessionId
+        )
+          ? rawSessionId[0]
+          : rawSessionId;
+
+      if (
+        typeof sessionId !==
+          "string" ||
+        !sessionId.trim()
+      ) {
+        res.status(400).json({
+          success: false,
+
+          message:
+            "A valid session ID is required.",
+        });
+
+        return;
+      }
+
+      const currentSessionId =
+        getCurrentSessionId(
+          req
+        );
+
+      if (
+        currentSessionId &&
+        currentSessionId ===
+          sessionId.trim()
+      ) {
+        res.status(400).json({
+          success: false,
+
+          code:
+            "CURRENT_SESSION",
+
+          message:
+            "This is your current session. Use logout to sign out from this device.",
+        });
+
+        return;
+      }
+
+      const revoked =
+        await revokeSessionById({
+          userId,
+
+          sessionId:
+            sessionId.trim(),
+        });
+
+      if (!revoked) {
+        res.status(404).json({
+          success: false,
+
+          message:
+            "Active session not found.",
+        });
+
+        return;
+      }
+
+      try {
+        await recordSecurityEvent({
+          userId,
+
+          eventType:
+            "SESSION_REVOKED",
+
+          title:
+            "Device session signed out",
+
+          status:
+            "info",
+
+          detail:
+            "An authenticated device session was revoked from Security Center.",
+
+          req,
+        });
+      } catch (
+        eventError
+      ) {
+        console.error(
+          "SESSION REVOKE EVENT ERROR:",
+          eventError
+        );
+      }
+
+      res.status(200).json({
+        success: true,
+
+        message:
+          "The selected device has been logged out.",
+      });
+    } catch (
+      error
+    ) {
+      console.error(
+        "LOGOUT SESSION ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+
+        message:
+          "Unable to log out this device.",
+      });
+    }
+  };
+
+/* =========================================================
+   LOGOUT ALL OTHER SESSIONS
+   DELETE /api/auth/sessions/others
+========================================================= */
+
+export const logoutOtherSessions =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      res.setHeader(
+        "Cache-Control",
+        "private, no-store, max-age=0"
+      );
+
+      if (!req.user?._id) {
+        res.status(401).json({
+          success: false,
+
+          message:
+            "Not authorized",
+        });
+
+        return;
+      }
+
+      const userId =
+        req.user._id.toString();
+
+      const currentSessionId =
+        getCurrentSessionId(
+          req
+        );
+
+      if (!currentSessionId) {
+        res.status(401).json({
+          success: false,
+
+          message:
+            "Current session could not be identified.",
+        });
+
+        return;
+      }
+
+      const revokedCount =
+        await revokeAllOtherSessions({
+          userId,
+
+          currentSessionId,
+        });
+
+      try {
+        await recordSecurityEvent({
+          userId,
+
+          eventType:
+            "SESSION_REVOKED",
+
+          title:
+            "Other device sessions signed out",
+
+          status:
+            "info",
+
+          detail:
+            `All other active sessions were revoked from Security Center. ${revokedCount} session(s) were affected.`,
+
+          sessionId:
+            currentSessionId,
+
+          req,
+        });
+      } catch (
+        eventError
+      ) {
+        console.error(
+          "REVOKE OTHER SESSIONS EVENT ERROR:",
+          eventError
+        );
+      }
+
+      res.status(200).json({
+        success: true,
+
+        revokedCount,
+
+        message:
+          revokedCount > 0
+            ? `${revokedCount} other device session(s) have been logged out.`
+            : "No other active device sessions were found.",
+      });
+    } catch (
+      error
+    ) {
+      console.error(
+        "LOGOUT OTHER SESSIONS ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+
+        message:
+          "Unable to log out other devices.",
       });
     }
   };

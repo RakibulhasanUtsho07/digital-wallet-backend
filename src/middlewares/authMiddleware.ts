@@ -28,22 +28,41 @@ export interface AuthRequest
     _id: string;
 
     /*
-     * Keep this synchronized with UserRole:
-     * user | support | analyst | admin
+     * Must stay synchronized with UserRole.
      */
     role: UserRole;
 
     /*
-     * Added by the session-backed authentication system.
-     * Security Center controllers use this to identify the
-     * browser/device session that made the request.
+     * Server-side authentication session ID.
+     *
+     * Used by:
+     * - Security Center
+     * - Active Sessions
+     * - Current session detection
+     * - Logout specific session
+     * - Logout other sessions
      */
     sessionId?: string;
 
-    /* JWT iat value, expressed as seconds since epoch. */
+    /*
+     * JWT issued-at timestamp.
+     * Seconds since Unix epoch.
+     */
     tokenIssuedAt?: number;
   };
 }
+
+/* =========================================================
+   CONSTANTS
+========================================================= */
+
+/*
+ * Avoid updating lastActiveAt on every API request.
+ * A session activity update is performed at most once
+ * every 5 minutes.
+ */
+const SESSION_ACTIVITY_REFRESH_MS =
+  5 * 60 * 1000;
 
 /* =========================================================
    PROTECT
@@ -56,6 +75,10 @@ export const protect =
     next: NextFunction
   ): Promise<void> => {
     try {
+      /* ===================================================
+         READ TOKEN
+      ==================================================== */
+
       const token =
         readTokenFromRequest(
           req
@@ -64,6 +87,7 @@ export const protect =
       if (!token) {
         res.status(401).json({
           success: false,
+
           message:
             "Not authorized, no token provided",
         });
@@ -71,14 +95,22 @@ export const protect =
         return;
       }
 
+      /* ===================================================
+         VERIFY JWT
+      ==================================================== */
+
       const decoded =
         decodeSessionToken(
           token
         );
 
-      if (!decoded?.id) {
+      if (
+        !decoded ||
+        !decoded.id
+      ) {
         res.status(401).json({
           success: false,
+
           message:
             "Not authorized, invalid token",
         });
@@ -86,16 +118,23 @@ export const protect =
         return;
       }
 
+      /* ===================================================
+         LOAD USER
+      ==================================================== */
+
       const foundUser =
         await User.findById(
           decoded.id
-        ).select(
-          "role authVersion accountStatus"
-        );
+        )
+          .select(
+            "role authVersion accountStatus"
+          )
+          .lean();
 
       if (!foundUser) {
         res.status(401).json({
           success: false,
+
           message:
             "Not authorized, user not found",
         });
@@ -103,12 +142,17 @@ export const protect =
         return;
       }
 
+      /* ===================================================
+         ACCOUNT STATUS
+      ==================================================== */
+
       if (
         foundUser.accountStatus ===
         "deleted"
       ) {
         res.status(401).json({
           success: false,
+
           message:
             "This account is no longer active.",
         });
@@ -116,22 +160,44 @@ export const protect =
         return;
       }
 
-      /* =====================================================
-         AUTH VERSION CHECK
-      ====================================================== */
+      /* ===================================================
+         AUTH VERSION
+      ==================================================== */
 
       const tokenVersion =
-        decoded.authVersion ?? 0;
+        Number(
+          decoded.authVersion ?? 0
+        );
 
       const userVersion =
-        foundUser.authVersion ?? 0;
+        Number(
+          foundUser.authVersion ?? 0
+        );
 
+      /*
+       * authVersion is incremented when:
+       * - password is reset
+       * - sessions are globally revoked
+       * - other security events require JWT invalidation
+       */
       if (
+        !Number.isInteger(
+          tokenVersion
+        ) ||
+        tokenVersion < 0 ||
+        !Number.isInteger(
+          userVersion
+        ) ||
+        userVersion < 0 ||
         tokenVersion !==
-        userVersion
+          userVersion
       ) {
         res.status(401).json({
           success: false,
+
+          code:
+            "AUTH_VERSION_MISMATCH",
+
           message:
             "Session has been revoked. Please sign in again.",
         });
@@ -139,16 +205,34 @@ export const protect =
         return;
       }
 
-      /* =====================================================
-         SERVER-SIDE SESSION CHECK
-      ====================================================== */
+      /* ===================================================
+         SERVER-SIDE SESSION VALIDATION
+      ==================================================== */
 
       /*
-       * sid is present on all new security-enabled JWTs.
-       * Old tokens without sid remain temporarily compatible.
+       * New security-enabled JWTs always contain `sid`.
+       *
+       * The sid connects:
+       *
+       * Browser
+       *   ↓
+       * JWT
+       *   ↓
+       * AuthSession
+       *
+       * This makes individual device/session revocation
+       * possible without revoking every session.
        */
+
+      let activeSession:
+        | {
+            _id: unknown;
+            lastActiveAt?: Date;
+          }
+        | null = null;
+
       if (decoded.sid) {
-        const session =
+        activeSession =
           await AuthSession.findOne({
             userId:
               foundUser._id,
@@ -157,21 +241,26 @@ export const protect =
               decoded.sid,
 
             revokedAt: {
-              $exists:
-                false,
+              $exists: false,
             },
 
             expiresAt: {
               $gt:
                 new Date(),
             },
-          }).select(
-            "lastActiveAt"
-          );
+          })
+            .select(
+              "_id lastActiveAt"
+            )
+            .lean();
 
-        if (!session) {
+        if (!activeSession) {
           res.status(401).json({
             success: false,
+
+            code:
+              "SESSION_REVOKED_OR_EXPIRED",
+
             message:
               "Session is no longer active. Please sign in again.",
           });
@@ -179,25 +268,61 @@ export const protect =
           return;
         }
 
-        /*
-         * Avoid a database write on every API request.
-         * Refresh session activity at most once per 5 minutes.
-         */
-        if (
-          Date.now() -
-            session.lastActiveAt.getTime() >
-          5 * 60 * 1000
-        ) {
-          session.lastActiveAt =
-            new Date();
+        /* =================================================
+           REFRESH SESSION ACTIVITY
+        ================================================== */
 
-          await session.save();
+        const lastActiveTime =
+          activeSession.lastActiveAt
+            instanceof Date
+            ? activeSession.lastActiveAt.getTime()
+            : 0;
+
+        const sessionActivityAge =
+          Date.now() -
+          lastActiveTime;
+
+        if (
+          sessionActivityAge >=
+          SESSION_ACTIVITY_REFRESH_MS
+        ) {
+          /*
+           * Update conditionally so a revoked/expired
+           * session cannot accidentally be refreshed.
+           */
+          await AuthSession.updateOne(
+            {
+              _id:
+                activeSession._id,
+
+              userId:
+                foundUser._id,
+
+              sessionId:
+                decoded.sid,
+
+              revokedAt: {
+                $exists: false,
+              },
+
+              expiresAt: {
+                $gt:
+                  new Date(),
+              },
+            },
+            {
+              $set: {
+                lastActiveAt:
+                  new Date(),
+              },
+            }
+          );
         }
       }
 
-      /* =====================================================
+      /* ===================================================
          ATTACH AUTH CONTEXT
-      ====================================================== */
+      ==================================================== */
 
       req.user = {
         _id:
@@ -206,6 +331,13 @@ export const protect =
         role:
           foundUser.role,
 
+        /*
+         * Important:
+         * This comes from the verified JWT.
+         *
+         * Security Center can now use:
+         * req.user.sessionId
+         */
         sessionId:
           decoded.sid,
 
@@ -213,10 +345,18 @@ export const protect =
           decoded.iat,
       };
 
+      /* ===================================================
+         CONTINUE
+      ==================================================== */
+
       next();
     } catch (
       error: unknown
     ) {
+      /*
+       * Never expose internal JWT, database,
+       * crypto, or authentication implementation details.
+       */
       console.error(
         "AUTH MIDDLEWARE ERROR:",
         error instanceof Error
@@ -224,8 +364,15 @@ export const protect =
           : error
       );
 
+      if (
+        res.headersSent
+      ) {
+        return;
+      }
+
       res.status(401).json({
         success: false,
+
         message:
           "Not authorized, token failed",
       });

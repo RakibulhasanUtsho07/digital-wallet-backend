@@ -30,6 +30,29 @@ export type KYCStatus =
   | "verified"
   | "rejected";
 
+/* =========================================================
+   THEME
+========================================================= */
+
+export type ThemeMode =
+  | "light"
+  | "dark"
+  | "eye-care"
+  | "ocean"
+  | "forest";
+
+/* =========================================================
+   USER PREFERENCES
+========================================================= */
+
+export interface IUserPreferences {
+  theme: ThemeMode;
+}
+
+/* =========================================================
+   USER
+========================================================= */
+
 export interface IUser extends Document {
   name: string;
 
@@ -67,6 +90,9 @@ export interface IUser extends Document {
   /* Wallet */
   walletId?: mongoose.Types.ObjectId;
 
+  /* User Preferences */
+  preferences: IUserPreferences;
+
   /* Password reset */
   resetPasswordTokenHash?: string;
   resetPasswordExpires?: Date;
@@ -94,6 +120,31 @@ const encryptedDataSchema =
 
       authTag: {
         type: String,
+        required: true,
+      },
+    },
+    {
+      _id: false,
+    }
+  );
+
+/* =========================================================
+   USER PREFERENCES SCHEMA
+========================================================= */
+
+const userPreferencesSchema =
+  new Schema<IUserPreferences>(
+    {
+      theme: {
+        type: String,
+        enum: [
+          "light",
+          "dark",
+          "eye-care",
+          "ocean",
+          "forest",
+        ],
+        default: "light",
         required: true,
       },
     },
@@ -268,6 +319,18 @@ const userSchema =
         type: Schema.Types.ObjectId,
         ref: "Wallet",
         default: undefined,
+      },
+
+      /* =====================================================
+         USER PREFERENCES
+      ====================================================== */
+
+      preferences: {
+        type: userPreferencesSchema,
+        default: () => ({
+          theme: "light",
+        }),
+        required: true,
       },
 
       /* =====================================================
