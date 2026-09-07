@@ -1,4 +1,7 @@
-import { Response } from "express";
+import {
+  Request,
+  Response,
+} from "express";
 
 import {
   AuthRequest,
@@ -6,6 +9,7 @@ import {
 
 import {
   User,
+  type ThemeMode,
 } from "../models/User.js";
 
 import {
@@ -47,6 +51,29 @@ const safeDecrypt = (
 
     return "";
   }
+};
+
+/* =========================================================
+   THEME VALIDATION
+========================================================= */
+
+const VALID_THEMES: readonly ThemeMode[] = [
+  "light",
+  "dark",
+  "eye-care",
+  "ocean",
+  "forest",
+];
+
+const isValidTheme = (
+  value: unknown
+): value is ThemeMode => {
+  return (
+    typeof value === "string" &&
+    VALID_THEMES.includes(
+      value as ThemeMode
+    )
+  );
 };
 
 /* =========================================================
@@ -146,6 +173,13 @@ export const getUserProfile =
 
           createdAt:
             user.createdAt,
+
+          preferences: {
+            theme:
+              user.preferences
+                ?.theme ??
+              "light",
+          },
         },
 
         wallet:
@@ -171,6 +205,218 @@ export const getUserProfile =
         success: false,
         message:
           "Failed to get user profile",
+      });
+    }
+  };
+
+/* =========================================================
+   GET USER PREFERENCES
+   GET /api/users/preferences
+   Private
+========================================================= */
+
+export const getUserPreferences =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      /* =====================================================
+         AUTH
+      ====================================================== */
+
+      if (!req.user?._id) {
+        res.status(401).json({
+          success: false,
+          message:
+            "Not authorized",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         USER
+      ====================================================== */
+
+      const user =
+        await User.findById(
+          req.user._id
+        ).select(
+          "preferences"
+        );
+
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message:
+            "User not found",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         RESPONSE
+      ====================================================== */
+
+      res.status(200).json({
+        success: true,
+
+        preferences: {
+          theme:
+            user.preferences
+              ?.theme ??
+            "light",
+        },
+      });
+    } catch (
+      error: unknown
+    ) {
+      console.error(
+        "GET USER PREFERENCES ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to get user preferences",
+      });
+    }
+  };
+
+/* =========================================================
+   UPDATE USER PREFERENCES
+   PATCH /api/users/preferences
+   Private
+========================================================= */
+
+export const updateUserPreferences =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      /* =====================================================
+         AUTH
+      ====================================================== */
+
+      if (!req.user?._id) {
+        res.status(401).json({
+          success: false,
+          message:
+            "Not authorized",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         INPUT
+      ====================================================== */
+
+      const {
+        theme,
+      }: {
+        theme?: unknown;
+      } = req.body ?? {};
+
+      /* =====================================================
+         VALIDATE THEME
+      ====================================================== */
+
+      if (
+        theme !==
+        undefined &&
+        !isValidTheme(theme)
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            "Invalid theme. Allowed themes are light, dark, eye-care, ocean and forest.",
+        });
+
+        return;
+      }
+
+      /*
+       * At least one supported preference must
+       * be provided.
+       */
+      if (
+        theme === undefined
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            "No valid preference was provided.",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         UPDATE
+      ====================================================== */
+
+      const updatedUser =
+        await User.findByIdAndUpdate(
+          req.user._id,
+          {
+            $set: {
+              "preferences.theme":
+                theme,
+            },
+          },
+          {
+            new: true,
+            runValidators: true,
+          }
+        ).select(
+          "preferences"
+        );
+
+      if (!updatedUser) {
+        res.status(404).json({
+          success: false,
+          message:
+            "User not found",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         RESPONSE
+      ====================================================== */
+
+      res.status(200).json({
+        success: true,
+
+        message:
+          "User preferences updated successfully.",
+
+        preferences: {
+          theme:
+            updatedUser
+              .preferences
+              ?.theme ??
+            "light",
+        },
+      });
+    } catch (
+      error: unknown
+    ) {
+      console.error(
+        "UPDATE USER PREFERENCES ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Failed to update user preferences",
       });
     }
   };
