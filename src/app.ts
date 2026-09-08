@@ -8,11 +8,12 @@ import cookieParser from "cookie-parser";
 // =========================================================
 
 import connectDB from "./config/db.js";
-import analyticsRoutes from "./routes/analyticsRoutes.js";
+
 // =========================================================
 // ROUTES
 // =========================================================
 
+import analyticsRoutes from "./routes/analyticsRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import currentUserRoutes from "./routes/currentUserRoutes.js";
 import transactionRoutes from "./routes/transactionRoutes.js";
@@ -34,22 +35,39 @@ import platformSettingsRoutes from "./routes/platformSettingsRoutes.js";
 import systemLogsRoutes from "./routes/systemLogsRoutes.js";
 import userManagementRoutes from "./routes/userManagementRoutes.js";
 import adminOverviewRoutes from "./routes/adminOverviewRoutes.js";
+import securityRoutes from "./routes/securityRoutes.js";
+
+/*
+ * PAYMENT / ADD MONEY
+ *
+ * Provides:
+ * POST /api/payment/validate-source
+ * POST /api/payment/add-money
+ */
+import paymentRoutes from "./routes/paymentRoutes.js";
 
 /*
  * Revenue Intelligence
  */
 import revenueRoutes from "./routes/revenueRoutes.js";
+
+/*
+ * Advanced E-KYC
+ */
 import { createAdminEKYCRouter } from "./modules/ekyc/routes/adminEkycRoutes.js";
+
 /*
  * Admin Support Operations
  */
 import supportRoutes from "./routes/supportRoutes.js";
 
 /*
- * Admin KYC Intelligence / Automated Review
+ * Admin KYC Intelligence
  */
 import kycIntelligenceRoutes from "./routes/kycIntelligenceRoutes.js";
+
 import supportTicketRoutes from "./routes/supportTicketRoutes.js";
+
 // =========================================================
 // TELEMETRY MIDDLEWARE
 // =========================================================
@@ -100,8 +118,7 @@ const allowedOrigins = [
    CORS OPTIONS
 ========================================================= */
 
-const corsOptions:
-  cors.CorsOptions = {
+const corsOptions: cors.CorsOptions = {
   origin: (
     origin,
     callback
@@ -110,13 +127,11 @@ const corsOptions:
      * Allow requests without an Origin header.
      *
      * Examples:
-     * Postman
-     * server-to-server
-     * same-origin tooling
+     * - Postman
+     * - server-to-server
+     * - same-origin tooling
      */
-    if (
-      !origin
-    ) {
+    if (!origin) {
       callback(
         null,
         true
@@ -149,8 +164,7 @@ const corsOptions:
     );
   },
 
-  credentials:
-    true,
+  credentials: true,
 
   methods: [
     "GET",
@@ -169,16 +183,12 @@ const corsOptions:
     "X-Trace-Id",
   ],
 
-  /*
-   * Allow frontend to read telemetry IDs.
-   */
   exposedHeaders: [
     "X-Request-Id",
     "X-Trace-Id",
   ],
 
-  optionsSuccessStatus:
-    204,
+  optionsSuccessStatus: 204,
 };
 
 /* =========================================================
@@ -211,11 +221,8 @@ app.use(
 
 app.use(
   express.urlencoded({
-    extended:
-      true,
-
-    limit:
-      "2mb",
+    extended: true,
+    limit: "2mb",
   })
 );
 
@@ -267,25 +274,20 @@ app.use(
         error
       );
 
-      res
-        .status(
-          503
-        )
-        .json({
-          success:
-            false,
+      res.status(
+        503
+      ).json({
+        success: false,
 
-          message:
-            "Database connection failed. Please try again shortly.",
-        });
+        message:
+          "Database connection failed. Please try again shortly.",
+      });
     }
   }
 );
 
 /* =========================================================
    SYSTEM TELEMETRY
-
-   Keep AFTER DB connection and BEFORE rate limiter/routes.
 ========================================================= */
 
 app.use(
@@ -327,7 +329,7 @@ app.use(
 );
 
 /* =========================================================
-   ROOT ROUTE
+   ROOT
 ========================================================= */
 
 app.get(
@@ -336,17 +338,15 @@ app.get(
     _req,
     res
   ) => {
-    res
-      .status(
-        200
-      )
-      .json({
-        status:
-          "Success",
+    res.status(
+      200
+    ).json({
+      status:
+        "Success",
 
-        message:
-          "Digital Wallet API is running",
-      });
+      message:
+        "Digital Wallet API is running",
+    });
   }
 );
 
@@ -360,17 +360,15 @@ app.get(
     _req,
     res
   ) => {
-    res
-      .status(
-        200
-      )
-      .json({
-        success:
-          true,
+    res.status(
+      200
+    ).json({
+      success:
+        true,
 
-        message:
-          "Digital Wallet API is running",
-      });
+      message:
+        "Digital Wallet API is running",
+    });
   }
 );
 
@@ -384,21 +382,18 @@ app.get(
     _req,
     res
   ) => {
-    res
-      .status(
-        200
-      )
-      .json({
-        success:
-          true,
+    res.status(
+      200
+    ).json({
+      success:
+        true,
 
-        message:
-          "Digital Wallet API is healthy",
+      message:
+        "Digital Wallet API is healthy",
 
-        timestamp:
-          new Date()
-            .toISOString(),
-      });
+      timestamp:
+        new Date().toISOString(),
+    });
   }
 );
 
@@ -412,9 +407,7 @@ app.use(
 );
 
 /* =========================================================
-   CURRENT AUTHENTICATED USER
-
-   Provides GET /api/auth/me for the frontend.
+   CURRENT USER
 ========================================================= */
 
 app.use(
@@ -432,7 +425,16 @@ app.use(
 );
 
 /* =========================================================
-   USER SETTINGS
+   SECURITY
+========================================================= */
+
+app.use(
+  "/api/security",
+  securityRoutes
+);
+
+/* =========================================================
+   SETTINGS
 ========================================================= */
 
 app.use(
@@ -456,6 +458,26 @@ app.use(
 app.use(
   "/api/funds",
   fundsRoutes
+);
+
+/* =========================================================
+   PAYMENT / ADD MONEY
+========================================================= */
+
+/*
+ * IMPORTANT
+ *
+ * Frontend calls:
+ *
+ * POST /api/payment/validate-source
+ * POST /api/payment/add-money
+ *
+ * Therefore the router MUST be mounted here.
+ */
+
+app.use(
+  "/api/payment",
+  paymentRoutes
 );
 
 /* =========================================================
@@ -540,18 +562,6 @@ app.use(
 );
 
 /* =========================================================
-   ADMIN ROUTES
-
-   IMPORTANT:
-
-   Specific admin routes MUST stay before:
-
-   /api/admin
-
-   because /api/admin is the generic admin router.
-========================================================= */
-
-/* =========================================================
    ADMIN SYSTEM LOGS
 ========================================================= */
 
@@ -577,10 +587,9 @@ app.use(
   "/api/admin/audit-logs",
   auditRoutes
 );
-/* =========================================================
-   ADMIN E-KYC (ADVANCED VERIFICATION REVIEW)
 
-   Keep BEFORE the generic /api/admin router.
+/* =========================================================
+   ADMIN E-KYC
 ========================================================= */
 
 app.use(
@@ -597,6 +606,9 @@ app.use(
   revenueRoutes
 );
 
+/* =========================================================
+   SUPPORT TICKETS
+========================================================= */
 
 app.use(
   "/api/support/tickets",
@@ -611,15 +623,18 @@ app.use(
   "/api/admin/support",
   supportRoutes
 );
+
+/* =========================================================
+   ADMIN ANALYTICS
+========================================================= */
+
 app.use(
   "/api/admin/analytics",
   analyticsRoutes
 );
 
 /* =========================================================
-   ADMIN KYC INTELLIGENCE / AUTOMATED REVIEW
-
-   Keep BEFORE the generic /api/admin router.
+   ADMIN KYC INTELLIGENCE
 ========================================================= */
 
 app.use(
@@ -629,8 +644,6 @@ app.use(
 
 /* =========================================================
    ADMIN USER MANAGEMENT
-
-   Keep BEFORE the generic /api/admin router.
 ========================================================= */
 
 app.use(
@@ -640,11 +653,6 @@ app.use(
 
 /* =========================================================
    ADMIN DASHBOARD OVERVIEW
-
-   Provides GET /api/admin/overview and
-   GET /api/admin/overview/export.
-
-   Keep BEFORE the generic /api/admin router.
 ========================================================= */
 
 app.use(
@@ -654,8 +662,6 @@ app.use(
 
 /* =========================================================
    GENERIC ADMIN ROUTER
-
-   KEEP THIS LAST among /api/admin routes.
 ========================================================= */
 
 app.use(
@@ -673,8 +679,6 @@ app.use(
 
 /* =========================================================
    SYSTEM ERROR TELEMETRY
-
-   Keep before final errorHandler.
 ========================================================= */
 
 app.use(

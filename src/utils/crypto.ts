@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import crypto from "node:crypto";
 
 /* =========================================================
    TYPES
@@ -17,12 +17,11 @@ export interface EncryptedData {
 function getRequiredEnv(
   name: string
 ): string {
-  const value =
-    process.env[name];
+  const value = process.env[name]?.trim();
 
   if (!value) {
     throw new Error(
-      `${name} is missing`
+      `${name} is missing from environment variables.`
     );
   }
 
@@ -39,19 +38,65 @@ function getEncryptionKey(): Buffer {
       "DATA_ENCRYPTION_KEY"
     );
 
-  const key =
-    Buffer.from(
-      rawKey,
-      "hex"
+  /*
+   * Must be exactly 32 bytes.
+   * 32 bytes = 64 hexadecimal characters.
+   */
+
+  if (!/^[a-fA-F0-9]{64}$/.test(rawKey)) {
+    throw new Error(
+      "DATA_ENCRYPTION_KEY must be a 64-character hexadecimal string."
     );
+  }
+
+  const key = Buffer.from(
+    rawKey,
+    "hex"
+  );
 
   if (key.length !== 32) {
     throw new Error(
-      "DATA_ENCRYPTION_KEY must be a 64-character hex string."
+      "DATA_ENCRYPTION_KEY must decode to exactly 32 bytes."
     );
   }
 
   return key;
+}
+
+/* =========================================================
+   GET LOOKUP HMAC KEY
+========================================================= */
+
+function getLookupHmacKey(): string {
+  const key =
+    getRequiredEnv(
+      "LOOKUP_HMAC_KEY"
+    );
+
+  /*
+   * HMAC keys should be sufficiently long.
+   */
+
+  if (key.length < 32) {
+    throw new Error(
+      "LOOKUP_HMAC_KEY must contain at least 32 characters."
+    );
+  }
+
+  return key;
+}
+
+/* =========================================================
+   NORMALIZE LOOKUP VALUE
+========================================================= */
+
+function normalizeLookupValue(
+  value: string
+): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
 }
 
 /* =========================================================
@@ -61,8 +106,18 @@ function getEncryptionKey(): Buffer {
 export function encryptData(
   value: string
 ): EncryptedData {
+  if (typeof value !== "string") {
+    throw new TypeError(
+      "Value to encrypt must be a string."
+    );
+  }
+
   const key =
     getEncryptionKey();
+
+  /*
+   * 12-byte IV is recommended for GCM.
+   */
 
   const iv =
     crypto.randomBytes(12);
@@ -88,19 +143,13 @@ export function encryptData(
 
   return {
     encrypted:
-      encrypted.toString(
-        "hex"
-      ),
+      encrypted.toString("hex"),
 
     iv:
-      iv.toString(
-        "hex"
-      ),
+      iv.toString("hex"),
 
     authTag:
-      authTag.toString(
-        "hex"
-      ),
+      authTag.toString("hex"),
   };
 }
 
@@ -111,33 +160,73 @@ export function encryptData(
 export function decryptData(
   data: EncryptedData
 ): string {
+  if (
+    !data ||
+    typeof data !== "object"
+  ) {
+    throw new TypeError(
+      "Encrypted data is required."
+    );
+  }
+
+  if (
+    !data.encrypted ||
+    !data.iv ||
+    !data.authTag
+  ) {
+    throw new Error(
+      "Invalid encrypted data."
+    );
+  }
+
   const key =
     getEncryptionKey();
+
+  const iv =
+    Buffer.from(
+      data.iv,
+      "hex"
+    );
+
+  const authTag =
+    Buffer.from(
+      data.authTag,
+      "hex"
+    );
+
+  const encrypted =
+    Buffer.from(
+      data.encrypted,
+      "hex"
+    );
+
+  if (iv.length !== 12) {
+    throw new Error(
+      "Invalid AES-GCM IV."
+    );
+  }
+
+  if (authTag.length !== 16) {
+    throw new Error(
+      "Invalid AES-GCM authentication tag."
+    );
+  }
 
   const decipher =
     crypto.createDecipheriv(
       "aes-256-gcm",
       key,
-      Buffer.from(
-        data.iv,
-        "hex"
-      )
+      iv
     );
 
   decipher.setAuthTag(
-    Buffer.from(
-      data.authTag,
-      "hex"
-    )
+    authTag
   );
 
   const decrypted =
     Buffer.concat([
       decipher.update(
-        Buffer.from(
-          data.encrypted,
-          "hex"
-        )
+        encrypted
       ),
       decipher.final(),
     ]);
@@ -151,23 +240,58 @@ export function decryptData(
    HMAC LOOKUP
 ========================================================= */
 
+/*
+ * IMPORTANT
+ *
+ * The same normalization + hashing logic MUST be used by:
+ *
+ * - Payment source seed
+ * - Payment source validation
+ * - Payment service
+ * - User email lookup
+ * - User phone lookup
+ *
+ * Example:
+ *
+ * 01710000001
+ *     ↓
+ * normalizeLookupValue()
+ *     ↓
+ * createHmac("sha256", LOOKUP_HMAC_KEY)
+ *     ↓
+ * 64-character hex hash
+ */
+
 export function createLookupHash(
   value: string
 ): string {
-  const hmacKey =
-    getRequiredEnv(
-      "LOOKUP_HMAC_KEY"
+  if (
+    typeof value !== "string"
+  ) {
+    throw new TypeError(
+      "Lookup value must be a string."
     );
+  }
+
+  const normalized =
+    normalizeLookupValue(
+      value
+    );
+
+  if (!normalized) {
+    throw new Error(
+      "Cannot create lookup hash from an empty value."
+    );
+  }
 
   return crypto
     .createHmac(
       "sha256",
-      hmacKey
+      getLookupHmacKey()
     )
     .update(
-      value
-        .trim()
-        .toLowerCase()
+      normalized,
+      "utf8"
     )
     .digest("hex");
 }
@@ -179,6 +303,12 @@ export function createLookupHash(
 export function normalizePhone(
   phone: string
 ): string {
+  if (
+    typeof phone !== "string"
+  ) {
+    return "";
+  }
+
   return phone
     .replace(/\s+/g, "")
     .replace(/-/g, "")
@@ -192,7 +322,106 @@ export function normalizePhone(
 export function normalizeEmail(
   email: string
 ): string {
+  if (
+    typeof email !== "string"
+  ) {
+    return "";
+  }
+
   return email
     .trim()
     .toLowerCase();
+}
+
+/* =========================================================
+   HASH SECRET CODE
+========================================================= */
+
+/*
+ * Used by demo payment-source accounts.
+ *
+ * Never store the plain secret code in MongoDB.
+ */
+
+export function hashSecretCode(
+  value: string
+): string {
+  if (
+    typeof value !== "string"
+  ) {
+    throw new TypeError(
+      "Secret code must be a string."
+    );
+  }
+
+  const normalized =
+    value.trim();
+
+  if (!normalized) {
+    throw new Error(
+      "Secret code cannot be empty."
+    );
+  }
+
+  return crypto
+    .createHmac(
+      "sha256",
+      getLookupHmacKey()
+    )
+    .update(
+      normalized,
+      "utf8"
+    )
+    .digest("hex");
+}
+
+/* =========================================================
+   SAFE HEX COMPARISON
+========================================================= */
+
+export function safeEqualHex(
+  leftValue: string,
+  rightValue: string
+): boolean {
+  try {
+    if (
+      typeof leftValue !== "string" ||
+      typeof rightValue !== "string"
+    ) {
+      return false;
+    }
+
+    const left =
+      Buffer.from(
+        leftValue,
+        "hex"
+      );
+
+    const right =
+      Buffer.from(
+        rightValue,
+        "hex"
+      );
+
+    if (
+      left.length === 0 ||
+      right.length === 0
+    ) {
+      return false;
+    }
+
+    if (
+      left.length !==
+      right.length
+    ) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(
+      left,
+      right
+    );
+  } catch {
+    return false;
+  }
 }
