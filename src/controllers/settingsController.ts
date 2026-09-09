@@ -5,7 +5,7 @@ import {
   type CookieOptions,
 } from "express";
 
-import {
+import type {
   AuthRequest,
 } from "../middlewares/authMiddleware.js";
 
@@ -44,16 +44,30 @@ interface EncryptedValue {
   authTag: string;
 }
 
-type ThemeMode =
+/* =========================================================
+   THEME
+========================================================= */
+
+export type ThemeMode =
   | "light"
   | "dark"
-  | "system";
+  | "eye-care"
+  | "ocean"
+  | "forest";
 
-type Density =
+/* =========================================================
+   DENSITY
+========================================================= */
+
+export type Density =
   | "comfortable"
   | "compact";
 
-type Currency =
+/* =========================================================
+   CURRENCY
+========================================================= */
+
+export type Currency =
   | "BDT"
   | "USD"
   | "EUR";
@@ -65,11 +79,14 @@ type Currency =
 const toStringValue = (
   value: unknown
 ): string => {
-  return typeof value ===
-    "string"
+  return typeof value === "string"
     ? value
     : "";
 };
+
+/* =========================================================
+   SAFE DECRYPT
+========================================================= */
 
 const safeDecrypt = (
   value:
@@ -81,12 +98,8 @@ const safeDecrypt = (
   }
 
   try {
-    return decryptData(
-      value
-    );
-  } catch (
-    error
-  ) {
+    return decryptData(value);
+  } catch (error) {
     console.error(
       "SETTINGS DECRYPT ERROR:",
       error
@@ -96,12 +109,26 @@ const safeDecrypt = (
   }
 };
 
+/* =========================================================
+   BOOLEAN VALIDATION
+========================================================= */
+
 const isBoolean = (
   value: unknown
 ): value is boolean => {
-  return typeof value ===
-    "boolean";
+  return typeof value === "boolean";
 };
+
+/* =========================================================
+   THEME VALIDATION
+========================================================= */
+
+/*
+ * IMPORTANT:
+ *
+ * These values MUST match the frontend ThemeContext
+ * and UserSettings mongoose schema.
+ */
 
 const isTheme = (
   value: unknown
@@ -109,20 +136,28 @@ const isTheme = (
   return (
     value === "light" ||
     value === "dark" ||
-    value === "system"
+    value === "eye-care" ||
+    value === "ocean" ||
+    value === "forest"
   );
 };
+
+/* =========================================================
+   DENSITY VALIDATION
+========================================================= */
 
 const isDensity = (
   value: unknown
 ): value is Density => {
   return (
-    value ===
-      "comfortable" ||
-    value ===
-      "compact"
+    value === "comfortable" ||
+    value === "compact"
   );
 };
+
+/* =========================================================
+   CURRENCY VALIDATION
+========================================================= */
 
 const isCurrency = (
   value: unknown
@@ -134,15 +169,22 @@ const isCurrency = (
   );
 };
 
+/* =========================================================
+   ENVIRONMENT
+========================================================= */
+
 const isProductionEnvironment =
   (): boolean => {
     return (
       process.env.NODE_ENV ===
         "production" ||
-      process.env.VERCEL ===
-        "1"
+      process.env.VERCEL === "1"
     );
   };
+
+/* =========================================================
+   COOKIE OPTIONS
+========================================================= */
 
 const getAuthCookieOptions =
   (): CookieOptions => {
@@ -151,18 +193,17 @@ const getAuthCookieOptions =
 
     return {
       httpOnly: true,
-
-      secure:
-        isProduction,
-
-      sameSite:
-        isProduction
-          ? "none"
-          : "lax",
-
+      secure: isProduction,
+      sameSite: isProduction
+        ? "none"
+        : "lax",
       path: "/",
     };
   };
+
+/* =========================================================
+   CLEAR AUTH COOKIE
+========================================================= */
 
 const clearAuthCookie = (
   res: Response
@@ -180,6 +221,10 @@ const clearAuthCookie = (
 const DEFAULT_CONFIRM_THRESHOLD =
   10000;
 
+/* =========================================================
+   CREATE DEFAULT SETTINGS
+========================================================= */
+
 const createDefaultSettings =
   async (
     userId: string
@@ -189,10 +234,8 @@ const createDefaultSettings =
 
       appearance: {
         theme: "light",
-        density:
-          "comfortable",
-        reduceMotion:
-          false,
+        density: "comfortable",
+        reduceMotion: false,
       },
 
       notifications: {
@@ -204,21 +247,15 @@ const createDefaultSettings =
 
       privacy: {
         analytics: false,
-        discoverability:
-          true,
-        personalization:
-          true,
-        showTransactionNames:
-          true,
+        discoverability: true,
+        personalization: true,
+        showTransactionNames: true,
       },
 
       wallet: {
-        defaultCurrency:
-          "BDT",
-        hideAmounts:
-          false,
-        requireConfirmation:
-          true,
+        defaultCurrency: "BDT",
+        hideAmounts: false,
+        requireConfirmation: true,
 
         confirmThresholdEncrypted:
           encryptData(
@@ -229,6 +266,10 @@ const createDefaultSettings =
       },
     });
   };
+
+/* =========================================================
+   GET OR CREATE SETTINGS
+========================================================= */
 
 const getOrCreateSettings =
   async (
@@ -247,14 +288,12 @@ const getOrCreateSettings =
       return await createDefaultSettings(
         userId
       );
-    } catch (
-      error: unknown
-    ) {
+    } catch (error: unknown) {
       /*
-       * Parallel first-load requests can both
-       * attempt to create the unique userId row.
-       * In that case read the winner.
+       * Multiple requests can try to create
+       * the same unique settings document.
        */
+
       if (
         typeof error ===
           "object" &&
@@ -281,7 +320,7 @@ const getOrCreateSettings =
   };
 
 /* =========================================================
-   DTO
+   SETTINGS DTO
 ========================================================= */
 
 const toSettingsDTO = (
@@ -304,15 +343,12 @@ const toSettingsDTO = (
           .confirmThresholdEncrypted
       );
 
-    const parsed =
-      Number(
-        decrypted
-      );
+    const parsed = Number(
+      decrypted
+    );
 
     if (
-      Number.isFinite(
-        parsed
-      ) &&
+      Number.isFinite(parsed) &&
       parsed >= 0
     ) {
       confirmThreshold =
@@ -323,12 +359,10 @@ const toSettingsDTO = (
   return {
     appearance: {
       theme:
-        settings.appearance
-          .theme,
+        settings.appearance.theme,
 
       density:
-        settings.appearance
-          .density,
+        settings.appearance.density,
 
       reduceMotion:
         settings.appearance
@@ -337,16 +371,13 @@ const toSettingsDTO = (
 
     notifications: {
       email:
-        settings.notifications
-          .email,
+        settings.notifications.email,
 
       push:
-        settings.notifications
-          .push,
+        settings.notifications.push,
 
       sms:
-        settings.notifications
-          .sms,
+        settings.notifications.sms,
 
       marketing:
         settings.notifications
@@ -355,8 +386,7 @@ const toSettingsDTO = (
 
     privacy: {
       analytics:
-        settings.privacy
-          .analytics,
+        settings.privacy.analytics,
 
       discoverability:
         settings.privacy
@@ -404,9 +434,7 @@ export const getUserSettings =
         req.user?._id;
 
       if (!userId) {
-        res.status(
-          401
-        ).json({
+        res.status(401).json({
           success: false,
           message:
             "Not authorized.",
@@ -419,27 +447,24 @@ export const getUserSettings =
         user,
         wallet,
         settings,
-      ] =
-        await Promise.all([
-          User.findById(
-            userId
-          ).select(
-            "-password"
-          ),
+      ] = await Promise.all([
+        User.findById(
+          userId
+        ).select(
+          "-password"
+        ),
 
-          Wallet.findOne({
-            userId,
-          }),
+        Wallet.findOne({
+          userId,
+        }),
 
-          getOrCreateSettings(
-            userId
-          ),
-        ]);
+        getOrCreateSettings(
+          userId
+        ),
+      ]);
 
       if (!user) {
-        res.status(
-          404
-        ).json({
+        res.status(404).json({
           success: false,
           message:
             "User not found.",
@@ -463,9 +488,7 @@ export const getUserSettings =
         "private, no-store"
       );
 
-      res.status(
-        200
-      ).json({
+      res.status(200).json({
         success: true,
 
         profile: {
@@ -491,34 +514,23 @@ export const getUserSettings =
             settings
           ),
 
-        wallet:
-          wallet
-            ? {
-                status:
-                  wallet.status,
+        wallet: wallet
+          ? {
+              status:
+                wallet.status,
 
-                /*
-                 * Current balance is returned
-                 * because the authenticated
-                 * wallet profile already exposes it.
-                 * Do not persist it in UserSettings.
-                 */
-                balance:
-                  wallet.balance,
-              }
-            : null,
+              balance:
+                wallet.balance,
+            }
+          : null,
       });
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.error(
         "GET USER SETTINGS ERROR:",
         error
       );
 
-      res.status(
-        500
-      ).json({
+      res.status(500).json({
         success: false,
         message:
           "Failed to load settings.",
@@ -541,9 +553,7 @@ export const updateUserPreferences =
         req.user?._id;
 
       if (!userId) {
-        res.status(
-          401
-        ).json({
+        res.status(401).json({
           success: false,
           message:
             "Not authorized.",
@@ -565,18 +575,22 @@ export const updateUserPreferences =
       } =
         req.body ?? {};
 
-      /* =====================================================
+      /* ===================================================
          APPEARANCE
-      ====================================================== */
+      ================================================== */
 
       if (
         appearance &&
         typeof appearance ===
           "object"
       ) {
+        /* -----------------------------------------------
+           THEME
+        ------------------------------------------------ */
+
         if (
           appearance.theme !==
-            undefined
+          undefined
         ) {
           if (
             !isTheme(
@@ -588,7 +602,7 @@ export const updateUserPreferences =
             ).json({
               success: false,
               message:
-                "Invalid appearance theme.",
+                "Invalid appearance theme. Allowed themes: light, dark, eye-care, ocean, forest.",
             });
 
             return;
@@ -598,9 +612,13 @@ export const updateUserPreferences =
             appearance.theme;
         }
 
+        /* -----------------------------------------------
+           DENSITY
+        ------------------------------------------------ */
+
         if (
           appearance.density !==
-            undefined
+          undefined
         ) {
           if (
             !isDensity(
@@ -622,9 +640,13 @@ export const updateUserPreferences =
             appearance.density;
         }
 
+        /* -----------------------------------------------
+           REDUCE MOTION
+        ------------------------------------------------ */
+
         if (
           appearance.reduceMotion !==
-            undefined
+          undefined
         ) {
           if (
             !isBoolean(
@@ -647,31 +669,30 @@ export const updateUserPreferences =
         }
       }
 
-      /* =====================================================
+      /* ===================================================
          NOTIFICATIONS
-      ====================================================== */
+      ================================================== */
 
       if (
         notifications &&
         typeof notifications ===
           "object"
       ) {
-        const keys = [
-          "email",
-          "push",
-          "sms",
-          "marketing",
-        ] as const;
+        const keys =
+          [
+            "email",
+            "push",
+            "sms",
+            "marketing",
+          ] as const;
 
         for (
-          const key of
-          keys
+          const key of keys
         ) {
           if (
             notifications[
               key
-            ] ===
-            undefined
+            ] === undefined
           ) {
             continue;
           }
@@ -694,40 +715,40 @@ export const updateUserPreferences =
             return;
           }
 
-          settings.notifications[
-            key
-          ] =
+          settings
+            .notifications[
+              key
+            ] =
             notifications[
               key
             ];
         }
       }
 
-      /* =====================================================
+      /* ===================================================
          PRIVACY
-      ====================================================== */
+      ================================================== */
 
       if (
         privacy &&
         typeof privacy ===
           "object"
       ) {
-        const keys = [
-          "analytics",
-          "discoverability",
-          "personalization",
-          "showTransactionNames",
-        ] as const;
+        const keys =
+          [
+            "analytics",
+            "discoverability",
+            "personalization",
+            "showTransactionNames",
+          ] as const;
 
         for (
-          const key of
-          keys
+          const key of keys
         ) {
           if (
             privacy[
               key
-            ] ===
-            undefined
+            ] === undefined
           ) {
             continue;
           }
@@ -750,27 +771,32 @@ export const updateUserPreferences =
             return;
           }
 
-          settings.privacy[
-            key
-          ] =
+          settings
+            .privacy[
+              key
+            ] =
             privacy[
               key
             ];
         }
       }
 
-      /* =====================================================
-         WALLET PREFERENCES
-      ====================================================== */
+      /* ===================================================
+         WALLET
+      ================================================== */
 
       if (
         wallet &&
         typeof wallet ===
           "object"
       ) {
+        /* -----------------------------------------------
+           CURRENCY
+        ------------------------------------------------ */
+
         if (
           wallet.defaultCurrency !==
-            undefined
+          undefined
         ) {
           if (
             !isCurrency(
@@ -792,9 +818,13 @@ export const updateUserPreferences =
             wallet.defaultCurrency;
         }
 
+        /* -----------------------------------------------
+           HIDE AMOUNTS
+        ------------------------------------------------ */
+
         if (
           wallet.hideAmounts !==
-            undefined
+          undefined
         ) {
           if (
             !isBoolean(
@@ -816,9 +846,13 @@ export const updateUserPreferences =
             wallet.hideAmounts;
         }
 
+        /* -----------------------------------------------
+           REQUIRE CONFIRMATION
+        ------------------------------------------------ */
+
         if (
           wallet.requireConfirmation !==
-            undefined
+          undefined
         ) {
           if (
             !isBoolean(
@@ -836,13 +870,18 @@ export const updateUserPreferences =
             return;
           }
 
-          settings.wallet.requireConfirmation =
+          settings.wallet
+            .requireConfirmation =
             wallet.requireConfirmation;
         }
 
+        /* -----------------------------------------------
+           CONFIRMATION THRESHOLD
+        ------------------------------------------------ */
+
         if (
           wallet.confirmThreshold !==
-            undefined
+          undefined
         ) {
           const threshold =
             Number(
@@ -853,10 +892,8 @@ export const updateUserPreferences =
             !Number.isFinite(
               threshold
             ) ||
-            threshold <
-              1000 ||
-            threshold >
-              50000 ||
+            threshold < 1000 ||
+            threshold > 50000 ||
             !Number.isInteger(
               threshold
             )
@@ -872,7 +909,8 @@ export const updateUserPreferences =
             return;
           }
 
-          settings.wallet.confirmThresholdEncrypted =
+          settings.wallet
+            .confirmThresholdEncrypted =
             encryptData(
               String(
                 threshold
@@ -881,6 +919,10 @@ export const updateUserPreferences =
         }
       }
 
+      /* ===================================================
+         SAVE
+      ================================================== */
+
       await settings.save();
 
       res.setHeader(
@@ -888,10 +930,9 @@ export const updateUserPreferences =
         "private, no-store"
       );
 
-      res.status(
-        200
-      ).json({
+      res.status(200).json({
         success: true,
+
         message:
           "Preferences updated successfully.",
 
@@ -900,17 +941,13 @@ export const updateUserPreferences =
             settings
           ),
       });
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.error(
         "UPDATE USER PREFERENCES ERROR:",
         error
       );
 
-      res.status(
-        500
-      ).json({
+      res.status(500).json({
         success: false,
         message:
           "Failed to update preferences.",
@@ -921,10 +958,6 @@ export const updateUserPreferences =
 /* =========================================================
    UPDATE PROFILE
    PATCH /api/settings/profile
-
-   - Name can be changed normally.
-   - Changing email or phone requires current password.
-   - Email/phone stay encrypted + HMAC lookup.
 ========================================================= */
 
 export const updateSettingsProfile =
@@ -937,9 +970,7 @@ export const updateSettingsProfile =
         req.user?._id;
 
       if (!userId) {
-        res.status(
-          401
-        ).json({
+        res.status(401).json({
           success: false,
           message:
             "Not authorized.",
@@ -979,9 +1010,7 @@ export const updateSettingsProfile =
         !normalizedName ||
         !normalizedEmail
       ) {
-        res.status(
-          400
-        ).json({
+        res.status(400).json({
           success: false,
           message:
             "Name and email are required.",
@@ -994,9 +1023,7 @@ export const updateSettingsProfile =
         normalizedName.length >
         80
       ) {
-        res.status(
-          400
-        ).json({
+        res.status(400).json({
           success: false,
           message:
             "Name is too long.",
@@ -1005,6 +1032,9 @@ export const updateSettingsProfile =
         return;
       }
 
+      /*
+       * Fixed email regex.
+       */
       const emailRegex =
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -1013,9 +1043,7 @@ export const updateSettingsProfile =
           normalizedEmail
         )
       ) {
-        res.status(
-          400
-        ).json({
+        res.status(400).json({
           success: false,
           message:
             "Please provide a valid email address.",
@@ -1032,9 +1060,7 @@ export const updateSettingsProfile =
         );
 
       if (!user) {
-        res.status(
-          404
-        ).json({
+        res.status(404).json({
           success: false,
           message:
             "User not found.",
@@ -1065,11 +1091,10 @@ export const updateSettingsProfile =
           currentPhone
         );
 
-      /*
-       * Contact changes are security-sensitive
-       * because email/phone are used for identity
-       * and transfer-related lookup.
-       */
+      /* ===================================================
+         CONTACT CHANGE SECURITY
+      ================================================== */
+
       if (
         emailChanged ||
         phoneChanged
@@ -1079,9 +1104,7 @@ export const updateSettingsProfile =
             password
           );
 
-        if (
-          !currentPassword
-        ) {
+        if (!currentPassword) {
           res.status(
             400
           ).json({
@@ -1100,9 +1123,7 @@ export const updateSettingsProfile =
             | string
             | undefined;
 
-        if (
-          !storedPassword
-        ) {
+        if (!storedPassword) {
           res.status(
             401
           ).json({
@@ -1133,9 +1154,9 @@ export const updateSettingsProfile =
         }
       }
 
-      /* =====================================================
-         EMAIL DUPLICATE CHECK
-      ====================================================== */
+      /* ===================================================
+         EMAIL DUPLICATE
+      ================================================== */
 
       const emailLookup =
         createLookupHash(
@@ -1154,9 +1175,7 @@ export const updateSettingsProfile =
           "_id"
         );
 
-      if (
-        emailOwner
-      ) {
+      if (emailOwner) {
         res.status(
           409
         ).json({
@@ -1168,9 +1187,9 @@ export const updateSettingsProfile =
         return;
       }
 
-      /* =====================================================
-         PHONE DUPLICATE CHECK
-      ====================================================== */
+      /* ===================================================
+         PHONE DUPLICATE
+      ================================================== */
 
       const phoneLookup =
         normalizedPhone
@@ -1195,9 +1214,7 @@ export const updateSettingsProfile =
             "_id"
           );
 
-        if (
-          phoneOwner
-        ) {
+        if (phoneOwner) {
           res.status(
             409
           ).json({
@@ -1210,9 +1227,9 @@ export const updateSettingsProfile =
         }
       }
 
-      /* =====================================================
-         UPDATE
-      ====================================================== */
+      /* ===================================================
+         UPDATE USER
+      ================================================== */
 
       user.name =
         normalizedName;
@@ -1257,6 +1274,7 @@ export const updateSettingsProfile =
         200
       ).json({
         success: true,
+
         message:
           "Profile updated successfully.",
 
@@ -1277,17 +1295,13 @@ export const updateSettingsProfile =
             user.kycStatus,
         },
       });
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.error(
         "UPDATE SETTINGS PROFILE ERROR:",
         error
       );
 
-      res.status(
-        500
-      ).json({
+      res.status(500).json({
         success: false,
         message:
           "Failed to update profile.",
@@ -1298,10 +1312,6 @@ export const updateSettingsProfile =
 /* =========================================================
    CURRENT SESSION
    GET /api/settings/session
-
-   This backend currently uses stateless JWTs and does not
-   keep a per-device session collection. Therefore only the
-   current authenticated request can be described truthfully.
 ========================================================= */
 
 export const getCurrentSession =
@@ -1316,27 +1326,21 @@ export const getCurrentSession =
 
     const ip =
       typeof forwardedFor ===
-        "string"
+      "string"
         ? forwardedFor
-            .split(
-              ","
-            )[0]
+            .split(",")[0]
             ?.trim() ||
           req.ip
         : req.ip;
 
-    res.status(
-      200
-    ).json({
+    res.status(200).json({
       success: true,
 
       sessions: [
         {
-          id:
-            "current",
+          id: "current",
 
-          current:
-            true,
+          current: true,
 
           device:
             req.get(
@@ -1348,8 +1352,7 @@ export const getCurrentSession =
             "Current request",
 
           lastActive:
-            new Date()
-              .toISOString(),
+            new Date().toISOString(),
 
           ip,
         },
@@ -1361,10 +1364,8 @@ export const getCurrentSession =
   };
 
 /* =========================================================
-   LOG OUT ALL DEVICES
+   LOGOUT ALL DEVICES
    POST /api/settings/logout-all
-
-   authVersion invalidates every previously issued JWT.
 ========================================================= */
 
 export const logoutAllDevices =
@@ -1377,9 +1378,7 @@ export const logoutAllDevices =
         req.user?._id;
 
       if (!userId) {
-        res.status(
-          401
-        ).json({
+        res.status(401).json({
           success: false,
           message:
             "Not authorized.",
@@ -1392,8 +1391,7 @@ export const logoutAllDevices =
         userId,
         {
           $inc: {
-            authVersion:
-              1,
+            authVersion: 1,
           },
         }
       );
@@ -1402,24 +1400,18 @@ export const logoutAllDevices =
         res
       );
 
-      res.status(
-        200
-      ).json({
+      res.status(200).json({
         success: true,
         message:
           "All sessions were revoked. Please sign in again.",
       });
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.error(
         "LOGOUT ALL DEVICES ERROR:",
         error
       );
 
-      res.status(
-        500
-      ).json({
+      res.status(500).json({
         success: false,
         message:
           "Failed to revoke sessions.",
@@ -1430,9 +1422,6 @@ export const logoutAllDevices =
 /* =========================================================
    EXPORT SETTINGS
    GET /api/settings/export
-
-   Safe JSON only. No password, HMAC lookup, encrypted blobs,
-   reset tokens or internal security fields are returned.
 ========================================================= */
 
 export const exportUserSettings =
@@ -1445,9 +1434,7 @@ export const exportUserSettings =
         req.user?._id;
 
       if (!userId) {
-        res.status(
-          401
-        ).json({
+        res.status(401).json({
           success: false,
           message:
             "Not authorized.",
@@ -1459,23 +1446,20 @@ export const exportUserSettings =
       const [
         user,
         settings,
-      ] =
-        await Promise.all([
-          User.findById(
-            userId
-          ).select(
-            "-password"
-          ),
+      ] = await Promise.all([
+        User.findById(
+          userId
+        ).select(
+          "-password"
+        ),
 
-          getOrCreateSettings(
-            userId
-          ),
-        ]);
+        getOrCreateSettings(
+          userId
+        ),
+      ]);
 
       if (!user) {
-        res.status(
-          404
-        ).json({
+        res.status(404).json({
           success: false,
           message:
             "User not found.",
@@ -1489,15 +1473,12 @@ export const exportUserSettings =
         "private, no-store"
       );
 
-      res.status(
-        200
-      ).json({
+      res.status(200).json({
         success: true,
 
         export: {
           generatedAt:
-            new Date()
-              .toISOString(),
+            new Date().toISOString(),
 
           profile: {
             name:
@@ -1529,17 +1510,13 @@ export const exportUserSettings =
             ),
         },
       });
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.error(
         "EXPORT USER SETTINGS ERROR:",
         error
       );
 
-      res.status(
-        500
-      ).json({
+      res.status(500).json({
         success: false,
         message:
           "Failed to export account settings.",
@@ -1550,14 +1527,6 @@ export const exportUserSettings =
 /* =========================================================
    DELETE ACCOUNT
    DELETE /api/settings/account
-
-   This is a privacy-preserving soft deletion:
-   - Requires current password + literal DELETE confirmation.
-   - Refuses while wallet balance is non-zero.
-   - Removes original email/phone/name from the active record.
-   - Keeps the user id so transaction/audit references do not
-     become orphaned.
-   - Revokes all JWTs using authVersion.
 ========================================================= */
 
 export const deleteUserAccount =
@@ -1570,9 +1539,7 @@ export const deleteUserAccount =
         req.user?._id;
 
       if (!userId) {
-        res.status(
-          401
-        ).json({
+        res.status(401).json({
           success: false,
           message:
             "Not authorized.",
@@ -1621,23 +1588,20 @@ export const deleteUserAccount =
       const [
         user,
         wallet,
-      ] =
-        await Promise.all([
-          User.findById(
-            userId
-          ).select(
-            "+password"
-          ),
+      ] = await Promise.all([
+        User.findById(
+          userId
+        ).select(
+          "+password"
+        ),
 
-          Wallet.findOne({
-            userId,
-          }),
-        ]);
+        Wallet.findOne({
+          userId,
+        }),
+      ]);
 
       if (!user) {
-        res.status(
-          404
-        ).json({
+        res.status(404).json({
           success: false,
           message:
             "User not found.",
@@ -1670,9 +1634,7 @@ export const deleteUserAccount =
           | string
           | undefined;
 
-      if (
-        !storedPassword
-      ) {
+      if (!storedPassword) {
         res.status(
           401
         ).json({
@@ -1704,9 +1666,7 @@ export const deleteUserAccount =
 
       const randomIdentity =
         crypto
-          .randomBytes(
-            24
-          )
+          .randomBytes(24)
           .toString(
             "hex"
           );
@@ -1715,10 +1675,10 @@ export const deleteUserAccount =
         `deleted-${user._id.toString()}-${randomIdentity}@invalid.local`;
 
       /*
-       * Overwrite original profile PII while keeping
-       * the same user document id for transaction/audit
-       * referential integrity.
+       * Remove original PII while keeping
+       * user ID for referential integrity.
        */
+
       user.name =
         "Deleted User";
 
@@ -1741,9 +1701,7 @@ export const deleteUserAccount =
       user.password =
         await hashPassword(
           crypto
-            .randomBytes(
-              48
-            )
+            .randomBytes(48)
             .toString(
               "hex"
             )
@@ -1756,10 +1714,7 @@ export const deleteUserAccount =
         new Date();
 
       user.authVersion =
-        (
-          user.authVersion ||
-          0
-        ) +
+        (user.authVersion || 0) +
         1;
 
       await Promise.all([
@@ -1775,24 +1730,18 @@ export const deleteUserAccount =
         res
       );
 
-      res.status(
-        200
-      ).json({
+      res.status(200).json({
         success: true,
         message:
           "Account deletion completed.",
       });
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.error(
         "DELETE USER ACCOUNT ERROR:",
         error
       );
 
-      res.status(
-        500
-      ).json({
+      res.status(500).json({
         success: false,
         message:
           "Failed to delete account.",

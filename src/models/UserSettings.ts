@@ -14,6 +14,17 @@ export interface IEncryptedSettingsValue {
 }
 
 /* =========================================================
+   THEME TYPE
+========================================================= */
+
+export type SettingsTheme =
+  | "light"
+  | "dark"
+  | "eye-care"
+  | "ocean"
+  | "forest";
+
+/* =========================================================
    USER SETTINGS INTERFACE
 ========================================================= */
 
@@ -26,42 +37,35 @@ export interface IUserSettings
     theme:
       | "light"
       | "dark"
-      | "system";
+      | "eye-care"
+      | "ocean"
+      | "forest";
 
     density:
       | "comfortable"
       | "compact";
 
-    reduceMotion:
-      boolean;
+    reduceMotion: boolean;
   };
 
   notifications: {
-    email:
-      boolean;
+    email: boolean;
 
-    push:
-      boolean;
+    push: boolean;
 
-    sms:
-      boolean;
+    sms: boolean;
 
-    marketing:
-      boolean;
+    marketing: boolean;
   };
 
   privacy: {
-    analytics:
-      boolean;
+    analytics: boolean;
 
-    discoverability:
-      boolean;
+    discoverability: boolean;
 
-    personalization:
-      boolean;
+    personalization: boolean;
 
-    showTransactionNames:
-      boolean;
+    showTransactionNames: boolean;
   };
 
   wallet: {
@@ -70,26 +74,16 @@ export interface IUserSettings
       | "USD"
       | "EUR";
 
-    hideAmounts:
-      boolean;
+    hideAmounts: boolean;
 
-    requireConfirmation:
-      boolean;
+    requireConfirmation: boolean;
 
-    /*
-     * Monetary preference is encrypted at rest
-     * to match the project's financial-data
-     * confidentiality model.
-     */
-    confirmThresholdEncrypted?:
-      IEncryptedSettingsValue;
+    confirmThresholdEncrypted?: IEncryptedSettingsValue;
   };
 
-  createdAt:
-    Date;
+  createdAt: Date;
 
-  updatedAt:
-    Date;
+  updatedAt: Date;
 }
 
 /* =========================================================
@@ -114,6 +108,7 @@ const encryptedSettingsValueSchema =
         required: true,
       },
     },
+
     {
       _id: false,
     }
@@ -126,6 +121,10 @@ const encryptedSettingsValueSchema =
 const userSettingsSchema =
   new Schema<IUserSettings>(
     {
+      /* =====================================================
+         USER
+      ====================================================== */
+
       userId: {
         type:
           Schema.Types.ObjectId,
@@ -143,14 +142,26 @@ const userSettingsSchema =
           true,
       },
 
+      /* =====================================================
+         APPEARANCE
+      ====================================================== */
+
       appearance: {
         theme: {
           type: String,
 
+          /*
+           * IMPORTANT:
+           *
+           * Must match ThemeContext.tsx
+           */
+
           enum: [
             "light",
             "dark",
-            "system",
+            "eye-care",
+            "ocean",
+            "forest",
           ],
 
           default:
@@ -171,9 +182,15 @@ const userSettingsSchema =
 
         reduceMotion: {
           type: Boolean,
-          default: false,
+
+          default:
+            false,
         },
       },
+
+      /* =====================================================
+         NOTIFICATIONS
+      ====================================================== */
 
       notifications: {
         email: {
@@ -197,6 +214,10 @@ const userSettingsSchema =
         },
       },
 
+      /* =====================================================
+         PRIVACY
+      ====================================================== */
+
       privacy: {
         analytics: {
           type: Boolean,
@@ -219,6 +240,10 @@ const userSettingsSchema =
         },
       },
 
+      /* =====================================================
+         WALLET
+      ====================================================== */
+
       wallet: {
         defaultCurrency: {
           type: String,
@@ -235,13 +260,21 @@ const userSettingsSchema =
 
         hideAmounts: {
           type: Boolean,
-          default: false,
+
+          default:
+            false,
         },
 
         requireConfirmation: {
           type: Boolean,
-          default: true,
+
+          default:
+            true,
         },
+
+        /*
+         * Encrypted monetary preference
+         */
 
         confirmThresholdEncrypted: {
           type:
@@ -249,6 +282,7 @@ const userSettingsSchema =
         },
       },
     },
+
     {
       timestamps:
         true,
