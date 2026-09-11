@@ -1,5 +1,6 @@
 import type { Worker } from "bullmq";
 import type Redis from "ioredis";
+import { ActiveLivenessService } from "../biometrics/activeLivenessService.js";
 import { HttpComplianceScreeningProvider } from "../compliance/HttpComplianceScreeningProvider.js";
 import {
   MockComplianceScreeningProvider,
@@ -37,6 +38,7 @@ export interface EKYCRuntime {
   vectorStore: IFaceVectorStore;
   mediaStore: CloudinaryPrivateMediaStore;
   screeningProvider: IComplianceScreeningProvider;
+  activeLiveness: ActiveLivenessService;
   orchestrator: EKYCOrchestrator;
 }
 
@@ -79,15 +81,16 @@ async function buildRuntime(): Promise<EKYCRuntime> {
   const vectorStore = createVectorStore();
   const mediaStore = new CloudinaryPrivateMediaStore();
   const screeningProvider = createScreeningProvider(configSnapshot.useMockProvider);
+  const activeLiveness = new ActiveLivenessService(redis);
   const limiter = new EKYCRateLimiter(
     redis,
     configSnapshot.rateLimit.attempts,
     configSnapshot.rateLimit.windowSeconds
   );
-  
   const orchestrator = new EKYCOrchestrator(
     limiter,
-    queue
+    queue,
+    projectEKYCStatusToUser
   );
 
   return {
@@ -99,6 +102,7 @@ async function buildRuntime(): Promise<EKYCRuntime> {
     vectorStore,
     mediaStore,
     screeningProvider,
+    activeLiveness,
     orchestrator,
   };
 }
@@ -116,20 +120,19 @@ export function getEKYCRuntime(): Promise<EKYCRuntime> {
 export async function startEKYCWorkers(): Promise<EKYCWorkerHandles> {
   if (workers) return workers;
   const runtime = await getEKYCRuntime();
-  
   workers = {
     ekyc: createEKYCWorker({
       redis: runtime.redis,
       dynamicConfig: runtime.config,
       providerFactory: runtime.providerFactory,
       vectorStore: runtime.vectorStore,
+      mediaStore: runtime.mediaStore,
       webhookQueue: runtime.webhookQueue,
       screeningProvider: runtime.screeningProvider,
-      mediaResolver: runtime.mediaStore, // FIX: Added mediaResolver as required by WorkerDependencies
+      projectStatus: projectEKYCStatusToUser,
     }),
     webhook: createEKYCWebhookWorker(runtime.redis),
   };
-  
   return workers;
 }
 

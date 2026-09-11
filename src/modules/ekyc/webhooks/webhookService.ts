@@ -205,21 +205,31 @@ export function createEKYCWebhookQueue(
 
 export async function enqueueStatusWebhook(
   queue: Queue<EKYCWebhookJobData>,
+
   input: {
     verificationId: string;
     userId: string;
     status: EKYCStatus;
     reasonCodes: EKYCReasonCode[];
     occurredAt?: string;
+
+    /*
+     * Worker deterministic event ID পাঠাতে পারবে।
+     * অন্য caller না পাঠালে নতুন UUID তৈরি হবে।
+     */
+    eventId?: string;
   }
 ): Promise<{
   eventId: string;
 }> {
   const eventId =
+    input.eventId?.trim() ||
     randomUUID();
 
-  const jobData: EKYCWebhookJobData = {
+  const jobData:
+    EKYCWebhookJobData = {
     eventId,
+
     eventType:
       "EKYC_STATUS_CHANGED",
 
@@ -243,16 +253,18 @@ export async function enqueueStatusWebhook(
       new Date().toISOString(),
   };
 
-  /*
-   * The event ID makes delivery idempotent.
-   * A retry uses the same BullMQ job and event ID.
-   */
   await queue.add(
     "deliver-ekyc-status",
     jobData,
     {
       ...DEFAULT_JOB_OPTIONS,
-      jobId: eventId,
+
+      /*
+       * একই event আবার enqueue হলে duplicate
+       * webhook তৈরি হবে না।
+       */
+      jobId:
+        eventId,
     }
   );
 
@@ -260,7 +272,6 @@ export async function enqueueStatusWebhook(
     eventId,
   };
 }
-
 /* =========================================================
    DELIVERY
 ========================================================= */

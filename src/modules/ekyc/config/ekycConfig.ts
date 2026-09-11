@@ -64,6 +64,13 @@ const environmentSchema =
           "/api/v1/liveness/check"
         ),
 
+    EC_FINGERPRINT_PATH:
+      z
+        .string()
+        .default(
+          "/api/v1/fingerprint/verify"
+        ),
+
     EC_API_KEY:
       z
         .string()
@@ -108,6 +115,18 @@ const environmentSchema =
         .max(79)
         .default(60),
 
+    EKYC_FACE_QUALITY_SCORE:
+      z.coerce.number().min(0).max(100).default(75),
+
+    EKYC_FACE_SHARPNESS_SCORE:
+      z.coerce.number().min(0).max(100).default(65),
+
+    EKYC_FACE_BRIGHTNESS_SCORE:
+      z.coerce.number().min(0).max(100).default(60),
+
+    EKYC_FACE_MIN_COVERAGE:
+      z.coerce.number().min(0.1).max(0.9).default(0.28),
+
     /*
      * BFIU published applicant-name matching floor is 80%.
      * The requested product default is 85%.
@@ -127,6 +146,13 @@ const environmentSchema =
         .default(80),
 
     EKYC_ACTIVE_LIVENESS_SCORE:
+      z.coerce
+        .number()
+        .min(0)
+        .max(100)
+        .default(80),
+
+    EKYC_FINGERPRINT_MATCH_SCORE:
       z.coerce
         .number()
         .min(0)
@@ -211,6 +237,7 @@ export interface EKYCProviderConfig {
   verifyPath: string;
   ocrPath: string;
   livenessPath: string;
+  fingerprintPath: string;
 
   apiKey?: string;
   apiKeyHeader: string;
@@ -224,11 +251,16 @@ export interface EKYCProviderConfig {
 export interface EKYCThresholdConfig {
   faceAutoApprove: number;
   faceManualReview: number;
+  faceQuality: number;
+  faceSharpness: number;
+  faceBrightness: number;
+  faceCoverage: number;
 
   nameMatch: number;
 
   passiveLiveness: number;
   activeLiveness: number;
+  fingerprintMatch: number;
 
   requireActiveLiveness: boolean;
 
@@ -580,6 +612,13 @@ export class EnvironmentConfigSource
             "EC_LIVENESS_PATH"
           ),
 
+        fingerprintPath:
+          normalizeRoutePath(
+            env
+              .EC_FINGERPRINT_PATH,
+            "EC_FINGERPRINT_PATH"
+          ),
+
         ...(apiKey
           ? {
               apiKey,
@@ -615,6 +654,18 @@ export class EnvironmentConfigSource
           env
             .EKYC_FACE_MANUAL_REVIEW_SCORE,
 
+        faceQuality:
+          env.EKYC_FACE_QUALITY_SCORE,
+
+        faceSharpness:
+          env.EKYC_FACE_SHARPNESS_SCORE,
+
+        faceBrightness:
+          env.EKYC_FACE_BRIGHTNESS_SCORE,
+
+        faceCoverage:
+          env.EKYC_FACE_MIN_COVERAGE,
+
         nameMatch:
           env
             .EKYC_NAME_MATCH_SCORE,
@@ -626,6 +677,10 @@ export class EnvironmentConfigSource
         activeLiveness:
           env
             .EKYC_ACTIVE_LIVENESS_SCORE,
+
+        fingerprintMatch:
+          env
+            .EKYC_FINGERPRINT_MATCH_SCORE,
 
         requireActiveLiveness:
           env

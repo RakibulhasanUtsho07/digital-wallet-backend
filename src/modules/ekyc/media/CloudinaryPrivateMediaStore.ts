@@ -4,12 +4,14 @@ import cloudinary from "../../../config/cloudinary/cloudinary.js";
 import { decryptField, encryptField, keyedLookupHash } from "../security/fieldEncryption.js";
 import type { EncryptedField, PrivateMediaRefs, SignedMediaUrls } from "../types.js";
 
-type EvidenceSlot = "nid-front" | "nid-back" | "selfie";
+type EvidenceSlot = "nid-front" | "nid-back" | "selfie" | "liveness-video";
+type CloudinaryResourceType = "image" | "video";
 
 interface EncodedObjectReference {
   ownerUserId: string;
   publicId: string;
   format: string;
+  resourceType: CloudinaryResourceType;
   slot: EvidenceSlot;
   createdAt: string;
 }
@@ -18,6 +20,7 @@ export interface EKYCEvidenceFiles {
   nidFront: Express.Multer.File;
   nidBack: Express.Multer.File;
   selfie: Express.Multer.File;
+  livenessVideo: Express.Multer.File;
 }
 
 export interface IPrivateMediaStore {
@@ -52,7 +55,23 @@ function detectImageType(buffer: Buffer): "jpeg" | "png" | "webp" | null {
   return null;
 }
 
-function validateEvidenceFile(file: Express.Multer.File): void {
+function detectVideoType(buffer: Buffer): "webm" | "mp4" | null {
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x1a &&
+    buffer[1] === 0x45 &&
+    buffer[2] === 0xdf &&
+    buffer[3] === 0xa3
+  ) {
+    return "webm";
+  }
+  if (buffer.length >= 12 && buffer.subarray(4, 8).toString("ascii") === "ftyp") {
+    return "mp4";
+  }
+  return null;
+}
+
+function validateImage(file: Express.Multer.File): void {
   if (!file?.buffer?.length) {
     throw new EKYCMediaValidationError("A required e-KYC image is empty.");
   }
@@ -69,6 +88,26 @@ function validateEvidenceFile(file: Express.Multer.File): void {
   if (!detected || expected[file.mimetype] !== detected) {
     throw new EKYCMediaValidationError(
       "An uploaded file does not match its declared JPG, PNG, or WEBP type."
+    );
+  }
+}
+
+function validateLivenessVideo(file: Express.Multer.File): void {
+  if (!file?.buffer?.length) {
+    throw new EKYCMediaValidationError("The active-liveness recording is empty.");
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    throw new EKYCMediaValidationError("The active-liveness recording must be 8 MB or smaller.");
+  }
+
+  const detected = detectVideoType(file.buffer);
+  const expected: Record<string, string> = {
+    "video/webm": "webm",
+    "video/mp4": "mp4",
+  };
+  if (!detected || expected[file.mimetype] !== detected) {
+    throw new EKYCMediaValidationError(
+      "The active-liveness recording must be a valid WEBM or MP4 file."
     );
   }
 }
@@ -91,7 +130,8 @@ function decodeReference(value: string): EncodedObjectReference {
       typeof decoded.ownerUserId !== "string" ||
       typeof decoded.publicId !== "string" ||
       typeof decoded.format !== "string" ||
-      !["nid-front", "nid-back", "selfie"].includes(String(decoded.slot))
+      !["image", "video"].includes(String(decoded.resourceType)) ||
+      !["nid-front", "nid-back", "selfie", "liveness-video"].includes(String(decoded.slot))
     ) {
       throw new Error("Malformed reference payload.");
     }
@@ -101,24 +141,27 @@ function decodeReference(value: string): EncodedObjectReference {
   }
 }
 
-async function uploadPrivateImage(
+async function uploadPrivateEvidence(
   file: Express.Multer.File,
   folder: string,
-  publicId: string
+  slot: EvidenceSlot,
+  resourceType: CloudinaryResourceType
 ): Promise<UploadApiResponse> {
-  validateEvidenceFile(file);
+  if (resourceType === "image") validateImage(file);
+  else validateLivenessVideo(file);
+
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
         folder,
-        public_id: publicId,
-        resource_type: "image",
+        public_id: slot,
+        resource_type: resourceType,
         type: "private",
         overwrite: false,
       },
       (error, result) => {
         if (error) {
-          reject(new Error("Private e-KYC image upload failed."));
+          reject(new Error("Private e-KYC evidence upload failed."));
           return;
         }
         if (!result?.public_id || !result.format) {
@@ -134,19 +177,23 @@ async function uploadPrivateImage(
 
 export class CloudinaryPrivateMediaStore implements IPrivateMediaStore {
   async uploadAttempt(userId: string, files: EKYCEvidenceFiles): Promise<PrivateMediaRefs> {
-    // FIX: Added 'as any' to bypass the LookupHashPurpose type restriction
-    const ownerRef = keyedLookupHash(userId, "media-owner" as any).slice(0, 32);
+    const ownerRef = keyedLookupHash(userId, "media-owner").slice(0, 32);
     const attemptRef = randomUUID();
     const folder = `digital-payment/ekyc/${ownerRef}/${attemptRef}`;
     const completed: EncodedObjectReference[] = [];
 
     try {
-      const upload = async (slot: EvidenceSlot, file: Express.Multer.File) => {
-        const result = await uploadPrivateImage(file, folder, slot);
+      const upload = async (
+        slot: EvidenceSlot,
+        file: Express.Multer.File,
+        resourceType: CloudinaryResourceType
+      ) => {
+        const result = await uploadPrivateEvidence(file, folder, slot, resourceType);
         const reference: EncodedObjectReference = {
           ownerUserId: userId,
           publicId: result.public_id,
           format: result.format,
+          resourceType,
           slot,
           createdAt: new Date().toISOString(),
         };
@@ -154,15 +201,26 @@ export class CloudinaryPrivateMediaStore implements IPrivateMediaStore {
         return encodeReference(reference);
       };
 
-      const nidFrontObjectRef = await upload("nid-front", files.nidFront);
-      const nidBackObjectRef = await upload("nid-back", files.nidBack);
-      const selfieObjectRef = await upload("selfie", files.selfie);
-      return { nidFrontObjectRef, nidBackObjectRef, selfieObjectRef };
+      const nidFrontObjectRef = await upload("nid-front", files.nidFront, "image");
+      const nidBackObjectRef = await upload("nid-back", files.nidBack, "image");
+      const selfieObjectRef = await upload("selfie", files.selfie, "image");
+      const livenessVideoObjectRef = await upload(
+        "liveness-video",
+        files.livenessVideo,
+        "video"
+      );
+
+      return {
+        nidFrontObjectRef,
+        nidBackObjectRef,
+        selfieObjectRef,
+        livenessVideoObjectRef,
+      };
     } catch (error) {
       await Promise.allSettled(
         completed.map((item) =>
           cloudinary.uploader.destroy(item.publicId, {
-            resource_type: "image",
+            resource_type: item.resourceType,
             type: "private",
             invalidate: true,
           })
@@ -177,12 +235,18 @@ export class CloudinaryPrivateMediaStore implements IPrivateMediaStore {
       decodeReference(refs.nidFrontObjectRef),
       decodeReference(refs.nidBackObjectRef),
       decodeReference(refs.selfieObjectRef),
+      decodeReference(refs.livenessVideoObjectRef),
     ];
     if (decoded.some((item) => item.ownerUserId !== userId)) {
       throw new Error("The e-KYC evidence does not belong to the authenticated user.");
     }
     const slots = new Set(decoded.map((item) => item.slot));
-    if (!slots.has("nid-front") || !slots.has("nid-back") || !slots.has("selfie")) {
+    if (
+      !slots.has("nid-front") ||
+      !slots.has("nid-back") ||
+      !slots.has("selfie") ||
+      !slots.has("liveness-video")
+    ) {
       throw new Error("The e-KYC evidence set is incomplete.");
     }
   }
@@ -195,11 +259,12 @@ export class CloudinaryPrivateMediaStore implements IPrivateMediaStore {
     const front = decodeReference(refs.nidFrontObjectRef);
     const back = decodeReference(refs.nidBackObjectRef);
     const selfie = decodeReference(refs.selfieObjectRef);
+    const livenessVideo = decodeReference(refs.livenessVideoObjectRef);
     this.assertOwnedBy(refs, front.ownerUserId);
     const expiresAt = Math.floor(Date.now() / 1_000) + expiresInSeconds;
     const sign = (item: EncodedObjectReference) =>
       cloudinary.utils.private_download_url(item.publicId, item.format, {
-        resource_type: "image",
+        resource_type: item.resourceType,
         type: "private",
         attachment: false,
         expires_at: expiresAt,
@@ -209,6 +274,7 @@ export class CloudinaryPrivateMediaStore implements IPrivateMediaStore {
       nidFrontUrl: sign(front),
       nidBackUrl: sign(back),
       selfieUrl: sign(selfie),
+      livenessVideoUrl: sign(livenessVideo),
     };
   }
 
@@ -217,11 +283,12 @@ export class CloudinaryPrivateMediaStore implements IPrivateMediaStore {
       decodeReference(refs.nidFrontObjectRef),
       decodeReference(refs.nidBackObjectRef),
       decodeReference(refs.selfieObjectRef),
+      decodeReference(refs.livenessVideoObjectRef),
     ];
     await Promise.allSettled(
       items.map((item) =>
         cloudinary.uploader.destroy(item.publicId, {
-          resource_type: "image",
+          resource_type: item.resourceType,
           type: "private",
           invalidate: true,
         })

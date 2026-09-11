@@ -54,11 +54,15 @@ export async function rerunEKYCVerification(
         decidedAt: 1,
         processingStartedAt: 1,
         providerReferenceEncrypted: 1,
+        fingerprintProviderReferenceEncrypted: 1,
         screeningReferenceEncrypted: 1,
         faceEmbeddingEncrypted: 1,
         faceScore: 1,
         nameScore: 1,
         livenessPassed: 1,
+        fingerprintMatched: 1,
+        fingerprintConclusive: 1,
+        fingerprintScore: 1,
         possibleDuplicateVectorId: 1,
         possibleDuplicateScore: 1,
         manualReviewLock: 1,
@@ -89,7 +93,7 @@ export async function rerunEKYCVerification(
       correlationId: verification.correlationId,
       idempotencyKey: `rerun-queue-failed:${attemptId}`,
       metadata: { fallbackStatus: "PENDING_MANUAL_REVIEW" },
-    } as any).catch(() => undefined);
+    }).catch(() => undefined);
     await dependencies.projectStatus(
       verification.userId.toString(),
       "PENDING_MANUAL_REVIEW"
@@ -105,7 +109,7 @@ export async function rerunEKYCVerification(
     correlationId: verification.correlationId,
     idempotencyKey: `rerun:${attemptId}`,
     metadata: { status: "QUEUED" },
-  } as any);
+  });
   await dependencies.projectStatus(verification.userId.toString(), "QUEUED");
   return { verificationId: verification.id, status: "QUEUED" };
 }

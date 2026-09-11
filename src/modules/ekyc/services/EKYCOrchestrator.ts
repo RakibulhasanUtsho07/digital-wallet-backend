@@ -1,459 +1,190 @@
-import {
-  randomUUID,
-} from "node:crypto";
-
-import type {
-  Queue,
-} from "bullmq";
-
+import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
+import type { Queue } from "bullmq";
+import { EKYCVerification } from "../models/EKYCVerification.js";
+import { enqueueEKYC, type EKYCJobData } from "../queue/ekycQueue.js";
+import type { EKYCRateLimiter } from "../rate-limit/EKYCRateLimiter.js";
+import { encryptField, keyedLookupHash } from "../security/fieldEncryption.js";
+import type { EKYCSubmission } from "../types.js";
+import { validateSubmissionIdentity } from "../validation.js";
+import { appendAuditEvent } from "./auditService.js";
+import type { EKYCStatusProjector } from "./statusProjectionService.js";
 
-import {
-  EKYCVerification,
-} from "../models/EKYCVerification.js";
-
-import {
-  enqueueEKYC,
-  type EKYCJobData,
-} from "../queue/ekycQueue.js";
-
-import type {
-  EKYCRateLimiter,
-} from "../rate-limit/EKYCRateLimiter.js";
-
-import {
-  encryptField,
-  keyedLookupHash,
-} from "../security/fieldEncryption.js";
-
-import type {
-  EKYCSubmission,
-  PrivateMediaRefs,
-} from "../types.js";
-
-import {
-  validateSubmissionIdentity,
-} from "../validation.js";
-
-import {
-  appendAuditEvent,
-} from "./auditService.js";
-
-/* =========================================================
-   TYPES
-========================================================= */
-
-export type EKYCSubmissionStatus =
-  | "QUEUED"
-  | "PENDING_MANUAL_REVIEW";
-
-export interface EKYCSubmissionResult {
-  verificationId: string;
-  attemptId: string;
-  status: EKYCSubmissionStatus;
-}
-
-export class EKYCAlreadyVerifiedError
-  extends Error {
+export class EKYCAlreadyVerifiedError extends Error {
   readonly statusCode = 409;
-
   constructor() {
+    super("This account already has a verified identity.");
+    this.name = "EKYCAlreadyVerifiedError";
+  }
+}
+
+export class EKYCActiveAttemptError extends Error {
+  readonly statusCode = 409;
+  constructor(readonly verificationId?: string) {
+    super("An e-KYC verification is already in progress for this account.");
+    this.name = "EKYCActiveAttemptError";
+  }
+}
+
+export class EKYCSubmissionRecoveryError extends Error {
+  readonly statusCode = 503;
+
+  constructor(readonly verificationId: string) {
     super(
-      "This account already has a verified e-KYC record."
+      "The verification was accepted but processing could not be scheduled. Support can recover it using the verification ID."
     );
-
-    this.name =
-      "EKYCAlreadyVerifiedError";
+    this.name = "EKYCSubmissionRecoveryError";
   }
 }
-
-/* =========================================================
-   PRIVATE OBJECT REFERENCE VALIDATION
-========================================================= */
-
-function validateObjectReference(
-  value: string,
-  fieldName: string
-): string {
-  const normalized =
-    value.trim();
-
-  if (
-    normalized.length < 8 ||
-    normalized.length > 500
-  ) {
-    throw new Error(
-      `${fieldName} object reference is invalid.`
-    );
-  }
-
-  /*
-   * The API accepts an opaque private-storage reference,
-   * not a public HTTP image URL.
-   */
-  if (
-    normalized.includes(
-      "://"
-    )
-  ) {
-    throw new Error(
-      `${fieldName} must be a private object reference, not a public URL.`
-    );
-  }
-
-  if (
-    normalized.includes(
-      ".."
-    )
-  ) {
-    throw new Error(
-      `${fieldName} contains an invalid path segment.`
-    );
-  }
-
-  if (
-    !/^[A-Za-z0-9/_+=.@:-]+$/.test(
-      normalized
-    )
-  ) {
-    throw new Error(
-      `${fieldName} contains unsupported characters.`
-    );
-  }
-
-  return normalized;
-}
-
-function validateMediaReferences(
-  media: PrivateMediaRefs
-): PrivateMediaRefs {
-  return {
-    nidFrontObjectRef:
-      validateObjectReference(
-        media.nidFrontObjectRef,
-        "NID front"
-      ),
-
-    nidBackObjectRef:
-      validateObjectReference(
-        media.nidBackObjectRef,
-        "NID back"
-      ),
-
-    selfieObjectRef:
-      validateObjectReference(
-        media.selfieObjectRef,
-        "Selfie"
-      ),
-  };
-}
-
-/* =========================================================
-   ORCHESTRATOR
-========================================================= */
 
 export class EKYCOrchestrator {
   constructor(
-    private readonly limiter:
-      EKYCRateLimiter,
-
-    private readonly queue:
-      Queue<EKYCJobData>
+    private readonly limiter: EKYCRateLimiter,
+    private readonly queue: Queue<EKYCJobData>,
+    private readonly projectStatus: EKYCStatusProjector
   ) {}
 
-  async submit(
-    input: EKYCSubmission
-  ): Promise<EKYCSubmissionResult> {
-    /* -----------------------------------------------------
-       Authentication identity validation
-    ----------------------------------------------------- */
-
-    if (
-      !mongoose.Types.ObjectId.isValid(
-        input.userId
-      )
-    ) {
-      throw new Error(
-        "Invalid authenticated user ID."
-      );
+  async submit(input: EKYCSubmission): Promise<{
+    verificationId: string;
+    status: "QUEUED" | "PENDING_MANUAL_REVIEW";
+  }> {
+    if (!mongoose.Types.ObjectId.isValid(input.userId)) {
+      throw new Error("Invalid authenticated user ID.");
     }
 
-    if (
-      !input.ipAddress?.trim() ||
-      !input.deviceId?.trim()
-    ) {
-      throw new Error(
-        "IP address and verified device ID are required."
-      );
+    const identity = validateSubmissionIdentity(input);
+    const verified = await EKYCVerification.exists({ userId: input.userId, status: "VERIFIED" });
+    if (verified) throw new EKYCAlreadyVerifiedError();
+
+    const active = await EKYCVerification.findOne({
+      userId: input.userId,
+      activeAttempt: true,
+    }).select("_id").lean();
+    if (active) throw new EKYCActiveAttemptError(String(active._id));
+
+    const attemptId = randomUUID();
+
+    const fingerprintMaterial = input.fingerprint
+      ? input.fingerprint.mode === "MOCK"
+        ? input.fingerprint.templateBase64
+        : input.fingerprint.providerCaptureReference
+      : undefined;
+
+    if (input.fingerprint && !fingerprintMaterial) {
+      throw new Error("The supplied fingerprint evidence is invalid.");
     }
-
-    const correlationId =
-      input.correlationId
-        ?.trim()
-        .slice(0, 120) ||
-      randomUUID();
-
-    /* -----------------------------------------------------
-       Check already verified user
-    ----------------------------------------------------- */
-
-    const existingVerification =
-      await EKYCVerification
-        .exists({
-          userId:
-            input.userId,
-
-          status:
-            "VERIFIED",
-        });
-
-    if (
-      existingVerification
-    ) {
-      throw new EKYCAlreadyVerifiedError();
-    }
-
-    /* -----------------------------------------------------
-       Local validation before provider calls
-    ----------------------------------------------------- */
-
-    const identity =
-      validateSubmissionIdentity(
-        {
-          nid:
-            input.nid,
-
-          dateOfBirth:
-            input.dateOfBirth,
-
-          claimedName:
-            input.claimedName,
-        }
-      );
-
-    const media =
-      validateMediaReferences(
-        input.media
-      );
-
-    const attemptId =
-      randomUUID();
-
-    /* -----------------------------------------------------
-       Atomic multi-identifier rate limiting
-
-       Tracks:
-       - User ID
-       - IP address
-       - Device ID
-    ----------------------------------------------------- */
-
     await this.limiter.consume({
-      userId:
-        input.userId,
-
-      ipAddress:
-        input.ipAddress,
-
-      deviceId:
-        input.deviceId,
-
+      userId: input.userId,
+      ipAddress: input.ipAddress,
+      deviceId: input.deviceId,
       attemptId,
     });
 
-    /* -----------------------------------------------------
-       Encrypted database record
-    ----------------------------------------------------- */
-
-    const verification =
-      await EKYCVerification.create({
-        userId:
-          input.userId,
-
-        status:
-          "QUEUED",
-
+    let verification;
+    try {
+      verification = await EKYCVerification.create({
+        userId: input.userId,
+        status: "QUEUED",
+        activeAttempt: true,
         reasonCodes: [],
-
-        nidLookupHash:
-          keyedLookupHash(
-            identity.normalizedNid,
-            "nid"
-          ),
-
-        nidEncrypted:
-          encryptField(
-            identity.normalizedNid
-          ),
-
-        dateOfBirthEncrypted:
-          encryptField(
-            input.dateOfBirth
-          ),
-
-        claimedNameEncrypted:
-          encryptField(
-            identity.claimedName
-          ),
-
-        mediaRefsEncrypted:
-          encryptField(
-            JSON.stringify(
-              media
-            )
-          ),
-
-        correlationId,
+        nidLookupHash: keyedLookupHash(identity.normalizedNid, "nid"),
+        nidEncrypted: encryptField(identity.normalizedNid),
+        dateOfBirthEncrypted: encryptField(input.dateOfBirth),
+        claimedNameEncrypted: encryptField(identity.claimedName),
+        mediaRefsEncrypted: encryptField(JSON.stringify(input.media)),
+        livenessEvidenceEncrypted: encryptField(JSON.stringify(input.liveness)),
+        ...(input.fingerprint && fingerprintMaterial
+          ? {
+              fingerprintEvidenceEncrypted: encryptField(JSON.stringify(input.fingerprint)),
+              fingerprintTemplateHash: keyedLookupHash(fingerprintMaterial, "fingerprint"),
+            }
+          : {}),
+        correlationId: input.correlationId,
         attemptId,
-
-        submittedAt:
-          new Date(),
+        submittedAt: new Date(),
       });
-
-    /* -----------------------------------------------------
-       Submission audit
-    ----------------------------------------------------- */
-
-    await appendAuditEvent({
-      verificationId:
-        verification.id,
-
-      eventType:
-        "VERIFICATION_SUBMITTED",
-
-      actorType:
-        "USER",
-
-      actorIdHash:
-        keyedLookupHash(
-          input.userId,
-          "vector-user"
-        ),
-
-      correlationId,
-
-      metadata: {
-        status:
-          "QUEUED",
-
-        attemptId,
-
-        inputValidation:
-          "PASSED",
-
-        mediaReferenceCount:
-          3,
-      },
-    });
-
-    /* -----------------------------------------------------
-       Queue background processing
-    ----------------------------------------------------- */
+    } catch (error) {
+      if (error instanceof mongoose.mongo.MongoServerError && error.code === 11000) {
+        throw new EKYCActiveAttemptError();
+      }
+      throw error;
+    }
 
     try {
-      await enqueueEKYC(
-        this.queue,
-        {
-          verificationId:
-            verification.id,
-
-          attemptId,
-        }
-      );
-    } catch {
-      /*
-       * Redis/BullMQ failure must not incorrectly reject
-       * the customer. Send the verification to the admin
-       * review queue instead.
-       */
-
-      await EKYCVerification.updateOne(
-        {
-          _id:
-            verification._id,
-
-          status:
-            "QUEUED",
-        },
-        {
-          $set: {
-            status:
-              "PENDING_MANUAL_REVIEW",
-
-            reasonCodes: [
-              "PROVIDER_UNAVAILABLE",
-            ],
-
-            decidedAt:
-              new Date(),
-          },
-        }
-      );
-
       await appendAuditEvent({
-        verificationId:
-          verification.id,
-
-        eventType:
-          "QUEUE_ENQUEUE_FAILED",
-
-        actorType:
-          "SYSTEM",
-
-        correlationId,
-
+        verificationId: verification.id,
+        eventType: "VERIFICATION_SUBMITTED",
+        actorType: "USER",
+        actorIdHash: keyedLookupHash(input.userId, "vector-user"),
+        correlationId: input.correlationId,
+        idempotencyKey: `submitted:${attemptId}`,
         metadata: {
-          previousStatus:
-            "QUEUED",
-
-          fallbackStatus:
-            "PENDING_MANUAL_REVIEW",
-
-          attemptId,
+          status: "QUEUED",
+          mediaReferenceCount: 4,
+          livenessChallengeCount: input.liveness.challenges.length,
+          fingerprintMode: input.fingerprint?.mode ?? "NOT_COLLECTED",
         },
       });
-
-      return {
-        verificationId:
-          verification.id,
-
-        attemptId,
-
-        status:
-          "PENDING_MANUAL_REVIEW",
-      };
+    } catch (error) {
+      console.error("EKYC SUBMISSION AUDIT WRITE FAILED:", {
+        verificationId: verification.id,
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
     }
 
-    await appendAuditEvent({
-      verificationId:
-        verification.id,
+    try {
+      await this.projectStatus(input.userId, "QUEUED");
+    } catch (error) {
+      console.error("EKYC INITIAL STATUS PROJECTION FAILED:", {
+        verificationId: verification.id,
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
 
-      eventType:
-        "VERIFICATION_ENQUEUED",
+    try {
+      await enqueueEKYC(this.queue, { verificationId: verification.id, attemptId });
+    } catch {
+      try {
+        await EKYCVerification.updateOne(
+          { _id: verification._id, status: "QUEUED" },
+          {
+            $set: {
+              status: "PENDING_MANUAL_REVIEW",
+              reasonCodes: ["PROVIDER_UNAVAILABLE"],
+              decidedAt: new Date(),
+            },
+          }
+        );
+      } catch (recoveryError) {
+        console.error("EKYC QUEUE FAILURE RECOVERY FAILED:", {
+          verificationId: verification.id,
+          message: recoveryError instanceof Error ? recoveryError.message : "Unknown error",
+        });
+        throw new EKYCSubmissionRecoveryError(verification.id);
+      }
 
-      actorType:
-        "SYSTEM",
+      await appendAuditEvent({
+        verificationId: verification.id,
+        eventType: "QUEUE_ENQUEUE_FAILED",
+        actorType: "SYSTEM",
+        correlationId: input.correlationId,
+        idempotencyKey: `queue-failed:${attemptId}`,
+        metadata: { fallbackStatus: "PENDING_MANUAL_REVIEW" },
+      }).catch((auditError) => {
+        console.error("EKYC QUEUE FAILURE AUDIT WRITE FAILED:", {
+          verificationId: verification.id,
+          message: auditError instanceof Error ? auditError.message : "Unknown error",
+        });
+      });
+      await this.projectStatus(input.userId, "PENDING_MANUAL_REVIEW").catch((projectionError) => {
+        console.error("EKYC FALLBACK STATUS PROJECTION FAILED:", {
+          verificationId: verification.id,
+          message: projectionError instanceof Error ? projectionError.message : "Unknown error",
+        });
+      });
+      return { verificationId: verification.id, status: "PENDING_MANUAL_REVIEW" };
+    }
 
-      correlationId,
-
-      metadata: {
-        queue:
-          "ekyc-processing-v1",
-
-        attemptId,
-      },
-    });
-
-    return {
-      verificationId:
-        verification.id,
-
-      attemptId,
-
-      status:
-        "QUEUED",
-    };
+    return { verificationId: verification.id, status: "QUEUED" };
   }
 }
-
-export default EKYCOrchestrator;

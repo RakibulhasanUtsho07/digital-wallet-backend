@@ -14,10 +14,13 @@ import {
   ManualReviewDependencyError,
   ManualReviewRequiresRerunError,
 } from "../services/manualReviewService.js";
-
+import {
+  EKYCRerunConflictError,
+  EKYCRerunDependencyError,
+  rerunEKYCVerification,
+} from "../services/rerunService.js";
 import { projectEKYCStatusToUser } from "../services/statusProjectionService.js";
 import type { EKYCStatus, PrivateMediaRefs } from "../types.js";
-import { EKYCRerunConflictError, EKYCRerunDependencyError, rerunEKYCVerification } from "../services/rerunService.js";
 
 const statusValues: EKYCStatus[] = [
   "QUEUED",
@@ -72,6 +75,11 @@ function safeVerification(value: any) {
     faceScore: typeof value.faceScore === "number" ? value.faceScore : null,
     nameScore: typeof value.nameScore === "number" ? value.nameScore : null,
     livenessPassed: typeof value.livenessPassed === "boolean" ? value.livenessPassed : null,
+    fingerprintMatched:
+      typeof value.fingerprintMatched === "boolean" ? value.fingerprintMatched : null,
+    fingerprintConclusive:
+      typeof value.fingerprintConclusive === "boolean" ? value.fingerprintConclusive : null,
+    fingerprintScore: typeof value.fingerprintScore === "number" ? value.fingerprintScore : null,
     possibleDuplicateVectorId: value.possibleDuplicateVectorId,
     possibleDuplicateScore:
       typeof value.possibleDuplicateScore === "number" ? value.possibleDuplicateScore : null,
@@ -96,7 +104,7 @@ function routeError(error: unknown, response: Response, next: NextFunction): voi
     error instanceof ManualReviewConflictError ||
     error instanceof ManualReviewDependencyError ||
     error instanceof ManualReviewRequiresRerunError ||
-    error instanceof EKYCRerunConflictError||
+    error instanceof EKYCRerunConflictError ||
     error instanceof EKYCRerunDependencyError
   ) {
     response.status(error.statusCode).json({ success: false, message: error.message });
