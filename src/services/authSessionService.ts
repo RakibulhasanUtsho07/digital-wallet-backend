@@ -40,13 +40,25 @@ const AUTH_COOKIE_NAME =
 const JWT_ALGORITHM =
   "HS256" as const;
 
+/*
+ * All platform roles.
+ *
+ * user
+ * merchant
+ * support
+ * analyst
+ * admin
+ * super_admin
+ */
 const VALID_USER_ROLES:
   ReadonlySet<string> =
   new Set([
     "user",
+    "merchant",
     "support",
     "analyst",
     "admin",
+    "super_admin",
   ]);
 
 /* =========================================================
@@ -61,9 +73,14 @@ export interface SessionTokenPayload {
   authVersion: number;
 
   /*
-   * Session identifier.
+   * Server-side authentication session ID.
    *
-   * Present on all newly issued authentication tokens.
+   * Used for:
+   * - session management
+   * - device/session revocation
+   * - security center
+   * - logout current session
+   * - logout other sessions
    */
   sid?: string;
 
@@ -86,6 +103,9 @@ interface SessionUserInput {
    TYPE VALIDATION
 ========================================================= */
 
+/*
+ * Validate platform role.
+ */
 function isUserRole(
   value: unknown
 ): value is UserRole {
@@ -98,6 +118,9 @@ function isUserRole(
   );
 }
 
+/*
+ * Validate MongoDB ObjectId string.
+ */
 function isValidUserId(
   value: unknown
 ): value is string {
@@ -110,6 +133,12 @@ function isValidUserId(
   );
 }
 
+/*
+ * Validate generated server-side session ID.
+ *
+ * Session ID is generated from 24 random bytes,
+ * therefore it contains 48 hexadecimal characters.
+ */
 function isValidSessionId(
   value: unknown
 ): value is string {
@@ -146,23 +175,42 @@ const getCookieOptions =
       isProductionEnvironment();
 
     return {
+      /*
+       * Authentication cookie cannot be accessed
+       * through client-side JavaScript.
+       */
       httpOnly:
         true,
 
+      /*
+       * Production authentication cookies must only
+       * be transmitted over HTTPS.
+       */
       secure:
         isProduction,
 
       /*
-       * Different frontend/backend origins in production
-       * require SameSite=None.
+       * Local:
+       * same-origin development normally works with lax.
+       *
+       * Production:
+       * frontend/backend may use different origins,
+       * therefore SameSite=None is required.
        */
       sameSite:
         isProduction
           ? "none"
           : "lax",
 
+      /*
+       * Cookie available to all API paths.
+       */
       path: "/",
 
+      /*
+       * Keep cookie lifetime aligned with
+       * server-side authentication session.
+       */
       maxAge:
         AUTH_SESSION_MAX_AGE_MS,
     };
@@ -179,7 +227,7 @@ export const clearAuthCookie = (
     getCookieOptions();
 
   /*
-   * Express clearCookie does not need maxAge.
+   * clearCookie does not need maxAge.
    */
   const {
     maxAge: _maxAge,
@@ -221,7 +269,7 @@ const generateSessionId =
   (): string => {
     /*
      * 24 random bytes
-     * = 48 hex characters
+     * = 48 hexadecimal characters.
      */
     return crypto
       .randomBytes(24)
@@ -320,7 +368,9 @@ export const createSessionToken =
         sid:
           normalizedSessionId,
       },
+
       getJwtSecret(),
+
       {
         algorithm:
           JWT_ALGORITHM,
@@ -611,8 +661,10 @@ export const revokeSessionById =
       );
 
     return (
-      (result.modifiedCount ??
-        0) > 0
+      (
+        result.modifiedCount ??
+        0
+      ) > 0
     );
   };
 
@@ -639,21 +691,23 @@ export const findActiveSession =
       return null;
     }
 
-    return AuthSession.findOne({
-      userId,
+    return AuthSession.findOne(
+      {
+        userId,
 
-      sessionId,
+        sessionId,
 
-      revokedAt: {
-        $exists:
-          false,
-      },
+        revokedAt: {
+          $exists:
+            false,
+        },
 
-      expiresAt: {
-        $gt:
-          new Date(),
-      },
-    })
+        expiresAt: {
+          $gt:
+            new Date(),
+        },
+      }
+    )
       .lean();
   };
 
@@ -689,7 +743,7 @@ export const readTokenFromRequest = (
   }
 
   /* =====================================================
-     COOKIE
+     AUTH COOKIE
   ====================================================== */
 
   const cookieToken =
@@ -716,6 +770,10 @@ export const decodeSessionToken =
   (
     token: string
   ): SessionTokenPayload => {
+    /* =====================================================
+       BASIC TOKEN VALIDATION
+    ====================================================== */
+
     if (
       typeof token !==
         "string" ||
@@ -740,6 +798,10 @@ export const decodeSessionToken =
           ],
         }
       );
+
+    /* =====================================================
+       OBJECT PAYLOAD
+    ====================================================== */
 
     if (
       typeof decoded ===
@@ -834,7 +896,7 @@ export const decodeSessionToken =
     };
 
     /* =====================================================
-       OPTIONAL SID
+       OPTIONAL SESSION ID
     ====================================================== */
 
     if (
@@ -846,7 +908,7 @@ export const decodeSessionToken =
     }
 
     /* =====================================================
-       OPTIONAL IAT
+       OPTIONAL ISSUED AT
     ====================================================== */
 
     if (
@@ -858,7 +920,7 @@ export const decodeSessionToken =
     }
 
     /* =====================================================
-       OPTIONAL EXP
+       OPTIONAL EXPIRATION
     ====================================================== */
 
     if (
@@ -941,9 +1003,13 @@ export const revokeCurrentSessionFromRequest =
       }
     } catch {
       /*
-       * Logout should always remain successful from the
-       * client perspective even when the token is expired,
-       * malformed, already revoked, etc.
+       * Logout should remain successful from the
+       * client perspective even when the token is:
+       *
+       * - expired
+       * - malformed
+       * - already revoked
+       * - otherwise invalid
        */
     }
   };
