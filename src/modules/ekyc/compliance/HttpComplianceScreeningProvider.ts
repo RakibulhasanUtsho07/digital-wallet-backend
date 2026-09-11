@@ -63,8 +63,7 @@ export class HttpComplianceScreeningProvider implements IComplianceScreeningProv
         },
         body: JSON.stringify(input),
         signal: controller.signal,
-        redirect: "error",
-        cache: "no-store",
+       redirect: "error",
       });
       if (!response.ok) {
         throw new Error(`Compliance-screening provider returned HTTP ${response.status}.`);

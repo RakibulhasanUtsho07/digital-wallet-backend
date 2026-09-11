@@ -106,7 +106,6 @@ export class RealECEKYCProvider implements IEKYCProvider {
         body: JSON.stringify(payload),
         signal: controller.signal,
         redirect: "error",
-        cache: "no-store",
       });
       if (response.status >= 500 || response.status === 429) {
         throw new ECProviderError("EC gateway is temporarily unavailable.", "UNAVAILABLE", true);

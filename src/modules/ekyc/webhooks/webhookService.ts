@@ -361,8 +361,7 @@ async function deliverWebhook(
           redirect:
             "error",
 
-          cache:
-            "no-store",
+          
         }
       );
 

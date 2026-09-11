@@ -89,7 +89,6 @@ export class QdrantFaceVectorStore implements IFaceVectorStore {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(3_000),
       redirect: "error",
-      cache: "no-store",
     });
 
     if (!response.ok) {
