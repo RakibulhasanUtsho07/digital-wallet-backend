@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { hash } from "bcryptjs";
-import { Types } from "mongoose";
+import { Types, type Model } from "mongoose";
 import {
   AuditLogModel,
   AuthSessionModel,
@@ -110,18 +110,24 @@ export async function createAdminUser(input: {
   });
 
   const userId = String(created._id);
-  await Promise.all([
-    WalletModel.findOneAndUpdate(
-      { $or: [{ userId: created._id }, { user: created._id }] },
-      { $setOnInsert: { userId: created._id, user: created._id, status: "active", balance: 0, availableBalanceMinor: 0, currency: "BDT" } },
-      { upsert: true, new: true },
-    ).exec(),
-    KYCModel.findOneAndUpdate(
-      { $or: [{ userId: created._id }, { user: created._id }] },
-      { $setOnInsert: { userId: created._id, user: created._id, status: "not_started" } },
-      { upsert: true, new: true },
-    ).exec(),
-  ]);
+  const walletFilter = userReferenceFilter(WalletModel, created._id);
+  const walletInsert = knownModelFields(WalletModel, {
+    ...walletFilter,
+    status: databaseWalletStatus(WalletModel, "active"),
+    balance: 0,
+    pendingBalance: 0,
+    availableBalanceMinor: 0,
+    currency: "BDT",
+  });
+
+  await WalletModel.findOneAndUpdate(
+    walletFilter,
+    { $setOnInsert: walletInsert },
+    { upsert: true, new: true, runValidators: true },
+  ).exec();
+
+  // The KYC record is created only after identity evidence is submitted.
+  // An empty upsert would violate the advanced e-KYC schema.
 
   await writeAudit({ actorId, targetUserId: userId, action: "admin.user.created", after: input });
   return getAdminUserById(userId);
@@ -133,7 +139,7 @@ export async function updateAdminUser(id: string, patch: Patch, actorId?: string
   if (!before) throw new ServiceError(404, "User not found.");
 
   const userPatch = pickDefined(patch, [
-    "name", "email", "phone", "role", "status", "riskLevel", "riskScore", "avatarUrl", "twoFactorEnabled",
+    "name", "email", "phone", "role", "status", "kycStatus", "riskLevel", "riskScore", "avatarUrl", "twoFactorEnabled",
   ]);
   if (typeof userPatch.email === "string") userPatch.email = userPatch.email.toLowerCase();
 
@@ -142,17 +148,36 @@ export async function updateAdminUser(id: string, patch: Patch, actorId?: string
     tasks.push(UserModel.findByIdAndUpdate(objectId, { $set: userPatch }, { new: true, runValidators: true }).exec());
   }
   if (patch.walletStatus) {
+    const walletFilter = userReferenceFilter(WalletModel, objectId);
+    const walletInsert = knownModelFields(WalletModel, {
+      ...walletFilter,
+      balance: 0,
+      pendingBalance: 0,
+      availableBalanceMinor: 0,
+      currency: "BDT",
+    });
+
     tasks.push(WalletModel.findOneAndUpdate(
-      { $or: [{ userId: objectId }, { user: objectId }] },
-      { $set: { status: patch.walletStatus } },
+      walletFilter,
+      {
+        $set: { status: databaseWalletStatus(WalletModel, patch.walletStatus) },
+        $setOnInsert: walletInsert,
+      },
       { upsert: true, new: true, runValidators: true },
     ).exec());
   }
   if (patch.kycStatus) {
-    tasks.push(KYCModel.findOneAndUpdate(
-      { $or: [{ userId: objectId }, { user: objectId }] },
-      { $set: { status: patch.kycStatus, reviewedAt: new Date(), reviewedBy: actorId || undefined, reason: patch.reason } },
-      { upsert: true, new: true, runValidators: true },
+    const kycUpdate = knownModelFields(KYCModel, {
+      status: databaseKycStatus(KYCModel, patch.kycStatus),
+      reviewedAt: new Date(),
+      reviewedBy: actorId ? objectIdValue(actorId) : undefined,
+      reason: patch.reason,
+    });
+
+    tasks.push(KYCModel.updateOne(
+      userReferenceFilter(KYCModel, objectId),
+      { $set: kycUpdate },
+      { runValidators: true },
     ).exec());
   }
 
@@ -170,12 +195,12 @@ export async function softDeleteAdminUser(id: string, actorId?: string, reason =
   await Promise.all([
     UserModel.findByIdAndUpdate(objectId, { $set: { status: "suspended", deletedAt: new Date() } }, { new: true }).exec(),
     WalletModel.findOneAndUpdate(
-      { $or: [{ userId: objectId }, { user: objectId }] },
-      { $set: { status: "frozen" } },
+      userReferenceFilter(WalletModel, objectId),
+      { $set: { status: databaseWalletStatus(WalletModel, "frozen") } },
       { new: true },
     ).exec(),
     AuthSessionModel.updateMany(
-      { $or: [{ userId: objectId }, { user: objectId }] },
+      userReferenceFilter(AuthSessionModel, objectId),
       { $set: { revokedAt: new Date() } },
     ).exec(),
   ]);
@@ -245,13 +270,16 @@ export async function getUserManagementStats() {
 async function decorateUsers(users: DbRecord[]): Promise<AdminUserRecord[]> {
   const ids = users.map((user) => user._id).filter(Boolean);
   if (!ids.length) return [];
-  const relatedFilter = { $or: [{ userId: { $in: ids } }, { user: { $in: ids } }] };
+  const walletFilter = userReferenceManyFilter(WalletModel, ids);
+  const kycFilter = userReferenceManyFilter(KYCModel, ids);
+  const sessionReference = userReferencePath(AuthSessionModel);
+  const sessionFilter = userReferenceManyFilter(AuthSessionModel, ids);
   const [wallets, kycCases, sessionCounts] = await Promise.all([
-    WalletModel.find(relatedFilter).lean().exec() as unknown as Promise<DbRecord[]>,
-    KYCModel.find(relatedFilter).lean().exec() as unknown as Promise<DbRecord[]>,
+    WalletModel.find(walletFilter).lean().exec() as unknown as Promise<DbRecord[]>,
+    KYCModel.find(kycFilter).lean().exec() as unknown as Promise<DbRecord[]>,
     AuthSessionModel.aggregate([
-      { $match: { ...relatedFilter, revokedAt: { $in: [null, undefined] }, expiresAt: { $gt: new Date() } } },
-      { $group: { _id: { $ifNull: ["$userId", "$user"] }, count: { $sum: 1 } } },
+      { $match: { ...sessionFilter, revokedAt: { $in: [null, undefined] }, expiresAt: { $gt: new Date() } } },
+      { $group: { _id: `$${sessionReference}`, count: { $sum: 1 } } },
     ]).exec() as unknown as Promise<Array<{ _id: unknown; count: number }>>,
   ]);
 
@@ -318,11 +346,8 @@ async function writeAudit(entry: {
     ? new Types.ObjectId(entry.targetUserId)
     : entry.targetUserId;
 
-  await AuditLogModel.create({
-    // তোমার AuditLog model-এর required field
+  const auditDocument = knownModelFields(AuditLogModel, {
     actor,
-
-    // Compatibility fields
     actorId: actor,
     targetUser,
     targetUserId: targetUser,
@@ -333,6 +358,8 @@ async function writeAudit(entry: {
     reason: entry.reason,
     createdAt: new Date(),
   });
+
+  await AuditLogModel.create(auditDocument);
 }
 
 function indexByUser(records: DbRecord[]) {
@@ -421,6 +448,98 @@ function pickDefined(source: Patch, keys: Array<keyof Patch>) {
   const result: Record<string, unknown> = {};
   keys.forEach((key) => { if (source[key] !== undefined) result[String(key)] = source[key]; });
   return result;
+}
+
+type DbModel = Model<DbRecord>;
+
+function userReferencePath(model: DbModel): "userId" | "user" {
+  if (model.schema.path("userId")) return "userId";
+  if (model.schema.path("user")) return "user";
+
+  throw new ServiceError(
+    500,
+    `${model.modelName} must define either a userId or user reference.`,
+  );
+}
+
+function userReferenceFilter(model: DbModel, userId: unknown): Record<string, unknown> {
+  return { [userReferencePath(model)]: userId };
+}
+
+function userReferenceManyFilter(model: DbModel, userIds: unknown[]): Record<string, unknown> {
+  return { [userReferencePath(model)]: { $in: userIds } };
+}
+
+function knownModelFields(
+  model: DbModel,
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && model.schema.path(key)) {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
+
+function schemaEnumValues(model: DbModel, path: string): string[] {
+  const schemaType = model.schema.path(path) as unknown as {
+    enumValues?: unknown[];
+  } | undefined;
+
+  return (schemaType?.enumValues ?? []).map(String);
+}
+
+function pickSupportedStatus(
+  model: DbModel,
+  requested: string,
+  aliases: Record<string, string[]>,
+): string {
+  const allowed = schemaEnumValues(model, "status");
+  const candidates = [
+    requested,
+    requested.toLowerCase(),
+    requested.toUpperCase(),
+    ...(aliases[requested] ?? []),
+  ];
+
+  if (!allowed.length) return candidates[0]!;
+
+  const match = candidates.find((candidate) => allowed.includes(candidate));
+  if (match) return match;
+
+  throw new ServiceError(
+    400,
+    `${requested} cannot be represented by the ${model.modelName} status schema.`,
+  );
+}
+
+function databaseWalletStatus(model: DbModel, status: WalletStatus): string {
+  return pickSupportedStatus(model, status, {
+    active: ["ACTIVE"],
+    frozen: ["FROZEN", "BLOCKED"],
+    restricted: ["BLOCKED", "FROZEN"],
+    closed: ["BLOCKED"],
+  });
+}
+
+function databaseKycStatus(model: DbModel, status: KYCStatus): string {
+  return pickSupportedStatus(model, status, {
+    not_started: ["QUEUED"],
+    pending: ["QUEUED", "PROCESSING"],
+    under_review: ["PENDING_MANUAL_REVIEW"],
+    verified: ["VERIFIED", "approved", "APPROVED"],
+    rejected: ["REJECTED"],
+  });
+}
+
+function objectIdValue(value: string): Types.ObjectId | string {
+  return Types.ObjectId.isValid(value)
+    ? new Types.ObjectId(value)
+    : value;
 }
 
 export class ServiceError extends Error {

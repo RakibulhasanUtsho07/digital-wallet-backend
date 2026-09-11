@@ -5,6 +5,10 @@ import {
 } from "../../models/PaymentIntent.js";
 
 import {
+  AddMoneyTransaction,
+} from "../../models/AddMoneyTransaction.js";
+
+import {
   PaymentSource,
 } from "../../models/PaymentSource.js";
 
@@ -48,6 +52,101 @@ export type ProviderName =
   (typeof PAYMENT_PROVIDERS)[number];
 
 /* =========================================================
+   TYPES
+========================================================= */
+
+export interface AddMoneyInput {
+  userId: string;
+
+  providerName: string;
+
+  accountNumber: string;
+
+  secretCode: string;
+
+  amount: number;
+
+  reference?: string;
+
+  idempotencyKey: string;
+}
+
+export interface InitiateAddMoneyInput {
+  userId: string;
+
+  amount: number;
+
+  currency: string;
+
+  sourceType: "BANK" | "MFS";
+
+  provider:
+    | "DEMO"
+    | "BKASH"
+    | "NAGAD"
+    | "ROCKET"
+    | "BANK_API";
+
+  providerName: string;
+
+  customerReference?: string;
+
+  maskedAccount?: string;
+
+  accountNumber?: string;
+
+  secretCode?: string;
+
+  idempotencyKey?: string;
+}
+
+export interface VerifyAndCreditAddMoneyInput {
+  userId: string;
+
+  transactionId: string;
+
+  verificationCode?: string;
+}
+
+/* =========================================================
+   RESULT TYPES
+========================================================= */
+
+interface PaymentResult {
+  duplicate: boolean;
+
+  intent: mongoose.HydratedDocument<any>;
+
+  wallet:
+    | any
+    | null;
+
+  providerTransactionId:
+    | string
+    | null;
+}
+
+interface ControllerCompatibleResult {
+  transactionId: string;
+
+  providerTransactionId:
+    | string
+    | null;
+
+  status: string;
+
+  verificationRequired: boolean;
+
+  demoCode?: string;
+
+  message: string;
+
+  duplicate?: boolean;
+
+  wallet?: any;
+}
+
+/* =========================================================
    CONSTANTS
 ========================================================= */
 
@@ -77,6 +176,12 @@ const normalizeSecretCode = (
   return value.trim();
 };
 
+const normalizeIdempotencyKey = (
+  value: string
+): string => {
+  return value.trim();
+};
+
 const isProviderName = (
   value: string
 ): value is ProviderName => {
@@ -87,24 +192,31 @@ const isProviderName = (
   );
 };
 
+const toObjectId = (
+  value: string
+): mongoose.Types.ObjectId => {
+  if (!mongoose.isValidObjectId(value)) {
+    throw new Error(
+      "Invalid user ID."
+    );
+  }
+
+  return new mongoose.Types.ObjectId(
+    value
+  );
+};
+
+const safeString = (
+  value: unknown
+): string => {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+};
+
 /* =========================================================
    VERIFY PAYMENT SOURCE
 ========================================================= */
-
-/*
- * Authoritative backend source-account verification.
- *
- * Checks:
- *
- * 1. Provider valid
- * 2. Account number valid
- * 3. HMAC account lookup
- * 4. Source exists
- * 5. Source active
- * 6. Secret code matches
- *
- * Frontend verification is NEVER trusted.
- */
 
 export const verifyPaymentSource =
   async ({
@@ -114,14 +226,13 @@ export const verifyPaymentSource =
     session,
   }: {
     providerName: string;
+
     accountNumber: string;
+
     secretCode: string;
+
     session?: mongoose.ClientSession;
   }) => {
-    /* =====================================================
-       PROVIDER
-    ====================================================== */
-
     if (
       !isProviderName(
         providerName
@@ -132,10 +243,6 @@ export const verifyPaymentSource =
       );
     }
 
-    /* =====================================================
-       NORMALIZE
-    ====================================================== */
-
     const normalizedAccount =
       normalizeAccountNumber(
         accountNumber
@@ -145,10 +252,6 @@ export const verifyPaymentSource =
       normalizeSecretCode(
         secretCode
       );
-
-    /* =====================================================
-       VALIDATE ACCOUNT
-    ====================================================== */
 
     if (
       normalizedAccount.length <
@@ -161,19 +264,11 @@ export const verifyPaymentSource =
       );
     }
 
-    /* =====================================================
-       VALIDATE SECRET
-    ====================================================== */
-
     if (!normalizedSecret) {
       throw new Error(
         "Source account secret code is required."
       );
     }
-
-    /* =====================================================
-       HMAC LOOKUP
-    ====================================================== */
 
     const accountLookup =
       createLookupHash(
@@ -200,19 +295,11 @@ export const verifyPaymentSource =
     const source =
       await query;
 
-    /* =====================================================
-       ACCOUNT EXISTS
-    ====================================================== */
-
     if (!source) {
       throw new Error(
         "No account was found for the selected provider."
       );
     }
-
-    /* =====================================================
-       STATUS
-    ====================================================== */
 
     if (
       source.status !==
@@ -223,10 +310,6 @@ export const verifyPaymentSource =
       );
     }
 
-    /* =====================================================
-       SECRET HASH
-    ====================================================== */
-
     const incomingHash =
       hashSecretCode(
         normalizedSecret
@@ -235,17 +318,15 @@ export const verifyPaymentSource =
     const storedHash =
       source.get(
         "secretCodeHash"
-      ) as string | undefined;
+      ) as
+        | string
+        | undefined;
 
     if (!storedHash) {
       throw new Error(
         "Source account authentication data is unavailable."
       );
     }
-
-    /* =====================================================
-       SAFE COMPARE
-    ====================================================== */
 
     const matched =
       safeEqualHex(
@@ -263,7 +344,7 @@ export const verifyPaymentSource =
   };
 
 /* =========================================================
-   CREATE ADD MONEY
+   CORE ADD MONEY
 ========================================================= */
 
 export const createAddMoney =
@@ -275,25 +356,7 @@ export const createAddMoney =
     amount,
     reference,
     idempotencyKey,
-  }: {
-    userId: string;
-
-    providerName: string;
-
-    accountNumber: string;
-
-    secretCode: string;
-
-    amount: number;
-
-    reference?: string;
-
-    idempotencyKey: string;
-  }) => {
-    /* =====================================================
-       AMOUNT
-    ====================================================== */
-
+  }: AddMoneyInput): Promise<PaymentResult> => {
     const amountError =
       validateAddMoneyAmount(
         amount
@@ -305,25 +368,22 @@ export const createAddMoney =
       );
     }
 
-    /* =====================================================
-       IDEMPOTENCY
-    ====================================================== */
+    const normalizedKey =
+      normalizeIdempotencyKey(
+        idempotencyKey
+      );
 
     if (
-      !idempotencyKey ||
-      idempotencyKey.length <
+      !normalizedKey ||
+      normalizedKey.length <
         MIN_IDEMPOTENCY_LENGTH ||
-      idempotencyKey.length >
+      normalizedKey.length >
         MAX_IDEMPOTENCY_LENGTH
     ) {
       throw new Error(
         "A valid idempotency key is required."
       );
     }
-
-    /* =====================================================
-       PROVIDER
-    ====================================================== */
 
     if (
       !isProviderName(
@@ -334,10 +394,6 @@ export const createAddMoney =
         "Unsupported payment provider."
       );
     }
-
-    /* =====================================================
-       ACCOUNT
-    ====================================================== */
 
     const normalizedAccount =
       normalizeAccountNumber(
@@ -355,10 +411,6 @@ export const createAddMoney =
       );
     }
 
-    /* =====================================================
-       SECRET
-    ====================================================== */
-
     const normalizedSecret =
       normalizeSecretCode(
         secretCode
@@ -370,15 +422,22 @@ export const createAddMoney =
       );
     }
 
+    const userObjectId =
+      toObjectId(
+        userId
+      );
+
     /* =====================================================
-       FIRST IDEMPOTENCY CHECK
+       FAST IDEMPOTENCY CHECK
     ====================================================== */
 
     const existing =
       await PaymentIntent.findOne({
-        userId,
+        userId:
+          userObjectId,
 
-        idempotencyKey,
+        idempotencyKey:
+          normalizedKey,
       });
 
     if (existing) {
@@ -392,19 +451,17 @@ export const createAddMoney =
       return {
         duplicate: true,
 
-        intent: existing,
+        intent:
+          existing,
 
-        wallet: existingWallet,
+        wallet:
+          existingWallet,
 
         providerTransactionId:
           existing.providerTransactionId ??
           null,
       };
     }
-
-    /* =====================================================
-       PROVIDER
-    ====================================================== */
 
     const paymentProvider =
       getPaymentProvider(
@@ -417,10 +474,6 @@ export const createAddMoney =
       );
     }
 
-    /* =====================================================
-       MONGO SESSION
-    ====================================================== */
-
     const mongoSession =
       await mongoose.startSession();
 
@@ -428,12 +481,13 @@ export const createAddMoney =
       mongoSession.startTransaction();
 
       /* ===================================================
-         WALLET
+         LOCK / LOAD WALLET
       ================================================== */
 
       const wallet =
         await Wallet.findOne({
-          userId,
+          userId:
+            userObjectId,
         }).session(
           mongoSession
         );
@@ -454,7 +508,7 @@ export const createAddMoney =
       }
 
       /* ===================================================
-         SOURCE VERIFICATION
+         VERIFY SOURCE
       ================================================== */
 
       const source =
@@ -470,10 +524,6 @@ export const createAddMoney =
           session:
             mongoSession,
         });
-
-      /* ===================================================
-         SOURCE BALANCE
-      ================================================== */
 
       const sourceBalance =
         Number(
@@ -495,14 +545,16 @@ export const createAddMoney =
          CREATE PAYMENT INTENT
       ================================================== */
 
-      let intent;
+      let intent:
+        mongoose.HydratedDocument<any>;
 
       try {
-        const documents =
+        const created =
           await PaymentIntent.create(
             [
               {
-                userId,
+                userId:
+                  userObjectId,
 
                 walletId:
                   wallet._id,
@@ -520,7 +572,8 @@ export const createAddMoney =
 
                 reference,
 
-                idempotencyKey,
+                idempotencyKey:
+                  normalizedKey,
 
                 status:
                   "PROCESSING",
@@ -532,26 +585,31 @@ export const createAddMoney =
             }
           );
 
-        intent =
-          documents[0];
-      } catch (error) {
-        /*
-         * Handles race conditions when a second request
-         * attempts to use the same idempotency key.
-         */
+        if (!created[0]) {
+          throw new Error(
+            "Failed to create payment intent."
+          );
+        }
 
+        intent =
+          created[0];
+      } catch (
+        error: unknown
+      ) {
         const duplicate =
           await PaymentIntent.findOne({
-            userId,
+            userId:
+              userObjectId,
 
-            idempotencyKey,
-          }).session(
-            mongoSession
-          );
+            idempotencyKey:
+              normalizedKey,
+          })
+            .session(
+              mongoSession
+            )
+            .lean();
 
-        if (
-          duplicate
-        ) {
+        if (duplicate) {
           const duplicateWallet =
             duplicate.walletId
               ? await Wallet.findById(
@@ -563,11 +621,6 @@ export const createAddMoney =
                   .lean()
               : null;
 
-          /*
-           * The intent existed before our request.
-           * The surrounding transaction did not make any
-           * actual money mutation yet.
-           */
           await mongoSession.commitTransaction();
 
           return {
@@ -592,20 +645,11 @@ export const createAddMoney =
          PROVIDER TRANSACTION ID
       ================================================== */
 
-      /*
-       * Every provider adapter MUST implement
-       * createTransactionId().
-       *
-       * This fixes:
-       *
-       * paymentProvider.createTransactionId is not a function
-       */
-
-      const providerTransactionId =
+      const generatedProviderTransactionId =
         paymentProvider.createTransactionId();
 
       /* ===================================================
-         PROVIDER DEBIT AUTHORIZATION
+         PROVIDER DEBIT
       ================================================== */
 
       const debitResult =
@@ -621,36 +665,24 @@ export const createAddMoney =
         intent.status =
           "FAILED";
 
+        await intent.save({
+          session:
+            mongoSession,
+        });
+
         throw new Error(
           debitResult.message ||
             "Provider debit failed."
         );
       }
 
-      /*
-       * If provider returns its own transaction ID,
-       * use it. Otherwise use our generated demo ID.
-       */
       const finalProviderTransactionId =
         debitResult.providerTransactionId ||
-        providerTransactionId;
+        generatedProviderTransactionId;
 
       /* ===================================================
-         SOURCE BALANCE DEBIT
+         SOURCE BALANCE MUTATION
       ================================================== */
-
-      /*
-       * IMPORTANT:
-       *
-       * This is the actual DEMO source-account ledger
-       * mutation.
-       *
-       * Condition:
-       *
-       * balance >= amount
-       *
-       * protects against concurrent overspending.
-       */
 
       const updatedSource =
         await PaymentSource.findOneAndUpdate(
@@ -695,8 +727,14 @@ export const createAddMoney =
       }
 
       /* ===================================================
-         WALLET CREDIT
+         WALLET BALANCE MUTATION
       ================================================== */
+
+      const balanceBefore =
+        Number(
+          wallet.balance ??
+            0
+        );
 
       const updatedWallet =
         await Wallet.findOneAndUpdate(
@@ -727,8 +765,15 @@ export const createAddMoney =
         );
       }
 
+      const balanceAfter =
+        Number(
+          updatedWallet.balance ??
+            balanceBefore +
+              amount
+        );
+
       /* ===================================================
-         COMPLETE INTENT
+         COMPLETE PAYMENT INTENT
       ================================================== */
 
       intent.providerTransactionId =
@@ -743,14 +788,79 @@ export const createAddMoney =
       });
 
       /* ===================================================
+         CREATE / UPSERT ADD MONEY TRANSACTION
+      ================================================== */
+
+      await AddMoneyTransaction.create(
+        [
+          {
+            userId:
+              userObjectId,
+
+            walletId:
+              wallet._id,
+
+            amount,
+
+            currency:
+              "BDT",
+
+            sourceType:
+              inferSourceType(
+                providerName
+              ),
+
+            provider:
+              inferAddMoneyProvider(
+                providerName
+              ),
+
+            providerName,
+
+            status:
+              "SUCCESS",
+
+            idempotencyKey:
+              normalizedKey,
+
+            providerTransactionId:
+              finalProviderTransactionId,
+
+            customerReference:
+              reference ||
+              undefined,
+
+            maskedAccount:
+              maskAccountNumber(
+                normalizedAccount
+              ),
+
+            initiatedAt:
+              intent.createdAt ??
+              new Date(),
+
+            completedAt:
+              new Date(),
+
+            creditedAt:
+              new Date(),
+
+            balanceBefore,
+
+            balanceAfter,
+          },
+        ],
+        {
+          session:
+            mongoSession,
+        }
+      );
+
+      /* ===================================================
          COMMIT
       ================================================== */
 
       await mongoSession.commitTransaction();
-
-      /* ===================================================
-         RESULT
-      ================================================== */
 
       return {
         duplicate: false,
@@ -763,11 +873,9 @@ export const createAddMoney =
         providerTransactionId:
           finalProviderTransactionId,
       };
-    } catch (error) {
-      /* ===================================================
-         ABORT
-      ================================================== */
-
+    } catch (
+      error: unknown
+    ) {
       if (
         mongoSession.inTransaction()
       ) {
@@ -779,3 +887,361 @@ export const createAddMoney =
       await mongoSession.endSession();
     }
   };
+
+/* =========================================================
+   INITIATE ADD MONEY
+   CONTROLLER COMPATIBILITY
+========================================================= */
+
+export const initiateAddMoney =
+  async ({
+    userId,
+    amount,
+    currency,
+    sourceType,
+    provider,
+    providerName,
+    customerReference,
+    maskedAccount,
+    accountNumber,
+    secretCode,
+    idempotencyKey,
+  }: InitiateAddMoneyInput): Promise<ControllerCompatibleResult> => {
+    if (
+      currency &&
+      currency.toUpperCase() !==
+        "BDT"
+    ) {
+      throw new Error(
+        "Only BDT is currently supported."
+      );
+    }
+
+    if (
+      sourceType !==
+        "BANK" &&
+      sourceType !==
+        "MFS"
+    ) {
+      throw new Error(
+        "sourceType must be BANK or MFS."
+      );
+    }
+
+    if (
+      provider !==
+        "DEMO" &&
+      provider !==
+        "BKASH" &&
+      provider !==
+        "NAGAD" &&
+      provider !==
+        "ROCKET" &&
+      provider !==
+        "BANK_API"
+    ) {
+      throw new Error(
+        "Unsupported payment provider type."
+      );
+    }
+
+    const resolvedAccount =
+      safeString(
+        accountNumber
+      );
+
+    const resolvedSecret =
+      safeString(
+        secretCode
+      );
+
+    /*
+     * The current real/demo payment provider flow
+     * requires source account + secret.
+     */
+    if (!resolvedAccount) {
+      throw new Error(
+        "accountNumber is required."
+      );
+    }
+
+    if (!resolvedSecret) {
+      throw new Error(
+        "secretCode is required."
+      );
+    }
+
+    const resolvedKey =
+      safeString(
+        idempotencyKey
+      );
+
+    if (!resolvedKey) {
+      throw new Error(
+        "idempotencyKey is required."
+      );
+    }
+
+    const result =
+      await createAddMoney({
+        userId,
+
+        providerName,
+
+        accountNumber:
+          resolvedAccount,
+
+        secretCode:
+          resolvedSecret,
+
+        amount,
+
+        reference:
+          customerReference ||
+          undefined,
+
+        idempotencyKey:
+          resolvedKey,
+      });
+
+    const transactionId =
+      result.intent?._id
+        ? result.intent._id.toString()
+        : "";
+
+    return {
+      transactionId,
+
+      providerTransactionId:
+        result.providerTransactionId,
+
+      status:
+        String(
+          result.intent?.status ??
+            "SUCCESS"
+        ),
+
+      /*
+       * createAddMoney already verifies the
+       * source secret and credits the wallet.
+       */
+      verificationRequired:
+        false,
+
+      message:
+        result.duplicate
+          ? "This Add Money request was already processed."
+          : "Money added successfully.",
+
+      duplicate:
+        result.duplicate,
+
+      wallet:
+        result.wallet,
+    };
+  };
+
+/* =========================================================
+   VERIFY + CREDIT ADD MONEY
+   CONTROLLER COMPATIBILITY
+========================================================= */
+
+export const verifyAndCreditAddMoney =
+  async ({
+    userId,
+    transactionId,
+    verificationCode,
+  }: VerifyAndCreditAddMoneyInput): Promise<{
+    transactionId: string;
+
+    providerTransactionId:
+      | string
+      | null;
+
+    status: string;
+
+    message: string;
+
+    wallet:
+      | any
+      | null;
+  }> => {
+    const userObjectId =
+      toObjectId(
+        userId
+      );
+
+    if (
+      !mongoose.isValidObjectId(
+        transactionId
+      )
+    ) {
+      throw new Error(
+        "Invalid transaction ID."
+      );
+    }
+
+    /*
+     * No second wallet credit happens here.
+     *
+     * The authoritative createAddMoney() flow has
+     * already:
+     *
+     * 1. verified the source
+     * 2. debited the source
+     * 3. credited the wallet
+     * 4. completed the PaymentIntent
+     *
+     * This function only reads the transaction safely.
+     */
+
+    const intent =
+      await PaymentIntent.findOne({
+        _id:
+          transactionId,
+
+        userId:
+          userObjectId,
+      }).lean();
+
+    if (!intent) {
+      throw new Error(
+        "Add Money transaction not found."
+      );
+    }
+
+    if (
+      intent.status ===
+      "FAILED"
+    ) {
+      throw new Error(
+        "This Add Money transaction has failed."
+      );
+    }
+
+    if (
+      intent.status !==
+      "SUCCESS"
+    ) {
+      throw new Error(
+        "This Add Money transaction is not ready for confirmation."
+      );
+    }
+
+    /*
+     * verificationCode is intentionally not used
+     * for another financial operation.
+     *
+     * It is accepted only for backwards compatibility
+     * with an older controller contract.
+     */
+    void verificationCode;
+
+    const wallet =
+      intent.walletId
+        ? await Wallet.findById(
+            intent.walletId
+          )
+            .select(
+              "_id userId balance pendingBalance currency status createdAt updatedAt"
+            )
+            .lean()
+        : null;
+
+    return {
+      transactionId:
+        intent._id.toString(),
+
+      providerTransactionId:
+        intent.providerTransactionId ??
+        null,
+
+      status:
+        String(
+          intent.status
+        ),
+
+      message:
+        "Add Money transaction is already completed.",
+
+      wallet,
+    };
+  };
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function inferSourceType(
+  providerName: string
+): "BANK" | "MFS" {
+  const mfsProviders = [
+    "bkash",
+    "nagad",
+    "rocket",
+    "upay",
+  ];
+
+  return mfsProviders.includes(
+    providerName.toLowerCase()
+  )
+    ? "MFS"
+    : "BANK";
+}
+
+function inferAddMoneyProvider(
+  providerName: string
+):
+  | "DEMO"
+  | "BKASH"
+  | "NAGAD"
+  | "ROCKET"
+  | "BANK_API" {
+  switch (
+    providerName.toLowerCase()
+  ) {
+    case "bkash":
+      return "BKASH";
+
+    case "nagad":
+      return "NAGAD";
+
+    case "rocket":
+      return "ROCKET";
+
+    case "upay":
+      return "DEMO";
+
+    default:
+      return "BANK_API";
+  }
+}
+
+function maskAccountNumber(
+  value: string
+): string {
+  if (!value) {
+    return "";
+  }
+
+  const normalized =
+    value.trim();
+
+  if (
+    normalized.length <= 4
+  ) {
+    return "*".repeat(
+      normalized.length
+    );
+  }
+
+  const visible =
+    normalized.slice(-4);
+
+  return `${"*".repeat(
+    Math.max(
+      4,
+      normalized.length - 4
+    )
+  )}${visible}`;
+}
