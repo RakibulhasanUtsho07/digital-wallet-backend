@@ -24,6 +24,7 @@ import adminRoutes from "./routes/adminRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import transferRoutes from "./routes/transferRoutes.js";
+import passkeyRoutes from "./routes/passkeyRoutes.js";
 import walletRoutes from "./routes/walletRoutes.js";
 import budgetRoutes from "./routes/budgetRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
@@ -36,6 +37,14 @@ import systemLogsRoutes from "./routes/systemLogsRoutes.js";
 import userManagementRoutes from "./routes/userManagementRoutes.js";
 import adminOverviewRoutes from "./routes/adminOverviewRoutes.js";
 import securityRoutes from "./routes/securityRoutes.js";
+
+import {
+  protect,
+} from "./middlewares/authMiddleware.js";
+
+import {
+  requireAdmin,
+} from "./middlewares/adminAuthorization.js";
 
 /*
  * PAYMENT / ADD MONEY
@@ -54,6 +63,10 @@ import revenueRoutes from "./routes/revenueRoutes.js";
 /*
  * Advanced E-KYC
  */
+import {
+  createEKYCRouter,
+} from "./modules/ekyc/routes/ekycRoutes.js";
+
 import { createAdminEKYCRouter } from "./modules/ekyc/routes/adminEkycRoutes.js";
 
 /*
@@ -111,8 +124,9 @@ app.set(
 const allowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  "https://digital-payment-system-web.vercel.app",
-];
+  process.env.CLIENT_URL?.trim(),
+  process.env.ADMIN_CLIENT_URL?.trim(),
+].filter((origin): origin is string => Boolean(origin));
 
 /* =========================================================
    CORS OPTIONS
@@ -181,6 +195,7 @@ const corsOptions: cors.CorsOptions = {
     "Idempotency-Key",
     "X-Request-Id",
     "X-Trace-Id",
+    "X-Correlation-Id",
   ],
 
   exposedHeaders: [
@@ -320,6 +335,57 @@ const apiLimiter =
 
       message:
         "Too many requests. Please try again after 15 minutes.",
+    },
+
+    /* Advanced e-KYC uses its own route-specific limits. */
+    skip: (request) =>
+      request.originalUrl.startsWith("/api/ekyc/") ||
+      request.originalUrl.startsWith("/api/admin/ekyc/"),
+  });
+
+const advancedEKYCLimiter =
+  rateLimit({
+    windowMs:
+      15 * 60 * 1000,
+
+    max:
+      300,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message: {
+      success:
+        false,
+
+      message:
+        "Too many e-KYC requests. Please try again shortly.",
+    },
+  });
+
+const adminEKYCLimiter =
+  rateLimit({
+    windowMs:
+      15 * 60 * 1000,
+
+    max:
+      240,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message: {
+      success:
+        false,
+
+      message:
+        "Too many administrator e-KYC requests. Please try again shortly.",
     },
   });
 
@@ -490,6 +556,15 @@ app.use(
 );
 
 /* =========================================================
+   PASSKEYS / BIOMETRIC PAYMENT
+========================================================= */
+
+app.use(
+  "/api/passkeys",
+  passkeyRoutes
+);
+
+/* =========================================================
    TRANSACTIONS
 ========================================================= */
 
@@ -501,6 +576,26 @@ app.use(
 /* =========================================================
    KYC
 ========================================================= */
+
+/*
+ * Advanced customer e-KYC API:
+ *
+ * POST /api/ekyc/liveness/challenges
+ * POST /api/ekyc/fingerprint/mock-captures
+ * GET  /api/ekyc/verifications/current
+ * POST /api/ekyc/verifications
+ */
+
+app.use(
+  "/api/ekyc",
+  advancedEKYCLimiter,
+  protect,
+  createEKYCRouter()
+);
+
+/*
+ * Legacy KYC routes are retained temporarily for compatibility.
+ */
 
 app.use(
   "/api/kyc",
@@ -594,6 +689,9 @@ app.use(
 
 app.use(
   "/api/admin/ekyc",
+  adminEKYCLimiter,
+  protect,
+  requireAdmin,
   createAdminEKYCRouter()
 );
 
