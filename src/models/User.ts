@@ -14,11 +14,27 @@ export interface IEncryptedData {
   authTag: string;
 }
 
+/* =========================================================
+   USER ROLES
+========================================================= */
+
+/*
+ * Platform Roles
+ *
+ * user
+ * merchant
+ * support
+ * analyst
+ * admin
+ * super_admin
+ */
 export type UserRole =
   | "user"
+  | "merchant"
   | "support"
   | "analyst"
-  | "admin";
+  | "admin"
+  | "super_admin";
 
 export type AccountStatus =
   | "active"
@@ -69,7 +85,20 @@ export interface IUser extends Document {
 
   /* Authentication */
   password: string;
+
+  /*
+   * User's platform role.
+   *
+   * Supported roles:
+   * user
+   * merchant
+   * support
+   * analyst
+   * admin
+   * super_admin
+   */
   role: UserRole;
+
   authVersion: number;
 
   /* Account */
@@ -137,6 +166,7 @@ const userPreferencesSchema =
     {
       theme: {
         type: String,
+
         enum: [
           "light",
           "dark",
@@ -144,6 +174,7 @@ const userPreferencesSchema =
           "ocean",
           "forest",
         ],
+
         default: "light",
         required: true,
       },
@@ -160,6 +191,10 @@ const userPreferencesSchema =
 const userSchema =
   new Schema<IUser>(
     {
+      /* =====================================================
+         NAME
+      ====================================================== */
+
       name: {
         type: String,
         required: true,
@@ -167,6 +202,10 @@ const userSchema =
         minlength: 2,
         maxlength: 100,
       },
+
+      /* =====================================================
+         AVATAR
+      ====================================================== */
 
       avatarUrl: {
         type: String,
@@ -227,16 +266,24 @@ const userSchema =
 
       role: {
         type: String,
+
         enum: [
           "user",
+          "merchant",
           "support",
           "analyst",
           "admin",
+          "super_admin",
         ],
+
         default: "user",
         required: true,
         index: true,
       },
+
+      /* =====================================================
+         AUTH VERSION
+      ====================================================== */
 
       authVersion: {
         type: Number,
@@ -250,10 +297,12 @@ const userSchema =
 
       accountStatus: {
         type: String,
+
         enum: [
           "active",
           "deleted",
         ],
+
         default: "active",
         required: true,
         index: true,
@@ -300,12 +349,14 @@ const userSchema =
 
       kycStatus: {
         type: String,
+
         enum: [
           "not_started",
           "pending",
           "verified",
           "rejected",
         ],
+
         default: "not_started",
         required: true,
         index: true,
@@ -327,9 +378,11 @@ const userSchema =
 
       preferences: {
         type: userPreferencesSchema,
+
         default: () => ({
           theme: "light",
         }),
+
         required: true,
       },
 
@@ -405,6 +458,9 @@ const userSchema =
    INDEXES
 ========================================================= */
 
+/*
+ * Unique email lookup.
+ */
 userSchema.index(
   {
     emailLookup: 1,
@@ -415,6 +471,12 @@ userSchema.index(
   }
 );
 
+/*
+ * Unique phone lookup.
+ *
+ * Sparse allows multiple documents where phoneLookup
+ * is not defined.
+ */
 userSchema.index(
   {
     phoneLookup: 1,
@@ -426,6 +488,15 @@ userSchema.index(
   }
 );
 
+/*
+ * Role based listing.
+ *
+ * Useful for:
+ * - Admin user management
+ * - Merchant listing
+ * - Analyst listing
+ * - Support listing
+ */
 userSchema.index(
   {
     role: 1,
@@ -436,6 +507,9 @@ userSchema.index(
   }
 );
 
+/*
+ * Account status + creation date.
+ */
 userSchema.index(
   {
     accountStatus: 1,
@@ -446,6 +520,9 @@ userSchema.index(
   }
 );
 
+/*
+ * KYC status + creation date.
+ */
 userSchema.index(
   {
     kycStatus: 1,
@@ -456,6 +533,9 @@ userSchema.index(
   }
 );
 
+/*
+ * Email verification + creation date.
+ */
 userSchema.index(
   {
     emailVerified: 1,
@@ -476,6 +556,10 @@ const UserModel: Model<IUser> =
     "User",
     userSchema
   );
+
+/* =========================================================
+   EXPORTS
+========================================================= */
 
 export const User = UserModel;
 
