@@ -37,7 +37,7 @@ import systemLogsRoutes from "./routes/systemLogsRoutes.js";
 import userManagementRoutes from "./routes/userManagementRoutes.js";
 import adminOverviewRoutes from "./routes/adminOverviewRoutes.js";
 import securityRoutes from "./routes/securityRoutes.js";
-
+import merchantRoutes from "./routes/merchantRoutes.js";
 import {
   protect,
 } from "./middlewares/authMiddleware.js";
@@ -46,6 +46,10 @@ import {
   requireAdmin,
 } from "./middlewares/adminAuthorization.js";
 
+
+
+
+import merchantPaymentRoutes from "./routes/merchantPaymentRoutes.js";
 /*
  * PAYMENT / ADD MONEY
  *
@@ -59,7 +63,7 @@ import paymentRoutes from "./routes/paymentRoutes.js";
  * Revenue Intelligence
  */
 import revenueRoutes from "./routes/revenueRoutes.js";
-
+import merchantWebhookRoutes from "./routes/merchantWebhookRoutes.js";
 /*
  * Advanced E-KYC
  */
@@ -80,7 +84,7 @@ import supportRoutes from "./routes/supportRoutes.js";
 import kycIntelligenceRoutes from "./routes/kycIntelligenceRoutes.js";
 
 import supportTicketRoutes from "./routes/supportTicketRoutes.js";
-
+import paypalPaymentRoutes from "./routes/paypalPaymentRoutes.js";
 // =========================================================
 // TELEMETRY MIDDLEWARE
 // =========================================================
@@ -92,7 +96,7 @@ import {
 import {
   systemErrorTelemetry,
 } from "./middlewares/systemErrorTelemetry.js";
-
+import merchantOrderRoutes from "./routes/merchantOrderRoutes.js";
 // =========================================================
 // ERROR MIDDLEWARE
 // =========================================================
@@ -489,6 +493,14 @@ app.use(
   "/api/users",
   userRoutes
 );
+/* =========================================================
+   MERCHANT
+========================================================= */
+
+app.use(
+  "/api/merchants",
+  merchantRoutes
+);
 
 /* =========================================================
    SECURITY
@@ -529,7 +541,41 @@ app.use(
 /* =========================================================
    PAYMENT / ADD MONEY
 ========================================================= */
+/* =========================================================
+   PAYPAL PAYMENT ROUTES
+ *
+ * Keep PayPal routes first so:
+ * /paypal
+ * /return
+ * /cancel
+ * are handled by PayPal before merchant payment routes.
+========================================================= */
 
+app.use(
+  "/api/v1/payments",
+  paypalPaymentRoutes,
+);
+
+/* =========================================================
+   WALLET PAYMENT GATEWAY
+ *
+ * Merchant:
+ * POST /api/v1/payments
+ *
+ * Merchant:
+ * GET /api/v1/payments/:paymentId
+ *
+ * Customer:
+ * GET /api/v1/payments/:paymentId/checkout
+ *
+ * Customer:
+ * POST /api/v1/payments/:paymentId/confirm
+========================================================= */
+
+app.use(
+  "/api/v1/payments",
+  merchantPaymentRoutes,
+);
 /*
  * IMPORTANT
  *
@@ -545,7 +591,23 @@ app.use(
   "/api/payment",
   paymentRoutes
 );
+/* =========================================================
+   PUBLIC MERCHANT ORDER API
+========================================================= */
 
+app.use(
+  "/api/v1/orders",
+  merchantOrderRoutes
+);
+
+/* =========================================================
+   MERCHANT WEBHOOKS
+========================================================= */
+
+app.use(
+  "/api/v1/webhooks",
+  merchantWebhookRoutes
+);
 /* =========================================================
    TRANSFERS
 ========================================================= */

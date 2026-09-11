@@ -3,16 +3,18 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/server.js",
-    "dev": "tsx watch src/server.ts",
-    "worker:dev": "tsx watch src/ekycWorkerServer.ts",
-    "worker:start": "node dist/ekycWorkerServer.js",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "ekyc:qdrant:setup": "tsx src/scripts/setupQdrant.ts"
-  },
+"scripts": {
+  "build": "tsc",
+  "start": "node dist/server.js",
+  "dev": "tsx watch src/server.ts",
+  "worker:dev": "tsx watch src/ekycWorkerServer.ts",
+  "worker:start": "node dist/ekycWorkerServer.js",
+  "webhook:dev": "tsx watch src/webhookWorkerServer.ts",
+  "webhook:start": "node dist/webhookWorkerServer.js",
+  "typecheck": "tsc --noEmit",
+  "test": "vitest run",
+  "ekyc:qdrant:setup": "tsx src/scripts/setupQdrant.ts"
+},
   "engines": {
     "node": "20.x"
   },
