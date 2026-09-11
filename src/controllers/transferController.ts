@@ -28,10 +28,6 @@ import {
   normalizePhone,
 } from "../utils/crypto.js";
 
-import {
-  verifyPassword,
-} from "../utils/password.js";
-
 /* =========================================================
    TYPES
 ========================================================= */
@@ -55,20 +51,6 @@ const toTrimmedString = (
 ): string => {
   return typeof value === "string"
     ? value.trim()
-    : "";
-};
-
-/*
- * Password MUST NOT be trimmed.
- *
- * Login password verification-এর সময়
- * exact value preserve করতে হবে।
- */
-const toRawString = (
-  value: unknown
-): string => {
-  return typeof value === "string"
-    ? value
     : "";
 };
 
@@ -502,7 +484,6 @@ export const sendMoney =
         recipient,
         amount,
         reference,
-        password,
       } = req.body;
 
       const senderId =
@@ -564,102 +545,6 @@ export const sendMoney =
 
           message:
             "Invalid idempotency key.",
-        });
-
-        return;
-      }
-
-      /* =====================================================
-         PASSWORD REQUIRED
-
-         IMPORTANT:
-         Password is NOT trimmed.
-      ====================================================== */
-
-      const enteredPassword =
-        toRawString(
-          password
-        );
-
-      if (!enteredPassword) {
-        await session.abortTransaction();
-
-        res.status(400).json({
-          success: false,
-
-          message:
-            "Your login password is required to confirm this transfer.",
-        });
-
-        return;
-      }
-
-      /* =====================================================
-         GET SENDER + PASSWORD HASH
-      ====================================================== */
-
-      const senderUser =
-        await User.findById(
-          senderId
-        )
-          .select(
-            "+password"
-          )
-          .session(
-            session
-          );
-
-      if (!senderUser) {
-        await session.abortTransaction();
-
-        res.status(401).json({
-          success: false,
-
-          message:
-            "Authentication failed.",
-        });
-
-        return;
-      }
-
-      const storedPassword =
-        senderUser.get(
-          "password"
-        ) as
-          | string
-          | undefined;
-
-      if (!storedPassword) {
-        await session.abortTransaction();
-
-        res.status(401).json({
-          success: false,
-
-          message:
-            "Authentication failed.",
-        });
-
-        return;
-      }
-
-      /* =====================================================
-         VERIFY LOGIN PASSWORD
-      ====================================================== */
-
-      const passwordMatched =
-        await verifyPassword(
-          storedPassword,
-          enteredPassword
-        );
-
-      if (!passwordMatched) {
-        await session.abortTransaction();
-
-        res.status(401).json({
-          success: false,
-
-          message:
-            "Incorrect password.",
         });
 
         return;

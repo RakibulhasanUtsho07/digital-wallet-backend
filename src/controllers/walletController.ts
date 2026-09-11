@@ -17,8 +17,7 @@ import {
 } from "../models/AddMoneyTransaction.js";
 
 import {
-  initiateAddMoney,
-  verifyAndCreditAddMoney,
+  createAddMoney,
 } from "../services/payment/paymentService.js";
 
 /* =========================================================
@@ -45,6 +44,18 @@ function setPrivateNoStore(
 }
 
 /* =========================================================
+   SAFE STRING
+========================================================= */
+
+function readString(
+  value: unknown
+): string {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+}
+
+/* =========================================================
    GET MY WALLET
    GET /api/wallet
 ========================================================= */
@@ -55,7 +66,9 @@ export const getMyWallet =
     res: Response
   ): Promise<void> => {
     try {
-      setPrivateNoStore(res);
+      setPrivateNoStore(
+        res
+      );
 
       const userId =
         req.user?._id;
@@ -91,7 +104,6 @@ export const getMyWallet =
 
       res.status(200).json({
         success: true,
-
         wallet,
       });
     } catch (
@@ -113,9 +125,21 @@ export const getMyWallet =
   };
 
 /* =========================================================
-   INITIATE ADD MONEY
-
+   ADD MONEY
    POST /api/wallet/add-money/initiate
+
+   IMPORTANT:
+   This endpoint now uses the same authoritative payment
+   service that performs:
+
+   - amount validation
+   - idempotency
+   - wallet validation
+   - payment source verification
+   - source balance debit
+   - wallet credit
+   - payment intent creation
+   - provider transaction ID
 ========================================================= */
 
 export const initiateWalletAddMoney =
@@ -124,7 +148,9 @@ export const initiateWalletAddMoney =
     res: Response
   ): Promise<void> => {
     try {
-      setPrivateNoStore(res);
+      setPrivateNoStore(
+        res
+      );
 
       const userId =
         req.user?._id;
@@ -132,7 +158,6 @@ export const initiateWalletAddMoney =
       if (!userId) {
         res.status(401).json({
           success: false,
-
           message:
             "Not authorized.",
         });
@@ -140,75 +165,74 @@ export const initiateWalletAddMoney =
         return;
       }
 
+      /* =====================================================
+         REQUEST DATA
+      ====================================================== */
+
       const amount =
         Number(
           req.body?.amount
         );
 
-      const sourceType =
-        String(
-          req.body?.sourceType ||
-            ""
-        ).toUpperCase() as AddMoneySourceType;
-
-      const provider =
-        String(
-          req.body?.provider ||
-            "DEMO"
-        ).toUpperCase() as AddMoneyProvider;
-
       const providerName =
-        String(
-          req.body?.providerName ||
-            ""
-        ).trim();
+        readString(
+          req.body?.providerName
+        );
 
-      const customerReference =
-        String(
-          req.body?.customerReference ||
-            ""
-        ).trim();
+      const accountNumber =
+        readString(
+          req.body?.accountNumber
+        );
 
-      const maskedAccount =
-        String(
-          req.body?.maskedAccount ||
-            ""
-        ).trim();
+      const secretCode =
+        readString(
+          req.body?.secretCode
+        );
+
+      const referenceValue =
+        readString(
+          req.body?.reference
+        ) ||
+        readString(
+          req.body?.customerReference
+        );
 
       const idempotencyKey =
-        String(
-          req.body?.idempotencyKey ||
-            ""
-        ).trim();
+        readString(
+          req.body?.idempotencyKey
+        );
+
+      /*
+       * These values belong to the frontend-facing
+       * Add Money transaction contract.
+       *
+       * The authoritative payment service currently
+       * identifies providers by providerName.
+       */
+      const sourceType =
+        readString(
+          req.body?.sourceType
+        ).toUpperCase();
+
+      const provider =
+        readString(
+          req.body?.provider
+        ).toUpperCase();
+
+      /* =====================================================
+         VALIDATION
+      ====================================================== */
 
       if (
         !Number.isFinite(
           amount
-        )
+        ) ||
+        amount <= 0
       ) {
         res.status(400).json({
           success: false,
-
           message:
             "Valid amount is required.",
-        });
-
-        return;
-      }
-
-      if (
-        ![
-          "BANK",
-          "MFS",
-        ].includes(
-          sourceType
-        )
-      ) {
-        res.status(400).json({
-          success: false,
-
-          message:
-            "sourceType must be BANK or MFS.",
         });
 
         return;
@@ -217,7 +241,6 @@ export const initiateWalletAddMoney =
       if (!providerName) {
         res.status(400).json({
           success: false,
-
           message:
             "providerName is required.",
         });
@@ -225,70 +248,162 @@ export const initiateWalletAddMoney =
         return;
       }
 
+      if (!accountNumber) {
+        res.status(400).json({
+          success: false,
+          message:
+            "accountNumber is required.",
+        });
+
+        return;
+      }
+
+      if (!secretCode) {
+        res.status(400).json({
+          success: false,
+          message:
+            "secretCode is required.",
+        });
+
+        return;
+      }
+
+      if (!idempotencyKey) {
+        res.status(400).json({
+          success: false,
+          message:
+            "idempotencyKey is required.",
+        });
+
+        return;
+      }
+
+      /* =====================================================
+         AUTHORITATIVE PAYMENT SERVICE
+      ====================================================== */
+
       const result =
-        await initiateAddMoney({
-          userId,
-
-          amount,
-
-          currency:
-            "BDT",
-
-          sourceType,
-
-          provider,
+        await createAddMoney({
+          userId:
+            userId.toString(),
 
           providerName,
 
-          customerReference:
-            customerReference ||
+          accountNumber,
+
+          secretCode,
+
+          amount,
+
+          reference:
+            referenceValue ||
             undefined,
 
-          maskedAccount:
-            maskedAccount ||
-            undefined,
-
-          idempotencyKey:
-            idempotencyKey ||
-            undefined,
+          idempotencyKey,
         });
 
-      res.status(201).json({
+      /* =====================================================
+         RESPONSE
+      ====================================================== */
+
+      const intent =
+        result.intent;
+
+      const wallet =
+        result.wallet;
+
+      const transactionId =
+        intent?._id
+          ? intent._id.toString()
+          : "";
+
+      const status =
+        typeof intent?.status ===
+        "string"
+          ? intent.status
+          : "SUCCESS";
+
+      /*
+       * Preserve compatibility with the previous frontend
+       * response shape.
+       */
+      res.status(
+        result.duplicate
+          ? 200
+          : 201
+      ).json({
         success: true,
 
         transaction: {
-          transactionId:
-            result.transactionId,
+          transactionId,
 
           providerTransactionId:
-            result.providerTransactionId,
+            result.providerTransactionId ??
+            null,
 
-          status:
-            result.status,
+          status,
 
           verificationRequired:
-            result.verificationRequired,
+            false,
 
           /*
-           * DEMO ONLY.
+           * Current paymentService completes
+           * the payment inside the request.
+           *
+           * Therefore no second verification request
+           * is required.
            */
-          ...(result.demoCode
-            ? {
-                demoCode:
-                  result.demoCode,
-              }
-            : {}),
+          verificationRequiredAt:
+            null,
         },
 
+        wallet: wallet
+          ? {
+              _id:
+                wallet._id,
+
+              userId:
+                wallet.userId,
+
+              balance:
+                wallet.balance,
+
+              pendingBalance:
+                wallet.pendingBalance,
+
+              currency:
+                wallet.currency,
+
+              status:
+                wallet.status,
+            }
+          : null,
+
+        duplicate:
+          result.duplicate,
+
+        /*
+         * Kept for response compatibility.
+         */
+        sourceType:
+          sourceType || null,
+
+        provider:
+          provider || null,
+
         message:
-          result.message,
+          result.duplicate
+            ? "This Add Money request was already processed."
+            : "Money added successfully.",
       });
     } catch (
       error: unknown
     ) {
       console.error(
         "INITIATE ADD MONEY ERROR:",
-        error
+        error instanceof Error
+          ? error.message
+          : error
       );
 
       res.status(400).json({
@@ -297,14 +412,23 @@ export const initiateWalletAddMoney =
         message:
           error instanceof Error
             ? error.message
-            : "Unable to initiate Add Money.",
+            : "Unable to add money.",
       });
     }
   };
 
 /* =========================================================
    CONFIRM ADD MONEY
+
    POST /api/wallet/add-money/confirm
+
+   The current payment service completes Add Money during
+   initiateWalletAddMoney().
+
+   This endpoint is therefore kept as a compatibility
+   endpoint so an older frontend does not fail.
+
+   It NEVER credits the wallet a second time.
 ========================================================= */
 
 export const confirmWalletAddMoney =
@@ -313,7 +437,9 @@ export const confirmWalletAddMoney =
     res: Response
   ): Promise<void> => {
     try {
-      setPrivateNoStore(res);
+      setPrivateNoStore(
+        res
+      );
 
       const userId =
         req.user?._id;
@@ -321,7 +447,6 @@ export const confirmWalletAddMoney =
       if (!userId) {
         res.status(401).json({
           success: false,
-
           message:
             "Not authorized.",
         });
@@ -330,21 +455,13 @@ export const confirmWalletAddMoney =
       }
 
       const transactionId =
-        String(
-          req.body?.transactionId ||
-            ""
-        ).trim();
-
-      const verificationCode =
-        String(
-          req.body?.verificationCode ||
-            ""
-        ).trim();
+        readString(
+          req.body?.transactionId
+        );
 
       if (!transactionId) {
         res.status(400).json({
           success: false,
-
           message:
             "Transaction ID is required.",
         });
@@ -352,109 +469,18 @@ export const confirmWalletAddMoney =
         return;
       }
 
-      const result =
-        await verifyAndCreditAddMoney(
-          {
-            userId,
-
+      /*
+       * Never trust transaction ID alone.
+       *
+       * Ownership is enforced by userId.
+       */
+      const transaction =
+        await AddMoneyTransaction.findOne({
+          _id:
             transactionId,
 
-            verificationCode:
-              verificationCode ||
-              undefined,
-          }
-        );
-
-      res.status(200).json({
-        success: true,
-
-        transaction: result,
-
-        message:
-          result.message,
-      });
-    } catch (
-      error: unknown
-    ) {
-      console.error(
-        "CONFIRM ADD MONEY ERROR:",
-        error
-      );
-
-      res.status(400).json({
-        success: false,
-
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to confirm Add Money.",
-      });
-    }
-  };
-
-/* =========================================================
-   GET ADD MONEY HISTORY
-   GET /api/wallet/add-money/history
-========================================================= */
-
-export const getAddMoneyHistory =
-  async (
-    req: AuthRequest,
-    res: Response
-  ): Promise<void> => {
-    try {
-      setPrivateNoStore(res);
-
-      const userId =
-        req.user?._id;
-
-      if (!userId) {
-        res.status(401).json({
-          success: false,
-
-          message:
-            "Not authorized.",
-        });
-
-        return;
-      }
-
-      const page =
-        Math.max(
-          1,
-          Number(
-            req.query.page
-          ) || 1
-        );
-
-      const limit =
-        Math.min(
-          50,
-          Math.max(
-            1,
-            Number(
-              req.query.limit
-            ) || 20
-          )
-        );
-
-      const skip =
-        (page - 1) *
-        limit;
-
-      const [
-        transactions,
-        total,
-      ] = await Promise.all([
-        AddMoneyTransaction.find({
           userId,
         })
-          .sort({
-            createdAt:
-              -1,
-          })
-          .skip(skip)
-          .limit(limit)
           .select(
             [
               "_id",
@@ -477,14 +503,207 @@ export const getAddMoneyHistory =
               "updatedAt",
             ].join(" ")
           )
-          .lean(),
+          .lean();
 
-        AddMoneyTransaction.countDocuments(
-          {
+      /*
+       * The current createAddMoney service uses PaymentIntent
+       * as its authoritative transaction document.
+       *
+       * Therefore AddMoneyTransaction may not contain the
+       * transaction ID generated by that flow.
+       *
+       * Return a safe compatibility response rather than
+       * performing a second financial mutation.
+       */
+
+      if (!transaction) {
+        res.status(404).json({
+          success: false,
+          message:
+            "Add Money transaction not found.",
+        });
+
+        return;
+      }
+
+      if (
+        transaction.status ===
+        "SUCCESS"
+      ) {
+        res.status(200).json({
+          success: true,
+
+          transaction,
+
+          message:
+            "Add Money transaction is already completed.",
+        });
+
+        return;
+      }
+
+      if (
+        transaction.status ===
+          "FAILED" ||
+        transaction.status ===
+          "CANCELLED"
+      ) {
+        res.status(409).json({
+          success: false,
+
+          transaction,
+
+          message:
+            "This Add Money transaction cannot be confirmed.",
+        });
+
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+
+        transaction,
+
+        message:
+          "Transaction is still being processed.",
+      });
+    } catch (
+      error: unknown
+    ) {
+      console.error(
+        "CONFIRM ADD MONEY ERROR:",
+        error instanceof Error
+          ? error.message
+          : error
+      );
+
+      res.status(500).json({
+        success: false,
+
+        message:
+          "Unable to confirm Add Money transaction.",
+      });
+    }
+  };
+
+/* =========================================================
+   GET ADD MONEY HISTORY
+   GET /api/wallet/add-money/history
+========================================================= */
+
+export const getAddMoneyHistory =
+  async (
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> => {
+    try {
+      setPrivateNoStore(
+        res
+      );
+
+      const userId =
+        req.user?._id;
+
+      if (!userId) {
+        res.status(401).json({
+          success: false,
+          message:
+            "Not authorized.",
+        });
+
+        return;
+      }
+
+      const parsedPage =
+        Number(
+          req.query.page
+        );
+
+      const parsedLimit =
+        Number(
+          req.query.limit
+        );
+
+      const page =
+        Number.isFinite(
+          parsedPage
+        )
+          ? Math.max(
+              1,
+              Math.floor(
+                parsedPage
+              )
+            )
+          : 1;
+
+      const limit =
+        Number.isFinite(
+          parsedLimit
+        )
+          ? Math.min(
+              50,
+              Math.max(
+                1,
+                Math.floor(
+                  parsedLimit
+                )
+              )
+            )
+          : 20;
+
+      const skip =
+        (page - 1) *
+        limit;
+
+      const [
+        transactions,
+        total,
+      ] =
+        await Promise.all([
+          AddMoneyTransaction.find({
             userId,
-          }
-        ),
-      ]);
+          })
+            .sort({
+              createdAt:
+                -1,
+            })
+            .skip(
+              skip
+            )
+            .limit(
+              limit
+            )
+            .select(
+              [
+                "_id",
+                "amount",
+                "currency",
+                "sourceType",
+                "provider",
+                "providerName",
+                "status",
+                "providerTransactionId",
+                "maskedAccount",
+                "customerReference",
+                "initiatedAt",
+                "completedAt",
+                "creditedAt",
+                "balanceBefore",
+                "balanceAfter",
+                "failureReason",
+                "createdAt",
+                "updatedAt",
+              ].join(
+                " "
+              )
+            )
+            .lean(),
+
+          AddMoneyTransaction.countDocuments({
+            userId,
+          }),
+        ]);
 
       res.status(200).json({
         success: true,
@@ -513,7 +732,9 @@ export const getAddMoneyHistory =
     ) {
       console.error(
         "GET ADD MONEY HISTORY ERROR:",
-        error
+        error instanceof Error
+          ? error.message
+          : error
       );
 
       res.status(500).json({
@@ -527,6 +748,7 @@ export const getAddMoneyHistory =
 
 /* =========================================================
    GET ONE ADD MONEY TRANSACTION
+
    GET /api/wallet/add-money/:transactionId
 ========================================================= */
 
@@ -536,7 +758,9 @@ export const getAddMoneyTransaction =
     res: Response
   ): Promise<void> => {
     try {
-      setPrivateNoStore(res);
+      setPrivateNoStore(
+        res
+      );
 
       const userId =
         req.user?._id;
@@ -552,10 +776,20 @@ export const getAddMoneyTransaction =
       }
 
       const transactionId =
-        String(
-          req.params.transactionId ||
-            ""
-        ).trim();
+        readString(
+          req.params
+            .transactionId
+        );
+
+      if (!transactionId) {
+        res.status(400).json({
+          success: false,
+          message:
+            "Transaction ID is required.",
+        });
+
+        return;
+      }
 
       const transaction =
         await AddMoneyTransaction.findOne(
@@ -586,7 +820,9 @@ export const getAddMoneyTransaction =
               "failureReason",
               "createdAt",
               "updatedAt",
-            ].join(" ")
+            ].join(
+              " "
+            )
           )
           .lean();
 
@@ -611,7 +847,9 @@ export const getAddMoneyTransaction =
     ) {
       console.error(
         "GET ADD MONEY TRANSACTION ERROR:",
-        error
+        error instanceof Error
+          ? error.message
+          : error
       );
 
       res.status(500).json({
