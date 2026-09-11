@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const adminOverviewController_js_1 = require("../controllers/adminOverviewController.js");
+const adminOverviewGuards_js_1 = require("../middlewares/adminOverviewGuards.js");
+const router = (0, express_1.Router)();
+router.use(adminOverviewGuards_js_1.requireAuthentication, adminOverviewGuards_js_1.requireAdministrator);
+router.get("/export", adminOverviewController_js_1.exportAdminOverview);
+router.get("/", adminOverviewController_js_1.adminOverview);
+exports.default = router;

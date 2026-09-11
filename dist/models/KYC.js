@@ -36,6 +36,25 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.KYC = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
 /* =========================================================
+   ENCRYPTED VALUE SCHEMA
+========================================================= */
+const encryptedDataSchema = new mongoose_1.Schema({
+    encrypted: {
+        type: String,
+        required: true,
+    },
+    iv: {
+        type: String,
+        required: true,
+    },
+    authTag: {
+        type: String,
+        required: true,
+    },
+}, {
+    _id: false,
+});
+/* =========================================================
    SCHEMA
 ========================================================= */
 const kycSchema = new mongoose_1.Schema({
@@ -54,13 +73,30 @@ const kycSchema = new mongoose_1.Schema({
             "driving_license",
         ],
     },
+    /* =====================================================
+       LEGACY PLAINTEXT DOCUMENT NUMBER
+
+       Do not remove yet. Existing records need migration.
+       New writes use documentNumberEncrypted only.
+    ====================================================== */
     documentNumber: {
         type: String,
         trim: true,
+        required: false,
     },
     /* =====================================================
-       CLOUDINARY PRIVATE ASSET IDS
+       SECURE DOCUMENT NUMBER
     ====================================================== */
+    documentNumberEncrypted: {
+        type: encryptedDataSchema,
+        required: false,
+    },
+    documentNumberLookup: {
+        type: String,
+        trim: true,
+        required: false,
+        index: true,
+    },
     frontImagePublicId: {
         type: String,
     },
@@ -70,9 +106,6 @@ const kycSchema = new mongoose_1.Schema({
     selfieImagePublicId: {
         type: String,
     },
-    /* =====================================================
-       LEGACY IMAGE URL FIELDS
-    ====================================================== */
     frontImageUrl: {
         type: String,
     },

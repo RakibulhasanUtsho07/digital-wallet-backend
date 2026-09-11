@@ -35,16 +35,128 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Notification = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
+const encryptedValueSchema = new mongoose_1.Schema({
+    encrypted: {
+        type: String,
+        required: true,
+    },
+    iv: {
+        type: String,
+        required: true,
+    },
+    authTag: {
+        type: String,
+        required: true,
+    },
+}, {
+    _id: false,
+});
 const notificationSchema = new mongoose_1.Schema({
-    userId: { type: mongoose_1.Schema.Types.ObjectId, ref: "User", required: true },
-    title: { type: String, required: true },
-    message: { type: String, required: true },
+    userId: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: "User",
+        required: true,
+        index: true,
+    },
+    titleEncrypted: {
+        type: encryptedValueSchema,
+    },
+    messageEncrypted: {
+        type: encryptedValueSchema,
+    },
+    amountEncrypted: {
+        type: encryptedValueSchema,
+    },
+    merchantEncrypted: {
+        type: encryptedValueSchema,
+    },
     type: {
         type: String,
-        enum: ["TRANSFER", "DEPOSIT", "WITHDRAW", "KYC", "SYSTEM"],
+        enum: [
+            "SECURITY",
+            "TRANSACTION",
+            "BUDGET",
+            "KYC",
+            "RECEIPT",
+            "SYSTEM",
+            "TRANSFER",
+            "DEPOSIT",
+            "WITHDRAW",
+        ],
         default: "SYSTEM",
     },
-    isRead: { type: Boolean, default: false },
-}, { timestamps: true });
-exports.Notification = mongoose_1.default.model("Notification", notificationSchema);
+    priority: {
+        type: String,
+        enum: [
+            "CRITICAL",
+            "HIGH",
+            "NORMAL",
+            "LOW",
+        ],
+        default: "NORMAL",
+    },
+    isRead: {
+        type: Boolean,
+        default: false,
+        index: true,
+    },
+    isArchived: {
+        type: Boolean,
+        default: false,
+        index: true,
+    },
+    actionLink: {
+        type: String,
+        trim: true,
+        maxlength: 300,
+    },
+    actionText: {
+        type: String,
+        trim: true,
+        maxlength: 80,
+    },
+    relatedEntityType: {
+        type: String,
+        trim: true,
+        maxlength: 40,
+    },
+    relatedEntityId: {
+        type: mongoose_1.Schema.Types.ObjectId,
+    },
+    createdBy: {
+        type: String,
+        enum: ["SYSTEM", "ADMIN"],
+        default: "SYSTEM",
+    },
+    /* Legacy optional fields */
+    title: {
+        type: String,
+        trim: true,
+    },
+    message: {
+        type: String,
+        trim: true,
+    },
+    amount: {
+        type: Number,
+        min: 0,
+    },
+    merchant: {
+        type: String,
+        trim: true,
+    },
+}, {
+    timestamps: true,
+});
+notificationSchema.index({
+    userId: 1,
+    createdAt: -1,
+});
+notificationSchema.index({
+    userId: 1,
+    isArchived: 1,
+    createdAt: -1,
+});
+exports.Notification = mongoose_1.default.models.Notification ||
+    mongoose_1.default.model("Notification", notificationSchema);
 exports.default = exports.Notification;

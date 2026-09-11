@@ -35,6 +35,32 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Transaction = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
+/* =========================================================
+   ENCRYPTED DATA SCHEMA
+
+   Reused for:
+   - amountEncrypted
+   - referenceEncrypted
+========================================================= */
+const encryptedDataSchema = new mongoose_1.Schema({
+    encrypted: {
+        type: String,
+        required: true,
+    },
+    iv: {
+        type: String,
+        required: true,
+    },
+    authTag: {
+        type: String,
+        required: true,
+    },
+}, {
+    _id: false,
+});
+/* =========================================================
+   TRANSACTION SCHEMA
+========================================================= */
 const transactionSchema = new mongoose_1.Schema({
     senderId: {
         type: mongoose_1.Schema.Types.ObjectId,
@@ -46,34 +72,92 @@ const transactionSchema = new mongoose_1.Schema({
         ref: "User",
         required: true,
     },
-    amount: {
-        type: Number,
+    /* =====================================================
+       SECURE AMOUNT
+
+       Plaintext `amount` does NOT exist.
+       Amount is stored as encrypted minor units only.
+    ====================================================== */
+    amountEncrypted: {
+        type: encryptedDataSchema,
         required: true,
-        min: 1,
+    },
+    /* =====================================================
+       SECURE REFERENCE
+
+       Plaintext `reference` does NOT exist.
+       Reference is optional and encrypted when provided.
+    ====================================================== */
+    referenceEncrypted: {
+        type: encryptedDataSchema,
+        required: false,
+    },
+    idempotencyKey: {
+        type: String,
+        trim: true,
+        required: false,
     },
     currency: {
         type: String,
         default: "BDT",
+        trim: true,
+        uppercase: true,
     },
     type: {
         type: String,
-        enum: ["TRANSFER", "DEPOSIT", "WITHDRAW"],
+        enum: [
+            "TRANSFER",
+            "DEPOSIT",
+            "WITHDRAW",
+        ],
         required: true,
     },
     status: {
         type: String,
-        enum: ["PENDING", "COMPLETED", "FAILED"],
+        enum: [
+            "PENDING",
+            "COMPLETED",
+            "FAILED",
+        ],
         default: "PENDING",
-    },
-    reference: {
-        type: String,
-        trim: true,
     },
     riskScore: {
         type: String,
-        enum: ["LOW", "MEDIUM", "HIGH"],
+        enum: [
+            "LOW",
+            "MEDIUM",
+            "HIGH",
+        ],
         default: "LOW",
     },
-}, { timestamps: true });
-exports.Transaction = mongoose_1.default.model("Transaction", transactionSchema);
+}, {
+    timestamps: true,
+});
+/* =========================================================
+   INDEXES
+========================================================= */
+transactionSchema.index({
+    senderId: 1,
+    createdAt: -1,
+});
+transactionSchema.index({
+    receiverId: 1,
+    createdAt: -1,
+});
+transactionSchema.index({
+    status: 1,
+    createdAt: -1,
+});
+transactionSchema.index({
+    senderId: 1,
+    idempotencyKey: 1,
+}, {
+    unique: true,
+    sparse: true,
+});
+/* =========================================================
+   MODEL
+========================================================= */
+exports.Transaction = mongoose_1.default.models.Transaction ||
+    mongoose_1.default.model("Transaction", transactionSchema);
 exports.default = exports.Transaction;

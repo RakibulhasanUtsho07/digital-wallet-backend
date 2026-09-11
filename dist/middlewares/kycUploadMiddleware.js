@@ -6,34 +6,43 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.kycUpload = void 0;
 const multer_1 = __importDefault(require("multer"));
 /* =========================================================
-   STORAGE (Memory Storage for Cloudinary Upload)
+   KYC UPLOAD STORAGE
 ========================================================= */
-// diskStorage সরিয়ে memoryStorage দেওয়া হয়েছে যাতে লোকাল ফোল্ডারে ফাইল সেভ না হয়
 const storage = multer_1.default.memoryStorage();
+/* =========================================================
+   ALLOWED IMAGE TYPES
+========================================================= */
+const allowedMimeTypes = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+];
 /* =========================================================
    FILE FILTER
 ========================================================= */
-const fileFilter = (_req, file, cb) => {
-    const allowedMimeTypes = [
-        "image/jpeg",
-        "image/jpg",
-        "image/png",
-        "image/webp",
-    ];
-    if (allowedMimeTypes.includes(file.mimetype)) {
-        cb(null, true);
+const fileFilter = (_req, file, callback) => {
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+        callback(new Error("Only JPG, PNG and WEBP images are allowed."));
+        return;
     }
-    else {
-        cb(new Error("Only JPG, JPEG, PNG and WEBP images are allowed."));
-    }
+    callback(null, true);
 };
 /* =========================================================
-   MULTER
+   KYC UPLOAD
+
+   Frontend compresses each selected image to roughly
+   700 KB and guarantees the processed file stays below 1 MB.
+
+   This server-side limit is a second safety layer.
 ========================================================= */
 exports.kycUpload = (0, multer_1.default)({
     storage,
     fileFilter,
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB limit
+        fileSize: 1 *
+            1024 *
+            1024,
+        files: 3,
+        fields: 10,
     },
 });

@@ -7,6 +7,16 @@ const express_1 = __importDefault(require("express"));
 const transactionController_js_1 = require("../controllers/transactionController.js");
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const router = express_1.default.Router();
+/* =========================================================
+   MY TRANSACTIONS
+   GET /api/transactions
+========================================================= */
 router.get("/", authMiddleware_js_1.protect, transactionController_js_1.getMyTransactions);
+/* =========================================================
+   TRANSACTION / RECEIPT DETAILS
+   GET /api/transactions/:id
+
+   Ownership is enforced by the controller.
+========================================================= */
 router.get("/:id", authMiddleware_js_1.protect, transactionController_js_1.getTransactionById);
 exports.default = router;

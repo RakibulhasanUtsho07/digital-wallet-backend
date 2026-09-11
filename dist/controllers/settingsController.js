@@ -1,0 +1,902 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.deleteUserAccount = exports.exportUserSettings = exports.logoutAllDevices = exports.getCurrentSession = exports.updateSettingsProfile = exports.updateUserPreferences = exports.getUserSettings = void 0;
+const crypto_1 = __importDefault(require("crypto"));
+const User_js_1 = require("../models/User.js");
+const Wallet_js_1 = require("../models/Wallet.js");
+const UserSettings_js_1 = require("../models/UserSettings.js");
+const crypto_js_1 = require("../utils/crypto.js");
+const password_js_1 = require("../utils/password.js");
+/* =========================================================
+   HELPERS
+========================================================= */
+const toStringValue = (value) => {
+    return typeof value === "string"
+        ? value
+        : "";
+};
+/* =========================================================
+   SAFE DECRYPT
+========================================================= */
+const safeDecrypt = (value) => {
+    if (!value) {
+        return "";
+    }
+    try {
+        return (0, crypto_js_1.decryptData)(value);
+    }
+    catch (error) {
+        console.error("SETTINGS DECRYPT ERROR:", error);
+        return "";
+    }
+};
+/* =========================================================
+   BOOLEAN VALIDATION
+========================================================= */
+const isBoolean = (value) => {
+    return typeof value === "boolean";
+};
+/* =========================================================
+   THEME VALIDATION
+========================================================= */
+/*
+ * IMPORTANT:
+ *
+ * These values MUST match the frontend ThemeContext
+ * and UserSettings mongoose schema.
+ */
+const isTheme = (value) => {
+    return (value === "light" ||
+        value === "dark" ||
+        value === "eye-care" ||
+        value === "ocean" ||
+        value === "forest");
+};
+/* =========================================================
+   DENSITY VALIDATION
+========================================================= */
+const isDensity = (value) => {
+    return (value === "comfortable" ||
+        value === "compact");
+};
+/* =========================================================
+   CURRENCY VALIDATION
+========================================================= */
+const isCurrency = (value) => {
+    return (value === "BDT" ||
+        value === "USD" ||
+        value === "EUR");
+};
+/* =========================================================
+   ENVIRONMENT
+========================================================= */
+const isProductionEnvironment = () => {
+    return (process.env.NODE_ENV ===
+        "production" ||
+        process.env.VERCEL === "1");
+};
+/* =========================================================
+   COOKIE OPTIONS
+========================================================= */
+const getAuthCookieOptions = () => {
+    const isProduction = isProductionEnvironment();
+    return {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction
+            ? "none"
+            : "lax",
+        path: "/",
+    };
+};
+/* =========================================================
+   CLEAR AUTH COOKIE
+========================================================= */
+const clearAuthCookie = (res) => {
+    res.clearCookie("access_token", getAuthCookieOptions());
+};
+/* =========================================================
+   DEFAULT SETTINGS
+========================================================= */
+const DEFAULT_CONFIRM_THRESHOLD = 10000;
+/* =========================================================
+   CREATE DEFAULT SETTINGS
+========================================================= */
+const createDefaultSettings = async (userId) => {
+    return UserSettings_js_1.UserSettings.create({
+        userId,
+        appearance: {
+            theme: "light",
+            density: "comfortable",
+            reduceMotion: false,
+        },
+        notifications: {
+            email: true,
+            push: true,
+            sms: true,
+            marketing: false,
+        },
+        privacy: {
+            analytics: false,
+            discoverability: true,
+            personalization: true,
+            showTransactionNames: true,
+        },
+        wallet: {
+            defaultCurrency: "BDT",
+            hideAmounts: false,
+            requireConfirmation: true,
+            confirmThresholdEncrypted: (0, crypto_js_1.encryptData)(String(DEFAULT_CONFIRM_THRESHOLD)),
+        },
+    });
+};
+/* =========================================================
+   GET OR CREATE SETTINGS
+========================================================= */
+const getOrCreateSettings = async (userId) => {
+    const existing = await UserSettings_js_1.UserSettings.findOne({
+        userId,
+    });
+    if (existing) {
+        return existing;
+    }
+    try {
+        return await createDefaultSettings(userId);
+    }
+    catch (error) {
+        /*
+         * Multiple requests can try to create
+         * the same unique settings document.
+         */
+        if (typeof error ===
+            "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === 11000) {
+            const created = await UserSettings_js_1.UserSettings.findOne({
+                userId,
+            });
+            if (created) {
+                return created;
+            }
+        }
+        throw error;
+    }
+};
+/* =========================================================
+   SETTINGS DTO
+========================================================= */
+const toSettingsDTO = (settings) => {
+    let confirmThreshold = DEFAULT_CONFIRM_THRESHOLD;
+    if (settings.wallet
+        .confirmThresholdEncrypted) {
+        const decrypted = safeDecrypt(settings.wallet
+            .confirmThresholdEncrypted);
+        const parsed = Number(decrypted);
+        if (Number.isFinite(parsed) &&
+            parsed >= 0) {
+            confirmThreshold =
+                parsed;
+        }
+    }
+    return {
+        appearance: {
+            theme: settings.appearance.theme,
+            density: settings.appearance.density,
+            reduceMotion: settings.appearance
+                .reduceMotion,
+        },
+        notifications: {
+            email: settings.notifications.email,
+            push: settings.notifications.push,
+            sms: settings.notifications.sms,
+            marketing: settings.notifications
+                .marketing,
+        },
+        privacy: {
+            analytics: settings.privacy.analytics,
+            discoverability: settings.privacy
+                .discoverability,
+            personalization: settings.privacy
+                .personalization,
+            showTransactionNames: settings.privacy
+                .showTransactionNames,
+        },
+        wallet: {
+            defaultCurrency: settings.wallet
+                .defaultCurrency,
+            hideAmounts: settings.wallet
+                .hideAmounts,
+            requireConfirmation: settings.wallet
+                .requireConfirmation,
+            confirmThreshold,
+        },
+    };
+};
+/* =========================================================
+   GET SETTINGS
+   GET /api/settings
+========================================================= */
+const getUserSettings = async (req, res) => {
+    try {
+        const userId = req.user?._id;
+        if (!userId) {
+            res.status(401).json({
+                success: false,
+                message: "Not authorized.",
+            });
+            return;
+        }
+        const [user, wallet, settings,] = await Promise.all([
+            User_js_1.User.findById(userId).select("-password"),
+            Wallet_js_1.Wallet.findOne({
+                userId,
+            }),
+            getOrCreateSettings(userId),
+        ]);
+        if (!user) {
+            res.status(404).json({
+                success: false,
+                message: "User not found.",
+            });
+            return;
+        }
+        const email = safeDecrypt(user.emailEncrypted);
+        const phone = safeDecrypt(user.phoneEncrypted);
+        res.setHeader("Cache-Control", "private, no-store");
+        res.status(200).json({
+            success: true,
+            profile: {
+                name: user.name,
+                email,
+                phone,
+                role: user.role,
+                kycStatus: user.kycStatus,
+                createdAt: user.createdAt,
+            },
+            preferences: toSettingsDTO(settings),
+            wallet: wallet
+                ? {
+                    status: wallet.status,
+                    balance: wallet.balance,
+                }
+                : null,
+        });
+    }
+    catch (error) {
+        console.error("GET USER SETTINGS ERROR:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to load settings.",
+        });
+    }
+};
+exports.getUserSettings = getUserSettings;
+/* =========================================================
+   UPDATE PREFERENCES
+   PATCH /api/settings/preferences
+========================================================= */
+const updateUserPreferences = async (req, res) => {
+    try {
+        const userId = req.user?._id;
+        if (!userId) {
+            res.status(401).json({
+                success: false,
+                message: "Not authorized.",
+            });
+            return;
+        }
+        const settings = await getOrCreateSettings(userId);
+        const { appearance, notifications, privacy, wallet, } = req.body ?? {};
+        /* ===================================================
+           APPEARANCE
+        ================================================== */
+        if (appearance &&
+            typeof appearance ===
+                "object") {
+            /* -----------------------------------------------
+               THEME
+            ------------------------------------------------ */
+            if (appearance.theme !==
+                undefined) {
+                if (!isTheme(appearance.theme)) {
+                    res.status(400).json({
+                        success: false,
+                        message: "Invalid appearance theme. Allowed themes: light, dark, eye-care, ocean, forest.",
+                    });
+                    return;
+                }
+                settings.appearance.theme =
+                    appearance.theme;
+            }
+            /* -----------------------------------------------
+               DENSITY
+            ------------------------------------------------ */
+            if (appearance.density !==
+                undefined) {
+                if (!isDensity(appearance.density)) {
+                    res.status(400).json({
+                        success: false,
+                        message: "Invalid dashboard density.",
+                    });
+                    return;
+                }
+                settings.appearance.density =
+                    appearance.density;
+            }
+            /* -----------------------------------------------
+               REDUCE MOTION
+            ------------------------------------------------ */
+            if (appearance.reduceMotion !==
+                undefined) {
+                if (!isBoolean(appearance.reduceMotion)) {
+                    res.status(400).json({
+                        success: false,
+                        message: "Invalid reduceMotion value.",
+                    });
+                    return;
+                }
+                settings.appearance.reduceMotion =
+                    appearance.reduceMotion;
+            }
+        }
+        /* ===================================================
+           NOTIFICATIONS
+        ================================================== */
+        if (notifications &&
+            typeof notifications ===
+                "object") {
+            const keys = [
+                "email",
+                "push",
+                "sms",
+                "marketing",
+            ];
+            for (const key of keys) {
+                if (notifications[key] === undefined) {
+                    continue;
+                }
+                if (!isBoolean(notifications[key])) {
+                    res.status(400).json({
+                        success: false,
+                        message: `Invalid notification setting: ${key}.`,
+                    });
+                    return;
+                }
+                settings
+                    .notifications[key] =
+                    notifications[key];
+            }
+        }
+        /* ===================================================
+           PRIVACY
+        ================================================== */
+        if (privacy &&
+            typeof privacy ===
+                "object") {
+            const keys = [
+                "analytics",
+                "discoverability",
+                "personalization",
+                "showTransactionNames",
+            ];
+            for (const key of keys) {
+                if (privacy[key] === undefined) {
+                    continue;
+                }
+                if (!isBoolean(privacy[key])) {
+                    res.status(400).json({
+                        success: false,
+                        message: `Invalid privacy setting: ${key}.`,
+                    });
+                    return;
+                }
+                settings
+                    .privacy[key] =
+                    privacy[key];
+            }
+        }
+        /* ===================================================
+           WALLET
+        ================================================== */
+        if (wallet &&
+            typeof wallet ===
+                "object") {
+            /* -----------------------------------------------
+               CURRENCY
+            ------------------------------------------------ */
+            if (wallet.defaultCurrency !==
+                undefined) {
+                if (!isCurrency(wallet.defaultCurrency)) {
+                    res.status(400).json({
+                        success: false,
+                        message: "Invalid default currency.",
+                    });
+                    return;
+                }
+                settings.wallet.defaultCurrency =
+                    wallet.defaultCurrency;
+            }
+            /* -----------------------------------------------
+               HIDE AMOUNTS
+            ------------------------------------------------ */
+            if (wallet.hideAmounts !==
+                undefined) {
+                if (!isBoolean(wallet.hideAmounts)) {
+                    res.status(400).json({
+                        success: false,
+                        message: "Invalid hideAmounts value.",
+                    });
+                    return;
+                }
+                settings.wallet.hideAmounts =
+                    wallet.hideAmounts;
+            }
+            /* -----------------------------------------------
+               REQUIRE CONFIRMATION
+            ------------------------------------------------ */
+            if (wallet.requireConfirmation !==
+                undefined) {
+                if (!isBoolean(wallet.requireConfirmation)) {
+                    res.status(400).json({
+                        success: false,
+                        message: "Invalid requireConfirmation value.",
+                    });
+                    return;
+                }
+                settings.wallet
+                    .requireConfirmation =
+                    wallet.requireConfirmation;
+            }
+            /* -----------------------------------------------
+               CONFIRMATION THRESHOLD
+            ------------------------------------------------ */
+            if (wallet.confirmThreshold !==
+                undefined) {
+                const threshold = Number(wallet.confirmThreshold);
+                if (!Number.isFinite(threshold) ||
+                    threshold < 1000 ||
+                    threshold > 50000 ||
+                    !Number.isInteger(threshold)) {
+                    res.status(400).json({
+                        success: false,
+                        message: "Confirmation threshold must be an integer between 1,000 and 50,000.",
+                    });
+                    return;
+                }
+                settings.wallet
+                    .confirmThresholdEncrypted =
+                    (0, crypto_js_1.encryptData)(String(threshold));
+            }
+        }
+        /* ===================================================
+           SAVE
+        ================================================== */
+        await settings.save();
+        res.setHeader("Cache-Control", "private, no-store");
+        res.status(200).json({
+            success: true,
+            message: "Preferences updated successfully.",
+            preferences: toSettingsDTO(settings),
+        });
+    }
+    catch (error) {
+        console.error("UPDATE USER PREFERENCES ERROR:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to update preferences.",
+        });
+    }
+};
+exports.updateUserPreferences = updateUserPreferences;
+/* =========================================================
+   UPDATE PROFILE
+   PATCH /api/settings/profile
+========================================================= */
+const updateSettingsProfile = async (req, res) => {
+    try {
+        const userId = req.user?._id;
+        if (!userId) {
+            res.status(401).json({
+                success: false,
+                message: "Not authorized.",
+            });
+            return;
+        }
+        const { name, email, phone, password, } = req.body ?? {};
+        const normalizedName = toStringValue(name).trim();
+        const normalizedEmail = (0, crypto_js_1.normalizeEmail)(toStringValue(email));
+        const normalizedPhone = (0, crypto_js_1.normalizePhone)(toStringValue(phone));
+        if (!normalizedName ||
+            !normalizedEmail) {
+            res.status(400).json({
+                success: false,
+                message: "Name and email are required.",
+            });
+            return;
+        }
+        if (normalizedName.length >
+            80) {
+            res.status(400).json({
+                success: false,
+                message: "Name is too long.",
+            });
+            return;
+        }
+        /*
+         * Fixed email regex.
+         */
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(normalizedEmail)) {
+            res.status(400).json({
+                success: false,
+                message: "Please provide a valid email address.",
+            });
+            return;
+        }
+        const user = await User_js_1.User.findById(userId).select("+password");
+        if (!user) {
+            res.status(404).json({
+                success: false,
+                message: "User not found.",
+            });
+            return;
+        }
+        const currentEmail = safeDecrypt(user.emailEncrypted);
+        const currentPhone = safeDecrypt(user.phoneEncrypted);
+        const emailChanged = normalizedEmail !==
+            (0, crypto_js_1.normalizeEmail)(currentEmail);
+        const phoneChanged = normalizedPhone !==
+            (0, crypto_js_1.normalizePhone)(currentPhone);
+        /* ===================================================
+           CONTACT CHANGE SECURITY
+        ================================================== */
+        if (emailChanged ||
+            phoneChanged) {
+            const currentPassword = toStringValue(password);
+            if (!currentPassword) {
+                res.status(400).json({
+                    success: false,
+                    message: "Current password is required to change email or phone.",
+                });
+                return;
+            }
+            const storedPassword = user.get("password");
+            if (!storedPassword) {
+                res.status(401).json({
+                    success: false,
+                    message: "Unable to verify current password.",
+                });
+                return;
+            }
+            const matched = await (0, password_js_1.verifyPassword)(storedPassword, currentPassword);
+            if (!matched) {
+                res.status(401).json({
+                    success: false,
+                    message: "Current password is incorrect.",
+                });
+                return;
+            }
+        }
+        /* ===================================================
+           EMAIL DUPLICATE
+        ================================================== */
+        const emailLookup = (0, crypto_js_1.createLookupHash)(normalizedEmail);
+        const emailOwner = await User_js_1.User.findOne({
+            emailLookup,
+            _id: {
+                $ne: user._id,
+            },
+        }).select("_id");
+        if (emailOwner) {
+            res.status(409).json({
+                success: false,
+                message: "That email address is already in use.",
+            });
+            return;
+        }
+        /* ===================================================
+           PHONE DUPLICATE
+        ================================================== */
+        const phoneLookup = normalizedPhone
+            ? (0, crypto_js_1.createLookupHash)(normalizedPhone)
+            : undefined;
+        if (normalizedPhone &&
+            phoneLookup) {
+            const phoneOwner = await User_js_1.User.findOne({
+                phoneLookup,
+                _id: {
+                    $ne: user._id,
+                },
+            }).select("_id");
+            if (phoneOwner) {
+                res.status(409).json({
+                    success: false,
+                    message: "That phone number is already in use.",
+                });
+                return;
+            }
+        }
+        /* ===================================================
+           UPDATE USER
+        ================================================== */
+        user.name =
+            normalizedName;
+        if (emailChanged) {
+            user.emailEncrypted =
+                (0, crypto_js_1.encryptData)(normalizedEmail);
+            user.emailLookup =
+                emailLookup;
+        }
+        if (phoneChanged) {
+            if (normalizedPhone) {
+                user.phoneEncrypted =
+                    (0, crypto_js_1.encryptData)(normalizedPhone);
+                user.phoneLookup =
+                    phoneLookup;
+            }
+            else {
+                user.phoneEncrypted =
+                    undefined;
+                user.phoneLookup =
+                    undefined;
+            }
+        }
+        await user.save();
+        res.status(200).json({
+            success: true,
+            message: "Profile updated successfully.",
+            profile: {
+                name: user.name,
+                email: normalizedEmail,
+                phone: normalizedPhone,
+                role: user.role,
+                kycStatus: user.kycStatus,
+            },
+        });
+    }
+    catch (error) {
+        console.error("UPDATE SETTINGS PROFILE ERROR:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to update profile.",
+        });
+    }
+};
+exports.updateSettingsProfile = updateSettingsProfile;
+/* =========================================================
+   CURRENT SESSION
+   GET /api/settings/session
+========================================================= */
+const getCurrentSession = async (req, res) => {
+    const forwardedFor = req.headers["x-forwarded-for"];
+    const ip = typeof forwardedFor ===
+        "string"
+        ? forwardedFor
+            .split(",")[0]
+            ?.trim() ||
+            req.ip
+        : req.ip;
+    res.status(200).json({
+        success: true,
+        sessions: [
+            {
+                id: "current",
+                current: true,
+                device: req.get("user-agent") ||
+                    "Unknown device",
+                location: "Current request",
+                lastActive: new Date().toISOString(),
+                ip,
+            },
+        ],
+        note: "Only the current session is available because the authentication system does not yet persist individual device sessions.",
+    });
+};
+exports.getCurrentSession = getCurrentSession;
+/* =========================================================
+   LOGOUT ALL DEVICES
+   POST /api/settings/logout-all
+========================================================= */
+const logoutAllDevices = async (req, res) => {
+    try {
+        const userId = req.user?._id;
+        if (!userId) {
+            res.status(401).json({
+                success: false,
+                message: "Not authorized.",
+            });
+            return;
+        }
+        await User_js_1.User.findByIdAndUpdate(userId, {
+            $inc: {
+                authVersion: 1,
+            },
+        });
+        clearAuthCookie(res);
+        res.status(200).json({
+            success: true,
+            message: "All sessions were revoked. Please sign in again.",
+        });
+    }
+    catch (error) {
+        console.error("LOGOUT ALL DEVICES ERROR:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to revoke sessions.",
+        });
+    }
+};
+exports.logoutAllDevices = logoutAllDevices;
+/* =========================================================
+   EXPORT SETTINGS
+   GET /api/settings/export
+========================================================= */
+const exportUserSettings = async (req, res) => {
+    try {
+        const userId = req.user?._id;
+        if (!userId) {
+            res.status(401).json({
+                success: false,
+                message: "Not authorized.",
+            });
+            return;
+        }
+        const [user, settings,] = await Promise.all([
+            User_js_1.User.findById(userId).select("-password"),
+            getOrCreateSettings(userId),
+        ]);
+        if (!user) {
+            res.status(404).json({
+                success: false,
+                message: "User not found.",
+            });
+            return;
+        }
+        res.setHeader("Cache-Control", "private, no-store");
+        res.status(200).json({
+            success: true,
+            export: {
+                generatedAt: new Date().toISOString(),
+                profile: {
+                    name: user.name,
+                    email: safeDecrypt(user.emailEncrypted),
+                    phone: safeDecrypt(user.phoneEncrypted),
+                    role: user.role,
+                    kycStatus: user.kycStatus,
+                    createdAt: user.createdAt,
+                },
+                preferences: toSettingsDTO(settings),
+            },
+        });
+    }
+    catch (error) {
+        console.error("EXPORT USER SETTINGS ERROR:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to export account settings.",
+        });
+    }
+};
+exports.exportUserSettings = exportUserSettings;
+/* =========================================================
+   DELETE ACCOUNT
+   DELETE /api/settings/account
+========================================================= */
+const deleteUserAccount = async (req, res) => {
+    try {
+        const userId = req.user?._id;
+        if (!userId) {
+            res.status(401).json({
+                success: false,
+                message: "Not authorized.",
+            });
+            return;
+        }
+        const password = toStringValue(req.body?.password);
+        const confirmation = toStringValue(req.body?.confirmation).trim();
+        if (confirmation !==
+            "DELETE") {
+            res.status(400).json({
+                success: false,
+                message: 'Type "DELETE" to confirm account deletion.',
+            });
+            return;
+        }
+        if (!password) {
+            res.status(400).json({
+                success: false,
+                message: "Current password is required.",
+            });
+            return;
+        }
+        const [user, wallet,] = await Promise.all([
+            User_js_1.User.findById(userId).select("+password"),
+            Wallet_js_1.Wallet.findOne({
+                userId,
+            }),
+        ]);
+        if (!user) {
+            res.status(404).json({
+                success: false,
+                message: "User not found.",
+            });
+            return;
+        }
+        if (wallet &&
+            Number(wallet.balance) !== 0) {
+            res.status(409).json({
+                success: false,
+                message: "Your wallet balance must be zero before account deletion.",
+            });
+            return;
+        }
+        const storedPassword = user.get("password");
+        if (!storedPassword) {
+            res.status(401).json({
+                success: false,
+                message: "Unable to verify current password.",
+            });
+            return;
+        }
+        const matched = await (0, password_js_1.verifyPassword)(storedPassword, password);
+        if (!matched) {
+            res.status(401).json({
+                success: false,
+                message: "Current password is incorrect.",
+            });
+            return;
+        }
+        const randomIdentity = crypto_1.default
+            .randomBytes(24)
+            .toString("hex");
+        const deletedEmail = `deleted-${user._id.toString()}-${randomIdentity}@invalid.local`;
+        /*
+         * Remove original PII while keeping
+         * user ID for referential integrity.
+         */
+        user.name =
+            "Deleted User";
+        user.emailEncrypted =
+            (0, crypto_js_1.encryptData)(deletedEmail);
+        user.emailLookup =
+            (0, crypto_js_1.createLookupHash)(deletedEmail);
+        user.phoneEncrypted =
+            undefined;
+        user.phoneLookup =
+            undefined;
+        user.password =
+            await (0, password_js_1.hashPassword)(crypto_1.default
+                .randomBytes(48)
+                .toString("hex"));
+        user.accountStatus =
+            "deleted";
+        user.deletedAt =
+            new Date();
+        user.authVersion =
+            (user.authVersion || 0) +
+                1;
+        await Promise.all([
+            user.save(),
+            UserSettings_js_1.UserSettings.deleteOne({
+                userId: user._id,
+            }),
+        ]);
+        clearAuthCookie(res);
+        res.status(200).json({
+            success: true,
+            message: "Account deletion completed.",
+        });
+    }
+    catch (error) {
+        console.error("DELETE USER ACCOUNT ERROR:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to delete account.",
+        });
+    }
+};
+exports.deleteUserAccount = deleteUserAccount;

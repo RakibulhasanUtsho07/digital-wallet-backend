@@ -1,49 +1,202 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.protect = void 0;
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const User_js_1 = require("../models/User.js");
-// Request-এর বদলে AuthRequest ব্যবহার করুন
+const AuthSession_js_1 = require("../models/AuthSession.js");
+const authSessionService_js_1 = require("../services/authSessionService.js");
+/* =========================================================
+   CONSTANTS
+========================================================= */
+/*
+ * Avoid updating lastActiveAt on every API request.
+ * A session activity update is performed at most once
+ * every 5 minutes.
+ */
+const SESSION_ACTIVITY_REFRESH_MS = 5 * 60 * 1000;
+/* =========================================================
+   PROTECT
+========================================================= */
 const protect = async (req, res, next) => {
-    // Accept either an Authorization: Bearer header (useful for non-browser
-    // clients — Postman, mobile apps, etc.) OR the HttpOnly `access_token`
-    // cookie that the backend actually sets on login/register. The web app
-    // only ever has the cookie: it's HttpOnly on purpose, so frontend JS
-    // can never read it to build a Bearer header itself. Without this
-    // `req.cookies` fallback, every request from the web app fell straight
-    // into the "no token provided" 401 below — even immediately after a
-    // successful login — which is why login looked like it "wasn't working"
-    // with no visible error.
-    let token;
-    if (req.headers.authorization?.startsWith("Bearer")) {
-        token = req.headers.authorization.split(" ")[1];
-    }
-    else if (req.cookies?.access_token) {
-        token = req.cookies.access_token;
-    }
-    if (!token) {
-        res.status(401).json({ message: "Not authorized, no token provided" });
-        return;
-    }
     try {
-        const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
-        const foundUser = await User_js_1.User.findById(decoded.id).select("-password");
-        if (!foundUser) {
-            res.status(401).json({ message: "User not found" });
+        /* ===================================================
+           READ TOKEN
+        ==================================================== */
+        const token = (0, authSessionService_js_1.readTokenFromRequest)(req);
+        if (!token) {
+            res.status(401).json({
+                success: false,
+                message: "Not authorized, no token provided",
+            });
             return;
         }
-        // এখন আর এরর দেবে না
+        /* ===================================================
+           VERIFY JWT
+        ==================================================== */
+        const decoded = (0, authSessionService_js_1.decodeSessionToken)(token);
+        if (!decoded ||
+            !decoded.id) {
+            res.status(401).json({
+                success: false,
+                message: "Not authorized, invalid token",
+            });
+            return;
+        }
+        /* ===================================================
+           LOAD USER
+        ==================================================== */
+        const foundUser = await User_js_1.User.findById(decoded.id)
+            .select("role authVersion accountStatus")
+            .lean();
+        if (!foundUser) {
+            res.status(401).json({
+                success: false,
+                message: "Not authorized, user not found",
+            });
+            return;
+        }
+        /* ===================================================
+           ACCOUNT STATUS
+        ==================================================== */
+        if (foundUser.accountStatus ===
+            "deleted") {
+            res.status(401).json({
+                success: false,
+                message: "This account is no longer active.",
+            });
+            return;
+        }
+        /* ===================================================
+           AUTH VERSION
+        ==================================================== */
+        const tokenVersion = Number(decoded.authVersion ?? 0);
+        const userVersion = Number(foundUser.authVersion ?? 0);
+        /*
+         * authVersion is incremented when:
+         * - password is reset
+         * - sessions are globally revoked
+         * - other security events require JWT invalidation
+         */
+        if (!Number.isInteger(tokenVersion) ||
+            tokenVersion < 0 ||
+            !Number.isInteger(userVersion) ||
+            userVersion < 0 ||
+            tokenVersion !==
+                userVersion) {
+            res.status(401).json({
+                success: false,
+                code: "AUTH_VERSION_MISMATCH",
+                message: "Session has been revoked. Please sign in again.",
+            });
+            return;
+        }
+        /* ===================================================
+           SERVER-SIDE SESSION VALIDATION
+        ==================================================== */
+        /*
+         * New security-enabled JWTs always contain `sid`.
+         *
+         * The sid connects:
+         *
+         * Browser
+         *   ↓
+         * JWT
+         *   ↓
+         * AuthSession
+         *
+         * This makes individual device/session revocation
+         * possible without revoking every session.
+         */
+        let activeSession = null;
+        if (decoded.sid) {
+            activeSession =
+                await AuthSession_js_1.AuthSession.findOne({
+                    userId: foundUser._id,
+                    sessionId: decoded.sid,
+                    revokedAt: {
+                        $exists: false,
+                    },
+                    expiresAt: {
+                        $gt: new Date(),
+                    },
+                })
+                    .select("_id lastActiveAt")
+                    .lean();
+            if (!activeSession) {
+                res.status(401).json({
+                    success: false,
+                    code: "SESSION_REVOKED_OR_EXPIRED",
+                    message: "Session is no longer active. Please sign in again.",
+                });
+                return;
+            }
+            /* =================================================
+               REFRESH SESSION ACTIVITY
+            ================================================== */
+            const lastActiveTime = activeSession.lastActiveAt
+                instanceof Date
+                ? activeSession.lastActiveAt.getTime()
+                : 0;
+            const sessionActivityAge = Date.now() -
+                lastActiveTime;
+            if (sessionActivityAge >=
+                SESSION_ACTIVITY_REFRESH_MS) {
+                /*
+                 * Update conditionally so a revoked/expired
+                 * session cannot accidentally be refreshed.
+                 */
+                await AuthSession_js_1.AuthSession.updateOne({
+                    _id: activeSession._id,
+                    userId: foundUser._id,
+                    sessionId: decoded.sid,
+                    revokedAt: {
+                        $exists: false,
+                    },
+                    expiresAt: {
+                        $gt: new Date(),
+                    },
+                }, {
+                    $set: {
+                        lastActiveAt: new Date(),
+                    },
+                });
+            }
+        }
+        /* ===================================================
+           ATTACH AUTH CONTEXT
+        ==================================================== */
         req.user = {
             _id: foundUser._id.toString(),
             role: foundUser.role,
+            /*
+             * Important:
+             * This comes from the verified JWT.
+             *
+             * Security Center can now use:
+             * req.user.sessionId
+             */
+            sessionId: decoded.sid,
+            tokenIssuedAt: decoded.iat,
         };
+        /* ===================================================
+           CONTINUE
+        ==================================================== */
         next();
     }
     catch (error) {
-        res.status(401).json({ message: "Not authorized, token failed" });
+        /*
+         * Never expose internal JWT, database,
+         * crypto, or authentication implementation details.
+         */
+        console.error("AUTH MIDDLEWARE ERROR:", error instanceof Error
+            ? error.message
+            : error);
+        if (res.headersSent) {
+            return;
+        }
+        res.status(401).json({
+            success: false,
+            message: "Not authorized, token failed",
+        });
     }
 };
 exports.protect = protect;

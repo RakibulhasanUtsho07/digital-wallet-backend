@@ -19,8 +19,14 @@ router.get("/overview", authMiddleware_js_1.protect, adminMiddleware_js_1.adminO
 ========================================================= */
 router.get("/users", authMiddleware_js_1.protect, adminMiddleware_js_1.adminOnly, adminController_js_1.getAllUsers);
 /* =========================================================
+   ALL TRANSACTIONS
+   GET /api/admin/transactions
+========================================================= */
+router.get("/transactions", authMiddleware_js_1.protect, adminMiddleware_js_1.adminOnly, adminController_js_1.getAllTransactions);
+/* =========================================================
    KYC
 ========================================================= */
 router.get("/kyc/pending", authMiddleware_js_1.protect, adminMiddleware_js_1.adminOnly, adminController_js_1.getPendingKYCs);
+router.get("/kyc/:id/documents", authMiddleware_js_1.protect, adminMiddleware_js_1.adminOnly, adminController_js_1.getKYCDocuments);
 router.patch("/kyc/:id/review", authMiddleware_js_1.protect, adminMiddleware_js_1.adminOnly, adminController_js_1.reviewKYC);
 exports.default = router;

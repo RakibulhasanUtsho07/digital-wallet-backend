@@ -7,5 +7,13 @@ const express_1 = __importDefault(require("express"));
 const userController_js_1 = require("../controllers/userController.js");
 const authMiddleware_js_1 = require("../middlewares/authMiddleware.js");
 const router = express_1.default.Router();
+/* =========================================================
+   PROFILE
+========================================================= */
 router.get("/profile", authMiddleware_js_1.protect, userController_js_1.getUserProfile);
+/* =========================================================
+   USER PREFERENCES
+========================================================= */
+router.get("/preferences", authMiddleware_js_1.protect, userController_js_1.getUserPreferences);
+router.patch("/preferences", authMiddleware_js_1.protect, userController_js_1.updateUserPreferences);
 exports.default = router;

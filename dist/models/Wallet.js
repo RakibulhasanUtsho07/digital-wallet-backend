@@ -36,10 +36,50 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Wallet = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
 const walletSchema = new mongoose_1.Schema({
-    userId: { type: mongoose_1.Schema.Types.ObjectId, ref: "User", required: true, unique: true },
-    balance: { type: Number, required: true, default: 0.0, min: 0 },
-    pendingBalance: { type: Number, default: 0.0 },
-    currency: { type: String, default: "BDT" },
-    status: { type: String, enum: ["ACTIVE", "FROZEN", "BLOCKED"], default: "ACTIVE" },
-}, { timestamps: true });
-exports.Wallet = mongoose_1.default.model("Wallet", walletSchema);
+    userId: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: "User",
+        required: true,
+        unique: true,
+        index: true,
+    },
+    balance: {
+        type: Number,
+        required: true,
+        default: 0,
+        min: 0,
+    },
+    pendingBalance: {
+        type: Number,
+        required: true,
+        default: 0,
+        min: 0,
+    },
+    currency: {
+        type: String,
+        required: true,
+        enum: [
+            "BDT",
+            "USD",
+            "EUR",
+        ],
+        default: "BDT",
+    },
+    status: {
+        type: String,
+        enum: [
+            "ACTIVE",
+            "FROZEN",
+            "BLOCKED",
+        ],
+        default: "ACTIVE",
+        required: true,
+        index: true,
+    },
+}, {
+    timestamps: true,
+    versionKey: false,
+});
+exports.Wallet = mongoose_1.default.models.Wallet ||
+    mongoose_1.default.model("Wallet", walletSchema);
+exports.default = exports.Wallet;
