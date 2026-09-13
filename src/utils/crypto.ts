@@ -425,3 +425,122 @@ export function safeEqualHex(
     return false;
   }
 }
+
+
+/* =========================================================
+   WEBHOOK SECRET
+========================================================= */
+
+export function generateWebhookSigningSecret():
+  string {
+  return `whsec_${crypto
+    .randomBytes(32)
+    .toString("base64url")}`;
+}
+
+/* =========================================================
+   WEBHOOK SIGNATURE
+========================================================= */
+
+export function createWebhookSignature({
+  secret,
+  timestamp,
+  rawBody,
+}: {
+  secret: string;
+  timestamp: string;
+  rawBody: string;
+}): string {
+  const normalizedSecret =
+    secret.trim();
+
+  const normalizedTimestamp =
+    timestamp.trim();
+
+  if (
+    normalizedSecret.length <
+    32
+  ) {
+    throw new Error(
+      "Webhook signing secret is invalid."
+    );
+  }
+
+  if (
+    !/^\d+$/.test(
+      normalizedTimestamp
+    )
+  ) {
+    throw new Error(
+      "Webhook timestamp is invalid."
+    );
+  }
+
+  const signedPayload =
+    `${normalizedTimestamp}.${rawBody}`;
+
+  const digest =
+    crypto
+      .createHmac(
+        "sha256",
+        normalizedSecret
+      )
+      .update(
+        signedPayload,
+        "utf8"
+      )
+      .digest("hex");
+
+  return `v1=${digest}`;
+}
+
+/* =========================================================
+   VERIFY WEBHOOK SIGNATURE
+========================================================= */
+
+export function verifyWebhookSignature({
+  secret,
+  timestamp,
+  rawBody,
+  signature,
+}: {
+  secret: string;
+  timestamp: string;
+  rawBody: string;
+  signature: string;
+}): boolean {
+  try {
+    const normalizedSignature =
+      signature
+        .trim()
+        .replace(
+          /^v1=/,
+          ""
+        );
+
+    if (
+      !/^[a-fA-F0-9]{64}$/.test(
+        normalizedSignature
+      )
+    ) {
+      return false;
+    }
+
+    const expectedSignature =
+      createWebhookSignature({
+        secret,
+        timestamp,
+        rawBody,
+      }).replace(
+        /^v1=/,
+        ""
+      );
+
+    return safeEqualHex(
+      normalizedSignature,
+      expectedSignature
+    );
+  } catch {
+    return false;
+  }
+}
