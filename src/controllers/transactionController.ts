@@ -1,7 +1,10 @@
 import mongoose from "mongoose";
-import { Response } from "express";
 
-import {
+import type {
+  Response,
+} from "express";
+
+import type {
   AuthRequest,
 } from "../middlewares/authMiddleware.js";
 
@@ -18,16 +21,28 @@ import {
 ========================================================= */
 
 interface EncryptedValue {
-  encrypted: string;
-  iv: string;
-  authTag: string;
+  encrypted:
+    string;
+
+  iv:
+    string;
+
+  authTag:
+    string;
 }
 
 interface SafeTransactionUser {
-  _id: string;
-  name: string;
-  email: string;
-  phone: string;
+  _id:
+    string;
+
+  name:
+    string;
+
+  email:
+    string;
+
+  phone:
+    string;
 }
 
 type TransactionDirection =
@@ -35,33 +50,99 @@ type TransactionDirection =
   | "OUT";
 
 interface TransactionLike {
-  _id?: unknown;
+  _id?:
+    unknown;
 
-  senderId?: unknown;
+  senderId?:
+    unknown;
 
-  receiverId?: unknown;
+  receiverId?:
+    unknown;
 
-  amountEncrypted?: unknown;
+  amountEncrypted?:
+    unknown;
 
-  referenceEncrypted?: unknown;
+  referenceEncrypted?:
+    unknown;
 
-  currency?: unknown;
+  currency?:
+    unknown;
 
-  type?: unknown;
+  type?:
+    unknown;
 
-  status?: unknown;
+  status?:
+    unknown;
 
-  createdAt?: unknown;
+  createdAt?:
+    unknown;
 
-  updatedAt?: unknown;
+  updatedAt?:
+    unknown;
+}
+
+interface SafeTransaction {
+  _id:
+    string;
+
+  senderId:
+    SafeTransactionUser |
+    string;
+
+  receiverId:
+    SafeTransactionUser |
+    string;
+
+  counterparty:
+    SafeTransactionUser |
+    string |
+    null;
+
+  direction:
+    TransactionDirection;
+
+  amount:
+    number;
+
+  currency:
+    string;
+
+  type:
+    unknown;
+
+  status:
+    unknown;
+
+  reference?:
+    string;
+
+  referenceUnavailable:
+    boolean;
+
+  createdAt?:
+    unknown;
+
+  updatedAt?:
+    unknown;
+}
+
+interface TransactionSerializationResult {
+  transaction:
+    SafeTransaction |
+    null;
+
+  error:
+    string |
+    null;
 }
 
 /* =========================================================
-   RESPONSE CACHE POLICY
+   CACHE
 ========================================================= */
 
 function setPrivateNoStore(
-  res: Response
+  res:
+    Response
 ): void {
   res.setHeader(
     "Cache-Control",
@@ -80,72 +161,113 @@ function setPrivateNoStore(
 }
 
 /* =========================================================
+   ENCRYPTED VALUE VALIDATION
+========================================================= */
+
+function isEncryptedValue(
+  value:
+    unknown
+): value is EncryptedValue {
+  if (
+    !value ||
+    typeof value !==
+      "object"
+  ) {
+    return false;
+  }
+
+  const candidate =
+    value as
+      Partial<EncryptedValue>;
+
+  return (
+    typeof candidate.encrypted ===
+      "string" &&
+    candidate.encrypted.length >
+      0 &&
+    typeof candidate.iv ===
+      "string" &&
+    candidate.iv.length >
+      0 &&
+    typeof candidate.authTag ===
+      "string" &&
+    candidate.authTag.length >
+      0
+  );
+}
+
+/* =========================================================
    SAFE DECRYPT
 ========================================================= */
 
 function safeDecrypt(
-  value: unknown
-): string {
+  value:
+    unknown
+): string | null {
   if (
-    !value ||
-    typeof value !== "object"
+    !isEncryptedValue(
+      value
+    )
   ) {
-    return "";
-  }
-
-  const encrypted =
-    value as Partial<EncryptedValue>;
-
-  if (
-    typeof encrypted.encrypted !== "string" ||
-    typeof encrypted.iv !== "string" ||
-    typeof encrypted.authTag !== "string"
-  ) {
-    return "";
+    return null;
   }
 
   try {
     return decryptData({
       encrypted:
-        encrypted.encrypted,
+        value.encrypted,
 
       iv:
-        encrypted.iv,
+        value.iv,
 
       authTag:
-        encrypted.authTag,
+        value.authTag,
     });
-  } catch (error) {
+  } catch (
+    error
+  ) {
     console.error(
       "TRANSACTION DATA DECRYPT ERROR:",
-      error instanceof Error
+      error instanceof
+        Error
         ? error.message
         : error
     );
 
-    return "";
+    return null;
   }
 }
 
 /* =========================================================
-   MASK PERSONAL DATA
+   MASK EMAIL
 ========================================================= */
 
 function maskEmail(
-  email: string
+  email:
+    string
 ): string {
   const normalized =
     email.trim();
 
-  if (!normalized) {
+  if (
+    !normalized
+  ) {
     return "";
   }
 
   const atIndex =
-    normalized.indexOf("@");
+    normalized.indexOf(
+      "@"
+    );
 
-  if (atIndex <= 0) {
-    if (normalized.length <= 2) {
+  if (
+    atIndex <=
+    0
+  ) {
+    if (
+      normalized.length <=
+      2
+    ) {
       return "**";
     }
 
@@ -155,7 +277,8 @@ function maskEmail(
     )}${"*".repeat(
       Math.max(
         3,
-        normalized.length - 2
+        normalized.length -
+          2
       )
     )}`;
   }
@@ -168,7 +291,8 @@ function maskEmail(
 
   const domain =
     normalized.slice(
-      atIndex + 1
+      atIndex +
+        1
     );
 
   const visibleLocal =
@@ -184,40 +308,82 @@ function maskEmail(
     Math.max(
       3,
       local.length -
-      visibleLocal.length
+        visibleLocal.length
     )
   )}@${domain}`;
 }
 
+/* =========================================================
+   MASK PHONE
+========================================================= */
+
 function maskPhone(
-  phone: string
+  phone:
+    string
 ): string {
   const normalized =
     phone.trim();
 
-  if (!normalized) {
+  if (
+    !normalized
+  ) {
     return "";
   }
 
   const lastFour =
-    normalized.slice(-4);
+    normalized.slice(
+      -4
+    );
 
   return `******${lastFour}`;
 }
 
 /* =========================================================
-   TRANSACTION AMOUNT
+   TRANSACTION ID
+========================================================= */
+
+function getTransactionId(
+  transaction:
+    TransactionLike
+): string {
+  if (
+    transaction._id ===
+      null ||
+    transaction._id ===
+      undefined
+  ) {
+    return "";
+  }
+
+  return String(
+    transaction._id
+  );
+}
+
+/* =========================================================
+   AMOUNT
+
+   IMPORTANT:
+   We do NOT return 0 when encrypted data is invalid.
+
+   Returning 0 would create fake financial data.
 ========================================================= */
 
 function getTransactionAmount(
-  transaction: TransactionLike
+  transaction:
+    TransactionLike
 ): number {
-  const encryptedAmount =
+  const decryptedAmount =
     safeDecrypt(
       transaction.amountEncrypted
     );
 
-  if (!encryptedAmount) {
+  if (
+    decryptedAmount ===
+      null ||
+    decryptedAmount ===
+      ""
+  ) {
     throw new Error(
       "Encrypted transaction amount is missing or invalid."
     );
@@ -225,74 +391,115 @@ function getTransactionAmount(
 
   const minorUnits =
     Number(
-      encryptedAmount
+      decryptedAmount
     );
 
   if (
     !Number.isSafeInteger(
       minorUnits
     ) ||
-    minorUnits < 0
+    minorUnits <
+      0
   ) {
     throw new Error(
-      "Invalid decrypted transaction amount."
+      "Decrypted transaction amount is not a valid non-negative integer."
     );
   }
 
-  return minorUnits / 100;
+  return (
+    minorUnits /
+    100
+  );
 }
 
 /* =========================================================
-   TRANSACTION REFERENCE
+   REFERENCE
+
+   Reference is optional metadata.
+
+   Invalid reference should NOT make the entire
+   financial transaction unreadable.
 ========================================================= */
 
 function getTransactionReference(
-  transaction: TransactionLike
-): string | undefined {
+  transaction:
+    TransactionLike
+): {
+  reference?:
+    string;
+
+  unavailable:
+    boolean;
+} {
   if (
     !transaction.referenceEncrypted
   ) {
-    return undefined;
+    return {
+      unavailable:
+        false,
+    };
   }
 
-  const decryptedReference =
+  const decrypted =
     safeDecrypt(
       transaction.referenceEncrypted
     );
 
-  if (!decryptedReference) {
-    throw new Error(
-      "Encrypted transaction reference is invalid."
-    );
+  if (
+    decrypted ===
+      null
+  ) {
+    return {
+      unavailable:
+        true,
+    };
   }
 
-  return decryptedReference;
+  return {
+    reference:
+      decrypted,
+
+    unavailable:
+      false,
+  };
 }
 
 /* =========================================================
-   SAFE POPULATED USER
+   SAFE USER
 ========================================================= */
 
 function getSafeUser(
-  value: unknown
+  value:
+    unknown
 ): SafeTransactionUser | null {
   if (
     !value ||
-    typeof value !== "object"
+    typeof value !==
+      "object"
   ) {
     return null;
   }
 
   const user =
     value as {
-      _id?: unknown;
-      name?: unknown;
-      emailEncrypted?: unknown;
-      phoneEncrypted?: unknown;
+      _id?:
+        unknown;
+
+      name?:
+        unknown;
+
+      emailEncrypted?:
+        unknown;
+
+      phoneEncrypted?:
+        unknown;
     };
 
   if (
-    user._id == null
+    user._id ===
+      null ||
+    user._id ===
+      undefined
   ) {
     return null;
   }
@@ -300,12 +507,14 @@ function getSafeUser(
   const email =
     safeDecrypt(
       user.emailEncrypted
-    );
+    ) ??
+    "";
 
   const phone =
     safeDecrypt(
       user.phoneEncrypted
-    );
+    ) ??
+    "";
 
   return {
     _id:
@@ -314,14 +523,11 @@ function getSafeUser(
       ),
 
     name:
-      typeof user.name === "string"
+      typeof user.name ===
+        "string"
         ? user.name
         : "",
 
-    /*
-     * Transaction APIs only return masked PII.
-     * Full encrypted values never leave the backend.
-     */
     email:
       maskEmail(
         email
@@ -339,9 +545,15 @@ function getSafeUser(
 ========================================================= */
 
 function getPopulatedUserId(
-  value: unknown
+  value:
+    unknown
 ): string {
-  if (!value) {
+  if (
+    value ===
+      null ||
+    value ===
+      undefined
+  ) {
     return "";
   }
 
@@ -353,14 +565,15 @@ function getPopulatedUserId(
   }
 
   if (
-    typeof value === "object" &&
-    value !== null &&
+    typeof value ===
+      "object" &&
     "_id" in value
   ) {
     return String(
       (
         value as {
-          _id: unknown;
+          _id:
+            unknown;
         }
       )._id
     );
@@ -376,8 +589,10 @@ function getPopulatedUserId(
 ========================================================= */
 
 function getTransactionDirection(
-  transaction: TransactionLike,
-  currentUserId: string
+  transaction:
+    TransactionLike,
+  currentUserId:
+    string
 ): TransactionDirection {
   if (
     transaction.type ===
@@ -409,9 +624,14 @@ function getTransactionDirection(
 ========================================================= */
 
 function getCounterparty(
-  transaction: TransactionLike,
-  currentUserId: string
-): SafeTransactionUser | string | null {
+  transaction:
+    TransactionLike,
+  currentUserId:
+    string
+):
+  | SafeTransactionUser
+  | string
+  | null {
   if (
     transaction.type !==
     "TRANSFER"
@@ -426,7 +646,8 @@ function getCounterparty(
     );
 
   const value =
-    direction === "OUT"
+    direction ===
+    "OUT"
       ? transaction.receiverId
       : transaction.senderId;
 
@@ -442,26 +663,31 @@ function getCounterparty(
 }
 
 /* =========================================================
-   SAFE TRANSACTION RESPONSE
+   SERIALIZE TRANSACTION
 ========================================================= */
 
 function toSafeTransaction(
-  transaction: TransactionLike,
-  currentUserId: string
-) {
+  transaction:
+    TransactionLike,
+  currentUserId:
+    string
+): SafeTransaction {
   const direction =
     getTransactionDirection(
       transaction,
       currentUserId
     );
 
+  const referenceResult =
+    getTransactionReference(
+      transaction
+    );
+
   return {
     _id:
-      transaction._id != null
-        ? String(
-          transaction._id
-        )
-        : "",
+      getTransactionId(
+        transaction
+      ),
 
     senderId:
       getSafeUser(
@@ -505,9 +731,10 @@ function toSafeTransaction(
       transaction.status,
 
     reference:
-      getTransactionReference(
-        transaction
-      ),
+      referenceResult.reference,
+
+    referenceUnavailable:
+      referenceResult.unavailable,
 
     createdAt:
       transaction.createdAt,
@@ -518,23 +745,85 @@ function toSafeTransaction(
 }
 
 /* =========================================================
+   SAFE SERIALIZATION WRAPPER
+
+   A corrupt legacy transaction must not crash
+   the entire transaction list.
+========================================================= */
+
+function tryToSafeTransaction(
+  transaction:
+    TransactionLike,
+  currentUserId:
+    string
+): TransactionSerializationResult {
+  try {
+    return {
+      transaction:
+        toSafeTransaction(
+          transaction,
+          currentUserId
+        ),
+
+      error:
+        null,
+    };
+  } catch (
+    error
+  ) {
+    const transactionId =
+      getTransactionId(
+        transaction
+      );
+
+    const message =
+      error instanceof
+        Error
+        ? error.message
+        : "Unknown transaction serialization error.";
+
+    console.error(
+      "TRANSACTION INTEGRITY ERROR:",
+      {
+        transactionId,
+        message,
+      }
+    );
+
+    return {
+      transaction:
+        null,
+
+      error:
+        message,
+    };
+  }
+}
+
+/* =========================================================
    GET MY TRANSACTIONS
-   GET /api/transactions
 ========================================================= */
 
 export const getMyTransactions =
   async (
-    req: AuthRequest,
-    res: Response
+    req:
+      AuthRequest,
+    res:
+      Response
   ): Promise<void> => {
     try {
       setPrivateNoStore(
         res
       );
 
-      if (!req.user?._id) {
-        res.status(401).json({
-          success: false,
+      if (
+        !req.user?._id
+      ) {
+        res.status(
+          401
+        ).json({
+          success:
+            false,
 
           message:
             "Not authorized",
@@ -556,6 +845,7 @@ export const getMyTransactions =
               senderId:
                 userId,
             },
+
             {
               receiverId:
                 userId,
@@ -571,46 +861,85 @@ export const getMyTransactions =
             "name emailEncrypted phoneEncrypted"
           )
           .sort({
-            createdAt: -1,
+            createdAt:
+              -1,
           })
           .lean();
 
-      const safeTransactions =
-        transactions.map(
-          (
-            transaction
-          ) =>
-            toSafeTransaction(
-              transaction as TransactionLike,
-              currentUserId
-            )
-        );
+      const safeTransactions:
+        SafeTransaction[] =
+        [];
 
-      res.status(200).json({
-        success: true,
+      let skippedCount =
+        0;
+
+      for (
+        const transaction of
+        transactions
+      ) {
+        const result =
+          tryToSafeTransaction(
+            transaction as
+              TransactionLike,
+
+            currentUserId
+          );
+
+        if (
+          result.transaction
+        ) {
+          safeTransactions.push(
+            result.transaction
+          );
+        } else {
+          skippedCount +=
+            1;
+        }
+      }
+
+      res.status(
+        200
+      ).json({
+        success:
+          true,
 
         count:
           safeTransactions.length,
 
         transactions:
           safeTransactions,
+
+        integrity: {
+          databaseRecordCount:
+            transactions.length,
+
+          returnedCount:
+            safeTransactions.length,
+
+          skippedCount,
+
+          hasWarnings:
+            skippedCount >
+            0,
+        },
       });
     } catch (
-    error: unknown
+      error:
+        unknown
     ) {
       console.error(
-        "Get transactions error:",
-        error instanceof Error
+        "GET TRANSACTIONS ERROR:",
+        error instanceof
+          Error
           ? error.message
           : error
       );
 
-      /*
-       * Do not return decryption/internal database errors
-       * to the client.
-       */
-      res.status(500).json({
-        success: false,
+      res.status(
+        500
+      ).json({
+        success:
+          false,
 
         message:
           "Failed to fetch transactions.",
@@ -620,27 +949,28 @@ export const getMyTransactions =
 
 /* =========================================================
    GET TRANSACTION BY ID
-   GET /api/transactions/:id
-
-   Security:
-   - validates ObjectId
-   - ownership is enforced in the database query
-   - another user's transaction is not revealed
 ========================================================= */
 
 export const getTransactionById =
   async (
-    req: AuthRequest,
-    res: Response
+    req:
+      AuthRequest,
+    res:
+      Response
   ): Promise<void> => {
     try {
       setPrivateNoStore(
         res
       );
 
-      if (!req.user?._id) {
-        res.status(401).json({
-          success: false,
+      if (
+        !req.user?._id
+      ) {
+        res.status(
+          401
+        ).json({
+          success:
+            false,
 
           message:
             "Not authorized",
@@ -648,21 +978,33 @@ export const getTransactionById =
 
         return;
       }
-      const rawId = req.params.id;
+
+      const rawId =
+        req.params.id;
 
       const id =
-        Array.isArray(rawId)
+        Array.isArray(
+          rawId
+        )
           ? rawId[0]
           : rawId;
 
       if (
-        typeof id !== "string" ||
+        typeof id !==
+          "string" ||
         !id ||
-        !mongoose.Types.ObjectId.isValid(id)
+        !mongoose.Types.ObjectId.isValid(
+          id
+        )
       ) {
-        res.status(400).json({
-          success: false,
-          message: "Invalid transaction ID.",
+        res.status(
+          400
+        ).json({
+          success:
+            false,
+
+          message:
+            "Invalid transaction ID.",
         });
 
         return;
@@ -674,11 +1016,6 @@ export const getTransactionById =
       const currentUserId =
         userId.toString();
 
-      /*
-       * Ownership is part of the lookup itself.
-       * This prevents an IDOR-style detail lookup and avoids
-       * confirming that another user's transaction exists.
-       */
       const transaction =
         await Transaction.findOne({
           _id:
@@ -689,6 +1026,7 @@ export const getTransactionById =
               senderId:
                 userId,
             },
+
             {
               receiverId:
                 userId,
@@ -705,9 +1043,14 @@ export const getTransactionById =
           )
           .lean();
 
-      if (!transaction) {
-        res.status(404).json({
-          success: false,
+      if (
+        !transaction
+      ) {
+        res.status(
+          404
+        ).json({
+          success:
+            false,
 
           message:
             "Transaction not found.",
@@ -716,30 +1059,59 @@ export const getTransactionById =
         return;
       }
 
-      const safeTransaction =
-        toSafeTransaction(
-          transaction as TransactionLike,
+      const serialized =
+        tryToSafeTransaction(
+          transaction as
+            TransactionLike,
+
           currentUserId
         );
 
-      res.status(200).json({
-        success: true,
+      if (
+        !serialized.transaction
+      ) {
+        res.status(
+          422
+        ).json({
+          success:
+            false,
+
+          code:
+            "TRANSACTION_DATA_INTEGRITY_ERROR",
+
+          message:
+            "This transaction contains legacy or unreadable encrypted financial data.",
+        });
+
+        return;
+      }
+
+      res.status(
+        200
+      ).json({
+        success:
+          true,
 
         transaction:
-          safeTransaction,
+          serialized.transaction,
       });
     } catch (
-    error: unknown
+      error:
+        unknown
     ) {
       console.error(
-        "Get transaction details error:",
-        error instanceof Error
+        "GET TRANSACTION DETAILS ERROR:",
+        error instanceof
+          Error
           ? error.message
           : error
       );
 
-      res.status(500).json({
-        success: false,
+      res.status(
+        500
+      ).json({
+        success:
+          false,
 
         message:
           "Failed to fetch transaction.",
