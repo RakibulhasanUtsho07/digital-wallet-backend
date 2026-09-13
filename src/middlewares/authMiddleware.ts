@@ -378,3 +378,127 @@ export const protect =
       });
     }
   };
+
+
+  /* =========================================================
+   ROLE-BASED ACCESS CONTROL
+========================================================= */
+
+/*
+ * Allows only the supplied application roles.
+ *
+ * Important:
+ * - `protect` must run before this middleware.
+ * - This middleware never authenticates the user.
+ * - It only checks the role already attached by `protect`.
+ */
+export const requireRoles =
+  (...allowedRoles: UserRole[]) =>
+  (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+  ): void => {
+    /* =====================================================
+       AUTHENTICATION CHECK
+    ====================================================== */
+
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+
+        code: "AUTHENTICATION_REQUIRED",
+
+        message:
+          "Not authorized. Authentication is required.",
+      });
+
+      return;
+    }
+
+    /* =====================================================
+       ROLE CHECK
+    ====================================================== */
+
+    if (
+      !allowedRoles.includes(
+        req.user.role
+      )
+    ) {
+      res.status(403).json({
+        success: false,
+
+        code: "FORBIDDEN",
+
+        message:
+          "You do not have permission to access this resource.",
+      });
+
+      return;
+    }
+
+    /* =====================================================
+       ACCESS GRANTED
+    ====================================================== */
+
+    next();
+  };
+
+/* =========================================================
+   SUPPORT ROLE
+========================================================= */
+
+/*
+ * Dedicated Support Agent access.
+ *
+ * Support agents are intentionally separated from:
+ * - normal users
+ * - merchants
+ * - analysts
+ * - admins
+ * - super admins
+ */
+export const requireSupport =
+  requireRoles("support");
+
+/* =========================================================
+   SUPPORT + ADMIN ACCESS
+========================================================= */
+
+/*
+ * Used for shared support infrastructure where:
+ *
+ * Support Agent
+ *     OR
+ * Admin
+ *     OR
+ * Super Admin
+ *
+ * may access the resource.
+ *
+ * Existing Admin/Super Admin functionality remains intact.
+ */
+export const requireSupportOrAdmin =
+  requireRoles(
+    "support",
+    "admin",
+    "super_admin"
+  );
+
+/* =========================================================
+   ADMIN + SUPER ADMIN ACCESS
+========================================================= */
+
+/*
+ * Optional reusable replacement for duplicated
+ * admin role checks.
+ *
+ * This does NOT replace any existing requireAdmin
+ * middleware yet. It simply provides a compatible
+ * role-based helper for future migration.
+ */
+export const requireAdminOrSuperAdmin =
+  requireRoles(
+    "admin",
+    "super_admin"
+  );
