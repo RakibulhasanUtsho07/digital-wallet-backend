@@ -3,15 +3,11 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 
-// =========================================================
-// DATABASE
-// =========================================================
-
 import connectDB from "./config/db.js";
 
-// =========================================================
-// ROUTES
-// =========================================================
+/* =========================================================
+   ROUTES
+========================================================= */
 
 import analyticsRoutes from "./routes/analyticsRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -38,6 +34,35 @@ import userManagementRoutes from "./routes/userManagementRoutes.js";
 import adminOverviewRoutes from "./routes/adminOverviewRoutes.js";
 import securityRoutes from "./routes/securityRoutes.js";
 import merchantRoutes from "./routes/merchantRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
+import revenueRoutes from "./routes/revenueRoutes.js";
+import merchantWebhookRoutes from "./routes/merchantWebhookRoutes.js";
+import supportRoutes from "./routes/supportRoutes.js";
+import kycIntelligenceRoutes from "./routes/kycIntelligenceRoutes.js";
+import supportTicketRoutes from "./routes/supportTicketRoutes.js";
+import paypalPaymentRoutes from "./routes/paypalPaymentRoutes.js";
+import merchantPaymentRoutes from "./routes/merchantPaymentRoutes.js";
+import merchantOrderRoutes from "./routes/merchantOrderRoutes.js";
+import merchantRefundRoutes from "./routes/merchantRefundRoutes.js";
+import merchantInvoiceRoutes from "./routes/merchantInvoiceRoutes.js";
+import publicInvoiceRoutes from "./routes/publicInvoiceRoutes.js";
+import adminMerchantVerificationRoutes from "./routes/adminMerchantVerificationRoutes.js";
+/* =========================================================
+   E-KYC ROUTES
+========================================================= */
+import merchantDashboardWebhookRoutes from "./routes/merchantDashboardWebhookRoutes.js";
+import {
+  createEKYCRouter,
+} from "./modules/ekyc/routes/ekycRoutes.js";
+
+import {
+  createAdminEKYCRouter,
+} from "./modules/ekyc/routes/adminEkycRoutes.js";
+
+/* =========================================================
+   AUTHORIZATION
+========================================================= */
+
 import {
   protect,
 } from "./middlewares/authMiddleware.js";
@@ -46,49 +71,10 @@ import {
   requireAdmin,
 } from "./middlewares/adminAuthorization.js";
 
-
-
-
-import merchantPaymentRoutes from "./routes/merchantPaymentRoutes.js";
-/*
- * PAYMENT / ADD MONEY
- *
- * Provides:
- * POST /api/payment/validate-source
- * POST /api/payment/add-money
- */
-import paymentRoutes from "./routes/paymentRoutes.js";
-
-/*
- * Revenue Intelligence
- */
-import revenueRoutes from "./routes/revenueRoutes.js";
-import merchantWebhookRoutes from "./routes/merchantWebhookRoutes.js";
-/*
- * Advanced E-KYC
- */
-import {
-  createEKYCRouter,
-} from "./modules/ekyc/routes/ekycRoutes.js";
-
-import { createAdminEKYCRouter } from "./modules/ekyc/routes/adminEkycRoutes.js";
-
-/*
- * Admin Support Operations
- */
-import supportRoutes from "./routes/supportRoutes.js";
-
-/*
- * Admin KYC Intelligence
- */
-import kycIntelligenceRoutes from "./routes/kycIntelligenceRoutes.js";
-
-import supportTicketRoutes from "./routes/supportTicketRoutes.js";
-import paypalPaymentRoutes from "./routes/paypalPaymentRoutes.js";
-// =========================================================
-// TELEMETRY MIDDLEWARE
-// =========================================================
-
+/* =========================================================
+   TELEMETRY
+========================================================= */
+import analystRoutes from "./modules/analyst/routes/analystRoutes.js";
 import {
   systemTelemetryMiddleware,
 } from "./middlewares/systemTelemetryMiddleware.js";
@@ -96,14 +82,14 @@ import {
 import {
   systemErrorTelemetry,
 } from "./middlewares/systemErrorTelemetry.js";
-import merchantOrderRoutes from "./routes/merchantOrderRoutes.js";
-// =========================================================
-// ERROR MIDDLEWARE
-// =========================================================
+
+/* =========================================================
+   ERROR HANDLERS
+========================================================= */
 
 import {
-  notFound,
   errorHandler,
+  notFound,
 } from "./middlewares/errorMiddleware.js";
 
 /* =========================================================
@@ -111,10 +97,6 @@ import {
 ========================================================= */
 
 const app = express();
-
-/* =========================================================
-   TRUST PROXY
-========================================================= */
 
 app.set(
   "trust proxy",
@@ -130,24 +112,22 @@ const allowedOrigins = [
   "http://127.0.0.1:3000",
   process.env.CLIENT_URL?.trim(),
   process.env.ADMIN_CLIENT_URL?.trim(),
-].filter((origin): origin is string => Boolean(origin));
+].filter(
+  (
+    origin
+  ): origin is string =>
+    Boolean(origin)
+);
 
-/* =========================================================
-   CORS OPTIONS
-========================================================= */
-
-const corsOptions: cors.CorsOptions = {
+const corsOptions:
+  cors.CorsOptions = {
   origin: (
     origin,
     callback
   ) => {
     /*
-     * Allow requests without an Origin header.
-     *
-     * Examples:
-     * - Postman
-     * - server-to-server
-     * - same-origin tooling
+     * Requests such as Postman and server-to-server
+     * requests may not include an Origin header.
      */
     if (!origin) {
       callback(
@@ -210,25 +190,24 @@ const corsOptions: cors.CorsOptions = {
   optionsSuccessStatus: 204,
 };
 
-/* =========================================================
-   ENABLE CORS
-========================================================= */
-
 app.use(
   cors(
     corsOptions
   )
 );
 
+/*
+ * Express 5 catch-all OPTIONS route.
+ */
 app.options(
-  /{*any}/,
+  "/{*any}",
   cors(
     corsOptions
   )
 );
 
 /* =========================================================
-   BODY PARSERS
+   BODY AND COOKIE PARSERS
 ========================================================= */
 
 app.use(
@@ -241,13 +220,10 @@ app.use(
 app.use(
   express.urlencoded({
     extended: true,
-    limit: "2mb",
+    limit:
+      "2mb",
   })
 );
-
-/* =========================================================
-   COOKIE PARSER
-========================================================= */
 
 app.use(
   cookieParser()
@@ -286,7 +262,7 @@ app.use(
 
       next();
     } catch (
-      error
+      error: unknown
     ) {
       console.error(
         "DB CONNECTION ERROR:",
@@ -314,7 +290,7 @@ app.use(
 );
 
 /* =========================================================
-   GLOBAL API RATE LIMIT
+   RATE LIMITERS
 ========================================================= */
 
 const apiLimiter =
@@ -324,8 +300,7 @@ const apiLimiter =
       60 *
       1000,
 
-    max:
-      100,
+    max: 100,
 
     standardHeaders:
       true,
@@ -334,26 +309,31 @@ const apiLimiter =
       false,
 
     message: {
-      success:
-        false,
+      success: false,
 
       message:
         "Too many requests. Please try again after 15 minutes.",
     },
 
-    /* Advanced e-KYC uses its own route-specific limits. */
-    skip: (request) =>
-      request.originalUrl.startsWith("/api/ekyc/") ||
-      request.originalUrl.startsWith("/api/admin/ekyc/"),
+    skip: (
+      request
+    ) =>
+      request.originalUrl.startsWith(
+        "/api/ekyc/"
+      ) ||
+      request.originalUrl.startsWith(
+        "/api/admin/ekyc/"
+      ),
   });
 
 const advancedEKYCLimiter =
   rateLimit({
     windowMs:
-      15 * 60 * 1000,
+      15 *
+      60 *
+      1000,
 
-    max:
-      300,
+    max: 300,
 
     standardHeaders:
       true,
@@ -362,8 +342,7 @@ const advancedEKYCLimiter =
       false,
 
     message: {
-      success:
-        false,
+      success: false,
 
       message:
         "Too many e-KYC requests. Please try again shortly.",
@@ -373,10 +352,11 @@ const advancedEKYCLimiter =
 const adminEKYCLimiter =
   rateLimit({
     windowMs:
-      15 * 60 * 1000,
+      15 *
+      60 *
+      1000,
 
-    max:
-      240,
+    max: 240,
 
     standardHeaders:
       true,
@@ -385,8 +365,7 @@ const adminEKYCLimiter =
       false,
 
     message: {
-      success:
-        false,
+      success: false,
 
       message:
         "Too many administrator e-KYC requests. Please try again shortly.",
@@ -398,8 +377,14 @@ app.use(
   apiLimiter
 );
 
+
+app.use(
+  "/api/analyst",
+  analystRoutes
+);
+
 /* =========================================================
-   ROOT
+   ROOT AND HEALTH
 ========================================================= */
 
 app.get(
@@ -420,10 +405,6 @@ app.get(
   }
 );
 
-/* =========================================================
-   API ROOT
-========================================================= */
-
 app.get(
   "/api",
   (
@@ -433,18 +414,13 @@ app.get(
     res.status(
       200
     ).json({
-      success:
-        true,
+      success: true,
 
       message:
         "Digital Wallet API is running",
     });
   }
 );
-
-/* =========================================================
-   HEALTH CHECK
-========================================================= */
 
 app.get(
   "/api/health",
@@ -455,20 +431,20 @@ app.get(
     res.status(
       200
     ).json({
-      success:
-        true,
+      success: true,
 
       message:
         "Digital Wallet API is healthy",
 
       timestamp:
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
     });
   }
 );
 
 /* =========================================================
-   AUTH
+   AUTH AND USERS
 ========================================================= */
 
 app.use(
@@ -476,30 +452,90 @@ app.use(
   authRoutes
 );
 
-/* =========================================================
-   CURRENT USER
-========================================================= */
-
 app.use(
   "/api/auth",
   currentUserRoutes
 );
 
-/* =========================================================
-   USERS
-========================================================= */
-
 app.use(
   "/api/users",
   userRoutes
 );
+
 /* =========================================================
-   MERCHANT
+   MERCHANT DASHBOARD
 ========================================================= */
 
 app.use(
   "/api/merchants",
+  merchantDashboardWebhookRoutes
+);
+
+
+/* =========================================================
+   MERCHANT INVOICE API
+========================================================= */
+
+app.use(
+  "/api/v1/invoices",
+  merchantInvoiceRoutes
+);
+
+/* =========================================================
+   PUBLIC INVOICE API
+========================================================= */
+
+app.use(
+  "/api/public/invoices",
+  publicInvoiceRoutes
+);
+app.use(
+  "/api/merchants",
   merchantRoutes
+);
+
+/* =========================================================
+   PUBLIC MERCHANT PAYMENT API
+========================================================= */
+
+/*
+ * Keep PayPal routes before generic merchant routes.
+ */
+app.use(
+  "/api/v1/payments",
+  paypalPaymentRoutes
+);
+
+app.use(
+  "/api/v1/payments",
+  merchantPaymentRoutes
+);
+
+/* =========================================================
+   PUBLIC MERCHANT ORDER API
+========================================================= */
+
+app.use(
+  "/api/v1/orders",
+  merchantOrderRoutes
+);
+
+/* =========================================================
+   PUBLIC MERCHANT REFUND API
+========================================================= */
+
+app.use(
+  "/api/v1/refunds",
+  merchantRefundRoutes
+);
+
+/* =========================================================
+   MERCHANT WEBHOOK API
+========================================================= */
+
+app.use(
+  "/api/v1/webhooks",
+  merchantWebhookRoutes
 );
 
 /* =========================================================
@@ -521,7 +557,7 @@ app.use(
 );
 
 /* =========================================================
-   WALLET
+   WALLET AND FUNDS
 ========================================================= */
 
 app.use(
@@ -529,85 +565,20 @@ app.use(
   walletRoutes
 );
 
-/* =========================================================
-   FUNDS
-========================================================= */
-
 app.use(
   "/api/funds",
   fundsRoutes
 );
 
 /* =========================================================
-   PAYMENT / ADD MONEY
+   ADD MONEY
 ========================================================= */
-/* =========================================================
-   PAYPAL PAYMENT ROUTES
- *
- * Keep PayPal routes first so:
- * /paypal
- * /return
- * /cancel
- * are handled by PayPal before merchant payment routes.
-========================================================= */
-
-app.use(
-  "/api/v1/payments",
-  paypalPaymentRoutes,
-);
-
-/* =========================================================
-   WALLET PAYMENT GATEWAY
- *
- * Merchant:
- * POST /api/v1/payments
- *
- * Merchant:
- * GET /api/v1/payments/:paymentId
- *
- * Customer:
- * GET /api/v1/payments/:paymentId/checkout
- *
- * Customer:
- * POST /api/v1/payments/:paymentId/confirm
-========================================================= */
-
-app.use(
-  "/api/v1/payments",
-  merchantPaymentRoutes,
-);
-/*
- * IMPORTANT
- *
- * Frontend calls:
- *
- * POST /api/payment/validate-source
- * POST /api/payment/add-money
- *
- * Therefore the router MUST be mounted here.
- */
 
 app.use(
   "/api/payment",
   paymentRoutes
 );
-/* =========================================================
-   PUBLIC MERCHANT ORDER API
-========================================================= */
 
-app.use(
-  "/api/v1/orders",
-  merchantOrderRoutes
-);
-
-/* =========================================================
-   MERCHANT WEBHOOKS
-========================================================= */
-
-app.use(
-  "/api/v1/webhooks",
-  merchantWebhookRoutes
-);
 /* =========================================================
    TRANSFERS
 ========================================================= */
@@ -618,7 +589,7 @@ app.use(
 );
 
 /* =========================================================
-   PASSKEYS / BIOMETRIC PAYMENT
+   PASSKEYS
 ========================================================= */
 
 app.use(
@@ -636,17 +607,8 @@ app.use(
 );
 
 /* =========================================================
-   KYC
+   ADVANCED E-KYC
 ========================================================= */
-
-/*
- * Advanced customer e-KYC API:
- *
- * POST /api/ekyc/liveness/challenges
- * POST /api/ekyc/fingerprint/mock-captures
- * GET  /api/ekyc/verifications/current
- * POST /api/ekyc/verifications
- */
 
 app.use(
   "/api/ekyc",
@@ -655,9 +617,9 @@ app.use(
   createEKYCRouter()
 );
 
-/*
- * Legacy KYC routes are retained temporarily for compatibility.
- */
+/* =========================================================
+   LEGACY KYC
+========================================================= */
 
 app.use(
   "/api/kyc",
@@ -665,7 +627,7 @@ app.use(
 );
 
 /* =========================================================
-   AI
+   AI AND INSIGHTS
 ========================================================= */
 
 app.use(
@@ -673,17 +635,13 @@ app.use(
   aiRoutes
 );
 
-/* =========================================================
-   INSIGHTS
-========================================================= */
-
 app.use(
   "/api/insights",
   insightsRoutes
 );
 
 /* =========================================================
-   CASH FLOW
+   USER FEATURES
 ========================================================= */
 
 app.use(
@@ -691,27 +649,15 @@ app.use(
   cashFlowRoutes
 );
 
-/* =========================================================
-   NOTIFICATIONS
-========================================================= */
-
 app.use(
   "/api/notifications",
   notificationRoutes
 );
 
-/* =========================================================
-   BUDGETS
-========================================================= */
-
 app.use(
   "/api/budgets",
   budgetRoutes
 );
-
-/* =========================================================
-   RECEIPTS
-========================================================= */
 
 app.use(
   "/api/receipts",
@@ -758,7 +704,16 @@ app.use(
 );
 
 /* =========================================================
-   ADMIN REVENUE INTELLIGENCE
+   ADMIN MERCHANT VERIFICATION
+========================================================= */
+
+app.use(
+  "/api/admin/merchant-verifications",
+  adminMerchantVerificationRoutes
+);
+
+/* =========================================================
+   ADMIN REVENUE
 ========================================================= */
 
 app.use(
@@ -767,17 +722,13 @@ app.use(
 );
 
 /* =========================================================
-   SUPPORT TICKETS
+   SUPPORT
 ========================================================= */
 
 app.use(
   "/api/support/tickets",
   supportTicketRoutes
 );
-
-/* =========================================================
-   ADMIN SUPPORT OPERATIONS
-========================================================= */
 
 app.use(
   "/api/admin/support",
@@ -812,7 +763,7 @@ app.use(
 );
 
 /* =========================================================
-   ADMIN DASHBOARD OVERVIEW
+   ADMIN OVERVIEW
 ========================================================= */
 
 app.use(
@@ -821,7 +772,7 @@ app.use(
 );
 
 /* =========================================================
-   GENERIC ADMIN ROUTER
+   GENERIC ADMIN ROUTES
 ========================================================= */
 
 app.use(
@@ -830,31 +781,19 @@ app.use(
 );
 
 /* =========================================================
-   404 HANDLER
+   404 AND ERROR HANDLERS
 ========================================================= */
 
 app.use(
   notFound
 );
 
-/* =========================================================
-   SYSTEM ERROR TELEMETRY
-========================================================= */
-
 app.use(
   systemErrorTelemetry
 );
 
-/* =========================================================
-   FINAL ERROR HANDLER
-========================================================= */
-
 app.use(
   errorHandler
 );
-
-/* =========================================================
-   EXPORT
-========================================================= */
 
 export default app;
