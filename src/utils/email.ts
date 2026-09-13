@@ -556,3 +556,389 @@ Secure payments • Smarter financial control
       throw error;
     }
   };
+
+
+
+  /* =========================================================
+   MERCHANT INVOICE EMAIL
+========================================================= */
+
+function escapeInvoiceHtml(
+  value: string
+): string {
+  return value.replace(
+    /[&<>"']/g,
+    (character) => {
+      const entities:
+        Record<string, string> = {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#039;",
+        };
+
+      return (
+        entities[character] ||
+        character
+      );
+    }
+  );
+}
+
+export const sendMerchantInvoiceEmail =
+  async ({
+    email,
+    customerName,
+    merchantName,
+    invoiceNumber,
+    amount,
+    currency,
+    dueDate,
+    invoiceUrl,
+  }: {
+    email: string;
+    customerName: string;
+    merchantName: string;
+    invoiceNumber: string;
+    amount: string;
+    currency: string;
+    dueDate: Date;
+    invoiceUrl: string;
+  }): Promise<void> => {
+    const from =
+      process.env.SMTP_USER;
+
+    if (!from) {
+      throw new Error(
+        "SMTP_USER is not configured."
+      );
+    }
+
+    const safeCustomer =
+      escapeInvoiceHtml(
+        customerName
+      );
+
+    const safeMerchant =
+      escapeInvoiceHtml(
+        merchantName
+      );
+
+    const safeInvoiceNumber =
+      escapeInvoiceHtml(
+        invoiceNumber
+      );
+
+    const safeAmount =
+      escapeInvoiceHtml(
+        amount
+      );
+
+    const safeCurrency =
+      escapeInvoiceHtml(
+        currency
+      );
+
+    const safeUrl =
+      escapeInvoiceHtml(
+        invoiceUrl
+      );
+
+    const formattedDueDate =
+      new Intl.DateTimeFormat(
+        "en-BD",
+        {
+          dateStyle:
+            "long",
+        }
+      ).format(
+        dueDate
+      );
+
+    const safeDueDate =
+      escapeInvoiceHtml(
+        formattedDueDate
+      );
+
+    const info =
+      await transporter.sendMail({
+        from:
+          `"Coffer Digital Wallet" <${from}>`,
+
+        to:
+          email,
+
+        subject:
+          `Invoice ${invoiceNumber} from ${merchantName}`,
+
+        text: [
+          `Hello ${customerName},`,
+          "",
+          `${merchantName} sent you invoice ${invoiceNumber}.`,
+          `Amount: ${currency} ${amount}`,
+          `Due date: ${formattedDueDate}`,
+          "",
+          `View invoice: ${invoiceUrl}`,
+          "",
+          "This invoice is securely delivered through Coffer Digital Wallet.",
+        ].join("\n"),
+
+        html: `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0"
+>
+</head>
+
+<body style="
+  margin:0;
+  padding:0;
+  background:#080719;
+  font-family:Arial,Helvetica,sans-serif;
+">
+  <div style="padding:40px 16px;">
+    <div style="
+      max-width:640px;
+      margin:0 auto;
+      overflow:hidden;
+      border:1px solid #29254d;
+      border-radius:28px;
+      background:#101025;
+      box-shadow:0 30px 90px rgba(0,0,0,.38);
+    ">
+      <div style="
+        padding:38px 34px;
+        color:white;
+        background:
+          radial-gradient(
+            circle at 15% 10%,
+            rgba(139,92,246,.35),
+            transparent 32%
+          ),
+          linear-gradient(
+            135deg,
+            #160e35,
+            #251157 55%,
+            #11102e
+          );
+      ">
+        <div style="
+          display:inline-block;
+          padding:13px 16px;
+          border-radius:15px;
+          background:linear-gradient(135deg,#9b5cff,#6627db);
+          font-size:19px;
+          font-weight:800;
+        ">
+          C
+        </div>
+
+        <div style="
+          margin-top:20px;
+          color:#aaa2c9;
+          font-size:10px;
+          font-weight:800;
+          letter-spacing:3px;
+          text-transform:uppercase;
+        ">
+          Merchant invoice
+        </div>
+
+        <h1 style="
+          margin:9px 0 0;
+          font-size:30px;
+        ">
+          Invoice from ${safeMerchant}
+        </h1>
+
+        <p style="
+          margin:10px 0 0;
+          color:#c5bfdc;
+          font-size:14px;
+          line-height:1.7;
+        ">
+          Securely delivered through Coffer Digital Wallet.
+        </p>
+      </div>
+
+      <div style="padding:36px;">
+        <p style="
+          margin:0;
+          color:#bcb8cf;
+          font-size:14px;
+          line-height:1.8;
+        ">
+          Hello ${safeCustomer}, ${safeMerchant} has sent you
+          a new invoice.
+        </p>
+
+        <div style="
+          margin-top:26px;
+          padding:24px;
+          border:1px solid #342e59;
+          border-radius:20px;
+          background:#151633;
+        ">
+          <div style="
+            color:#817c9d;
+            font-size:10px;
+            font-weight:800;
+            letter-spacing:2px;
+            text-transform:uppercase;
+          ">
+            Amount due
+          </div>
+
+          <div style="
+            margin-top:10px;
+            color:#ffffff;
+            font-size:30px;
+            font-weight:800;
+          ">
+            ${safeCurrency} ${safeAmount}
+          </div>
+
+          <div style="
+            margin-top:20px;
+            color:#817c9d;
+            font-size:11px;
+          ">
+            Invoice number
+          </div>
+
+          <div style="
+            margin-top:5px;
+            color:#e9e6f3;
+            font-size:14px;
+            font-weight:700;
+          ">
+            ${safeInvoiceNumber}
+          </div>
+
+          <div style="
+            margin-top:16px;
+            color:#817c9d;
+            font-size:11px;
+          ">
+            Due date
+          </div>
+
+          <div style="
+            margin-top:5px;
+            color:#e9e6f3;
+            font-size:14px;
+            font-weight:700;
+          ">
+            ${safeDueDate}
+          </div>
+        </div>
+
+        <a
+          href="${safeUrl}"
+          style="
+            display:inline-block;
+            margin-top:26px;
+            padding:14px 24px;
+            border-radius:12px;
+            background:#7c3aed;
+            color:#ffffff;
+            font-size:14px;
+            font-weight:700;
+            text-decoration:none;
+          "
+        >
+          View Invoice
+        </a>
+
+        <div style="
+          margin-top:25px;
+          padding:18px;
+          border:1px solid #282844;
+          border-radius:18px;
+          background:#111226;
+        ">
+          <div style="
+            color:#e9e6f3;
+            font-size:13px;
+            font-weight:700;
+          ">
+            Secure invoice access
+          </div>
+
+          <p style="
+            margin:7px 0 0;
+            color:#817d98;
+            font-size:11px;
+            line-height:1.7;
+          ">
+            Do not forward this email or share its invoice link
+            with anyone you do not trust.
+          </p>
+        </div>
+      </div>
+
+      <div style="
+        padding:20px 34px;
+        border-top:1px solid #252646;
+        background:#0a0b1c;
+        text-align:center;
+      ">
+        <div style="
+          color:#d8d4ea;
+          font-size:11px;
+          font-weight:700;
+        ">
+          Coffer Digital Wallet
+        </div>
+
+        <div style="
+          margin-top:5px;
+          color:#68647e;
+          font-size:10px;
+        ">
+          Secure payments • Smarter financial control
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+        `,
+      });
+
+    if (
+      info.rejected &&
+      info.rejected.length >
+        0
+    ) {
+      throw new Error(
+        `SMTP rejected the invoice recipient: ${info.rejected.join(
+          ", "
+        )}`
+      );
+    }
+
+    console.log(
+      "INVOICE EMAIL SENT:",
+      {
+        to:
+          email,
+
+        invoiceNumber,
+
+        messageId:
+          info.messageId,
+
+        accepted:
+          info.accepted,
+
+        rejected:
+          info.rejected,
+      }
+    );
+  };
