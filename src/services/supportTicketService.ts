@@ -177,7 +177,6 @@ const getAdminName =
     return admin?.name ??
       "Administrator";
   };
-
 const findCustomerByEmail =
   async (
     email:
@@ -675,20 +674,29 @@ const loadUserMaps =
               )
               .lean()
           : [],
-        adminIds.length
-          ? User.find({
-              _id: {
-                $in:
-                  adminIds,
-              },
-              role:
-                "admin",
-            })
-              .select(
-                "name"
-              )
-              .lean()
-          : [],
+      adminIds.length
+  ? User.find({
+      _id: {
+        $in:
+          adminIds,
+      },
+
+      role: {
+        $in: [
+          "support",
+          "admin",
+          "super_admin",
+        ],
+      },
+
+      accountStatus:
+        "active",
+    })
+      .select(
+        "name role"
+      )
+      .lean()
+  : [],
       ]);
 
     return {
@@ -1309,19 +1317,26 @@ export const updateSupportTicket =
         ticket.assigneeAdminId =
           undefined;
       } else {
-        const assignee =
-          await User.findOne({
-            _id:
-              assigneeAdminId,
-            role:
-              "admin",
-            accountStatus:
-              "active",
-          })
-            .select(
-              "_id"
-            )
-            .lean();
+      const assignee =
+  await User.findOne({
+    _id:
+      assigneeAdminId,
+
+    role: {
+      $in: [
+        "support",
+        "admin",
+        "super_admin",
+      ],
+    },
+
+    accountStatus:
+      "active",
+  })
+    .select(
+      "_id role"
+    )
+    .lean();
 
         if (
           !assignee
