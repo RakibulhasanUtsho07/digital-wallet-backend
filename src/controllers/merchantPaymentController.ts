@@ -7,14 +7,29 @@ import type {
 } from "../middlewares/authMiddleware.js";
 
 import {
+  Merchant,
+} from "../models/Merchant.js";
+
+import type {
+  PaymentFailureCode,
+  PaymentMode,
+  PaymentSourceType,
+  PaymentStatus,
+} from "../models/Payment.js";
+
+import {
   confirmWalletPayment,
   createWalletPayment,
   getCustomerCheckoutPayment,
   getWalletPayment,
 } from "../services/walletPaymentService.js";
 
+import {
+  consumeMerchantPaymentAuthorization,
+} from "../services/paymentAuthorizationService.js";
+
 /* =========================================================
-   MERCHANT REQUEST TYPE
+   MERCHANT REQUEST
 ========================================================= */
 
 interface MerchantRequest
@@ -22,43 +37,426 @@ interface MerchantRequest
   merchant?: {
     _id: string;
     ownerId: string;
+
     businessName: string;
     slug: string;
+
     status: string;
     verificationStatus: string;
+
     defaultCurrency: string;
+
     environment:
       | "test"
       | "live";
+
     apiKeyId: string;
     scopes?: string[];
   };
 }
 
 /* =========================================================
-   HELPERS
+   PAYMENT RESPONSE SOURCE
 ========================================================= */
 
-const stringValue = (
+interface PaymentResponseSource {
+  paymentId: string;
+
+  status:
+    PaymentStatus;
+
+  amount: {
+    toString(): string;
+  };
+
+  currency: string;
+
+  merchantId: {
+    toString(): string;
+  };
+
+  customerId?: {
+    toString(): string;
+  };
+
+  orderId?: {
+    toString(): string;
+  };
+
+  merchantReference?: string;
+
+  sourceType:
+    PaymentSourceType;
+
+  provider: string;
+
+  mode:
+    PaymentMode;
+
+  failureCode?:
+    PaymentFailureCode;
+
+  failureMessage?: string;
+
+  checkoutUrl?: string;
+  returnUrl?: string;
+  cancelUrl?: string;
+
+  createdAt?: Date;
+  updatedAt?: Date;
+
+  authorizedAt?: Date;
+  capturedAt?: Date;
+  completedAt?: Date;
+  failedAt?: Date;
+  cancelledAt?: Date;
+  expiredAt?: Date;
+}
+
+/* =========================================================
+   CHECKOUT MERCHANT
+========================================================= */
+
+interface CheckoutMerchantRecord {
+  _id: {
+    toString(): string;
+  };
+
+  businessName: string;
+  businessDisplayName?: string;
+  slug: string;
+
+  status: string;
+  verificationStatus: string;
+}
+
+/* =========================================================
+   BASIC HELPERS
+========================================================= */
+
+function stringValue(
   value: unknown
-): string => {
-  return typeof value === "string"
+): string {
+  return typeof value ===
+    "string"
     ? value.trim()
     : "";
-};
+}
 
-const errorMessage = (
+function optionalString(
+  value: unknown
+): string | undefined {
+  const normalized =
+    stringValue(
+      value
+    );
+
+  return normalized ||
+    undefined;
+}
+
+function identifierString(
+  value: unknown
+): string | undefined {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return undefined;
+  }
+
+  const normalized =
+    String(
+      value
+    ).trim();
+
+  return normalized ||
+    undefined;
+}
+
+function errorMessage(
   error: unknown
-): string => {
+): string {
   return error instanceof Error
     ? error.message
     : "Payment request failed.";
-};
+}
 
 /* =========================================================
-   CREATE MERCHANT PAYMENT
- *
- * POST /api/v1/payments
+   SERIALIZE PAYMENT
+========================================================= */
+
+function serializePayment(
+  payment:
+    PaymentResponseSource
+) {
+  return {
+    id:
+      payment.paymentId,
+
+    status:
+      payment.status,
+
+    amount:
+      payment.amount.toString(),
+
+    currency:
+      payment.currency,
+
+    merchantId:
+      payment.merchantId.toString(),
+
+    customerId:
+      identifierString(
+        payment.customerId
+      ),
+
+    orderId:
+      identifierString(
+        payment.orderId
+      ),
+
+    merchantReference:
+      payment.merchantReference,
+
+    sourceType:
+      payment.sourceType,
+
+    provider:
+      payment.provider,
+
+    mode:
+      payment.mode,
+
+    failureCode:
+      payment.failureCode,
+
+    failureMessage:
+      payment.failureMessage,
+
+    checkoutUrl:
+      payment.checkoutUrl,
+
+    returnUrl:
+      payment.returnUrl,
+
+    cancelUrl:
+      payment.cancelUrl,
+
+    createdAt:
+      payment.createdAt,
+
+    updatedAt:
+      payment.updatedAt,
+
+    authorizedAt:
+      payment.authorizedAt,
+
+    capturedAt:
+      payment.capturedAt,
+
+    completedAt:
+      payment.completedAt,
+
+    failedAt:
+      payment.failedAt,
+
+    cancelledAt:
+      payment.cancelledAt,
+
+    expiredAt:
+      payment.expiredAt,
+  };
+}
+
+/* =========================================================
+   ERROR STATUS
+========================================================= */
+
+function getStatusCode(
+  message: string
+): number {
+  const normalized =
+    message.toLowerCase();
+
+  if (
+    normalized.includes(
+      "authentication required"
+    ) ||
+    normalized.includes(
+      "authentication is required"
+    )
+  ) {
+    return 401;
+  }
+
+  if (
+    normalized.includes(
+      "not authorized"
+    ) ||
+    normalized.includes(
+      "not enabled"
+    ) ||
+    normalized.includes(
+      "verification is required"
+    ) ||
+    normalized.includes(
+      "account is not active"
+    ) ||
+    normalized.includes(
+      "belongs to another customer"
+    )
+  ) {
+    return 403;
+  }
+
+  if (
+    normalized.includes(
+      "not found"
+    )
+  ) {
+    return 404;
+  }
+
+  if (
+    normalized.includes(
+      "idempotency key has already"
+    ) ||
+    normalized.includes(
+      "cannot be confirmed"
+    ) ||
+    normalized.includes(
+      "already completed"
+    ) ||
+    normalized.includes(
+      "being processed"
+    )
+  ) {
+    return 409;
+  }
+
+  if (
+    normalized.includes(
+      "required"
+    ) ||
+    normalized.includes(
+      "invalid"
+    ) ||
+    normalized.includes(
+      "too long"
+    ) ||
+    normalized.includes(
+      "currency"
+    ) ||
+    normalized.includes(
+      "amount"
+    ) ||
+    normalized.includes(
+      "insufficient"
+    ) ||
+    normalized.includes(
+      "return url"
+    ) ||
+    normalized.includes(
+      "cancel url"
+    )
+  ) {
+    return 400;
+  }
+
+  return 500;
+}
+
+function sendControllerError(
+  res: Response,
+  error: unknown,
+  fallbackMessage: string
+): void {
+  if (
+    res.headersSent
+  ) {
+    return;
+  }
+
+  const message =
+    errorMessage(
+      error
+    );
+
+  const statusCode =
+    getStatusCode(
+      message
+    );
+
+  res.status(
+    statusCode
+  ).json({
+    success: false,
+
+    message:
+      statusCode === 500
+        ? fallbackMessage
+        : message,
+  });
+}
+
+/* =========================================================
+   LOAD CHECKOUT MERCHANT
+========================================================= */
+
+async function getCheckoutMerchant(
+  merchantId: string
+) {
+  const merchant =
+    await Merchant.findById(
+      merchantId
+    )
+      .select(
+        [
+          "_id",
+          "businessName",
+          "businessDisplayName",
+          "slug",
+          "status",
+          "verificationStatus",
+        ].join(" ")
+      )
+      .lean<CheckoutMerchantRecord>();
+
+  if (!merchant) {
+    throw new Error(
+      "Merchant account not found."
+    );
+  }
+
+  return {
+    id:
+      merchant._id.toString(),
+
+    businessName:
+      merchant.businessName,
+
+    displayName:
+      merchant.businessDisplayName ||
+      merchant.businessName,
+
+    slug:
+      merchant.slug,
+
+    status:
+      merchant.status,
+
+    verificationStatus:
+      merchant.verificationStatus,
+  };
+}
+
+/* =========================================================
+   CREATE COFFER PAYMENT
+
+   POST /api/v1/payments
+
+   Merchant API key required.
 ========================================================= */
 
 export const createMerchantPaymentController =
@@ -73,12 +471,23 @@ export const createMerchantPaymentController =
       if (!merchant?._id) {
         res.status(401).json({
           success: false,
+
           message:
             "Merchant authentication required.",
         });
 
         return;
       }
+
+      const body =
+        req.body &&
+        typeof req.body ===
+          "object" &&
+        !Array.isArray(
+          req.body
+        )
+          ? req.body
+          : {};
 
       const {
         customerId,
@@ -88,8 +497,11 @@ export const createMerchantPaymentController =
         merchantReference,
         returnUrl,
         cancelUrl,
-      } =
-        req.body ?? {};
+      } = body;
+
+      /* ===================================================
+         IDEMPOTENCY
+      ================================================== */
 
       const idempotencyKey =
         stringValue(
@@ -98,15 +510,10 @@ export const createMerchantPaymentController =
           )
         );
 
-      /* ===================================================
-         IDEMPOTENCY
-      ================================================== */
-
-      if (
-        !idempotencyKey
-      ) {
+      if (!idempotencyKey) {
         res.status(400).json({
           success: false,
+
           message:
             "Idempotency-Key header is required.",
         });
@@ -120,6 +527,7 @@ export const createMerchantPaymentController =
       ) {
         res.status(400).json({
           success: false,
+
           message:
             "Idempotency-Key is too long.",
         });
@@ -128,28 +536,10 @@ export const createMerchantPaymentController =
       }
 
       /* ===================================================
-         CUSTOMER
-      ================================================== */
-
-      const normalizedCustomerId =
-        stringValue(
-          customerId
-        );
-
-      if (
-        !normalizedCustomerId
-      ) {
-        res.status(400).json({
-          success: false,
-          message:
-            "customerId is required.",
-        });
-
-        return;
-      }
-
-      /* ===================================================
          CREATE PAYMENT
+
+         customerId is optional. Normally the merchant does
+         not know the customer's internal Coffer user ID.
       ================================================== */
 
       const result =
@@ -158,19 +548,33 @@ export const createMerchantPaymentController =
             merchant._id,
 
           customerId:
-            normalizedCustomerId,
+            optionalString(
+              customerId
+            ),
 
           amount,
 
           currency,
 
-          orderId,
+          orderId:
+            optionalString(
+              orderId
+            ),
 
-          merchantReference,
+          merchantReference:
+            optionalString(
+              merchantReference
+            ),
 
-          returnUrl,
+          returnUrl:
+            optionalString(
+              returnUrl
+            ),
 
-          cancelUrl,
+          cancelUrl:
+            optionalString(
+              cancelUrl
+            ),
 
           mode:
             merchant.environment,
@@ -179,11 +583,9 @@ export const createMerchantPaymentController =
         });
 
       const payment =
-        result.payment;
-
-      /* ===================================================
-         RESPONSE
-      ================================================== */
+        serializePayment(
+          result.payment
+        );
 
       res.status(
         result.duplicate
@@ -195,80 +597,49 @@ export const createMerchantPaymentController =
         duplicate:
           result.duplicate,
 
+        message:
+          result.duplicate
+            ? "Existing Coffer payment returned successfully."
+            : "Coffer payment created successfully.",
+
         payment: {
-          id:
-            payment.paymentId,
+          ...payment,
 
-          status:
-            payment.status,
+          merchant: {
+            id:
+              merchant._id,
 
-          amount:
-            payment.amount.toString(),
+            businessName:
+              merchant.businessName,
 
-          currency:
-            payment.currency,
+            displayName:
+              merchant.businessName,
 
-          merchantId:
-            payment.merchantId.toString(),
-
-          customerId:
-            payment.customerId?.toString(),
-
-          orderId:
-            payment.orderId,
-
-          merchantReference:
-            payment.merchantReference,
-
-          mode:
-            payment.mode,
-
-          sourceType:
-            payment.sourceType,
-
-          provider:
-            payment.provider,
-
-          checkoutUrl:
-            payment.checkoutUrl,
-
-          returnUrl:
-            payment.returnUrl,
-
-          cancelUrl:
-            payment.cancelUrl,
-
-          createdAt:
-            payment.createdAt,
+            slug:
+              merchant.slug,
+          },
         },
       });
     } catch (error) {
       console.error(
-        "CREATE MERCHANT PAYMENT ERROR:",
+        "CREATE COFFER PAYMENT ERROR:",
         error
       );
 
-      if (
-        res.headersSent
-      ) {
-        return;
-      }
-
-      res.status(400).json({
-        success: false,
-
-        message:
-          errorMessage(
-            error
-          ),
-      });
+      sendControllerError(
+        res,
+        error,
+        "Unable to create Coffer payment."
+      );
     }
   };
 
 /* =========================================================
    GET MERCHANT PAYMENT
- *
- * GET /api/v1/payments/:paymentId
+
+   GET /api/v1/payments/:paymentId
+
+   Merchant API key required.
 ========================================================= */
 
 export const getMerchantPaymentController =
@@ -283,6 +654,7 @@ export const getMerchantPaymentController =
       if (!merchant?._id) {
         res.status(401).json({
           success: false,
+
           message:
             "Merchant authentication required.",
         });
@@ -298,6 +670,7 @@ export const getMerchantPaymentController =
       if (!paymentId) {
         res.status(400).json({
           success: false,
+
           message:
             "Payment ID is required.",
         });
@@ -305,6 +678,10 @@ export const getMerchantPaymentController =
         return;
       }
 
+      /*
+       * paymentId + merchantId prevents one merchant from
+       * accessing another merchant's payment.
+       */
       const payment =
         await getWalletPayment({
           paymentId,
@@ -317,74 +694,23 @@ export const getMerchantPaymentController =
         success: true,
 
         payment: {
-          id:
-            payment.paymentId,
+          ...serializePayment(
+            payment
+          ),
 
-          status:
-            payment.status,
+          merchant: {
+            id:
+              merchant._id,
 
-          amount:
-            payment.amount.toString(),
+            businessName:
+              merchant.businessName,
 
-          currency:
-            payment.currency,
+            displayName:
+              merchant.businessName,
 
-          merchantId:
-            payment.merchantId.toString(),
-
-          customerId:
-            payment.customerId?.toString(),
-
-          orderId:
-            payment.orderId,
-
-          merchantReference:
-            payment.merchantReference,
-
-          sourceType:
-            payment.sourceType,
-
-          provider:
-            payment.provider,
-
-          mode:
-            payment.mode,
-
-          failureCode:
-            payment.failureCode,
-
-          failureMessage:
-            payment.failureMessage,
-
-          checkoutUrl:
-            payment.checkoutUrl,
-
-          returnUrl:
-            payment.returnUrl,
-
-          cancelUrl:
-            payment.cancelUrl,
-
-          createdAt:
-            payment.createdAt,
-
-          authorizedAt:
-            payment.authorizedAt,
-
-          capturedAt:
-            payment.capturedAt,
-
-          completedAt:
-            payment.completedAt,
-
-          failedAt:
-            payment.failedAt,
-
-          cancelledAt:
-            payment.cancelledAt,
-
-          expiredAt:
-            payment.expiredAt,
+            slug:
+              merchant.slug,
+          },
         },
       });
     } catch (error) {
@@ -393,27 +719,20 @@ export const getMerchantPaymentController =
         error
       );
 
-      const message =
-        errorMessage(
-          error
-        );
-
-      res.status(
-        message ===
-          "Payment not found."
-          ? 404
-          : 400
-      ).json({
-        success: false,
-        message,
-      });
+      sendControllerError(
+        res,
+        error,
+        "Unable to load merchant payment."
+      );
     }
   };
 
 /* =========================================================
-   GET CUSTOMER CHECKOUT PAYMENT
- *
- * GET /api/v1/payments/:paymentId/checkout
+   GET CUSTOMER CHECKOUT
+
+   GET /api/v1/payments/:paymentId/checkout
+
+   Authenticated Coffer customer required.
 ========================================================= */
 
 export const getCustomerCheckoutPaymentController =
@@ -428,6 +747,7 @@ export const getCustomerCheckoutPaymentController =
       if (!customerId) {
         res.status(401).json({
           success: false,
+
           message:
             "Customer authentication required.",
         });
@@ -443,6 +763,7 @@ export const getCustomerCheckoutPaymentController =
       if (!paymentId) {
         res.status(400).json({
           success: false,
+
           message:
             "Payment ID is required.",
         });
@@ -458,98 +779,45 @@ export const getCustomerCheckoutPaymentController =
             customerId.toString(),
         });
 
+      const merchant =
+        await getCheckoutMerchant(
+          payment.merchantId.toString()
+        );
+
       res.status(200).json({
         success: true,
 
         payment: {
-          id:
-            payment.paymentId,
+          ...serializePayment(
+            payment
+          ),
 
-          status:
-            payment.status,
-
-          amount:
-            payment.amount.toString(),
-
-          currency:
-            payment.currency,
-
-          merchantId:
-            payment.merchantId.toString(),
-
-          customerId:
-            payment.customerId?.toString(),
-
-          orderId:
-            payment.orderId,
-
-          merchantReference:
-            payment.merchantReference,
-
-          provider:
-            payment.provider,
-
-          sourceType:
-            payment.sourceType,
-
-          mode:
-            payment.mode,
-
-          returnUrl:
-            payment.returnUrl,
-
-          cancelUrl:
-            payment.cancelUrl,
-
-          createdAt:
-            payment.createdAt,
-
-          authorizedAt:
-            payment.authorizedAt,
-
-          capturedAt:
-            payment.capturedAt,
-
-          completedAt:
-            payment.completedAt,
-
-          failedAt:
-            payment.failedAt,
-
-          cancelledAt:
-            payment.cancelledAt,
-
-          expiredAt:
-            payment.expiredAt,
+          merchant,
         },
       });
     } catch (error) {
       console.error(
-        "GET CUSTOMER CHECKOUT PAYMENT ERROR:",
+        "GET COFFER CHECKOUT ERROR:",
         error
       );
 
-      const message =
-        errorMessage(
-          error
-        );
-
-      res.status(
-        message ===
-          "Payment not found."
-          ? 404
-          : 400
-      ).json({
-        success: false,
-        message,
-      });
+      sendControllerError(
+        res,
+        error,
+        "Unable to load Coffer checkout."
+      );
     }
   };
 
 /* =========================================================
-   CONFIRM WALLET PAYMENT
- *
- * POST /api/v1/payments/:paymentId/confirm
+   CONFIRM COFFER WALLET PAYMENT
+
+   POST /api/v1/payments/:paymentId/confirm
+
+   Required:
+   - Customer authentication
+   - Verified KYC middleware
+   - One-time Passkey authorization
 ========================================================= */
 
 export const confirmMerchantWalletPaymentController =
@@ -564,12 +832,16 @@ export const confirmMerchantWalletPaymentController =
       if (!customerId) {
         res.status(401).json({
           success: false,
+
           message:
             "Customer authentication required.",
         });
 
         return;
       }
+
+      const normalizedCustomerId =
+        customerId.toString();
 
       const paymentId =
         stringValue(
@@ -579,6 +851,7 @@ export const confirmMerchantWalletPaymentController =
       if (!paymentId) {
         res.status(400).json({
           success: false,
+
           message:
             "Payment ID is required.",
         });
@@ -586,12 +859,116 @@ export const confirmMerchantWalletPaymentController =
         return;
       }
 
+      /* ===================================================
+         PASSKEY AUTHORIZATION TOKEN
+      ================================================== */
+
+      const authorizationToken =
+        stringValue(
+          req.get(
+            "X-Payment-Authorization"
+          )
+        );
+
+      if (!authorizationToken) {
+        res.status(401).json({
+          success: false,
+
+          code:
+            "PAYMENT_AUTHORIZATION_REQUIRED",
+
+          message:
+            "Passkey payment authorization is required.",
+        });
+
+        return;
+      }
+
+      if (
+        authorizationToken.length >
+        200
+      ) {
+        res.status(401).json({
+          success: false,
+
+          code:
+            "PAYMENT_AUTHORIZATION_INVALID",
+
+          message:
+            "Payment authorization is invalid or expired.",
+        });
+
+        return;
+      }
+
+      /* ===================================================
+         LOAD TRUSTED PAYMENT DETAILS
+
+         Amount, merchant and currency are read from MongoDB.
+      ================================================== */
+
+      const paymentToAuthorize =
+        await getCustomerCheckoutPayment({
+          paymentId,
+
+          customerId:
+            normalizedCustomerId,
+        });
+
+      /* ===================================================
+         CONSUME ONE-TIME PASSKEY AUTHORIZATION
+      ================================================== */
+
+      const authorized =
+        await consumeMerchantPaymentAuthorization({
+          userId:
+            normalizedCustomerId,
+
+          token:
+            authorizationToken,
+
+          payment: {
+            paymentId:
+              paymentToAuthorize.paymentId,
+
+            merchantId:
+              paymentToAuthorize.merchantId.toString(),
+
+            amount:
+              paymentToAuthorize.amount.toString(),
+
+            currency:
+              paymentToAuthorize.currency,
+          },
+        });
+
+      if (!authorized) {
+        res.status(401).json({
+          success: false,
+
+          code:
+            "PAYMENT_AUTHORIZATION_INVALID",
+
+          message:
+            "Payment authorization is invalid, expired or already used.",
+        });
+
+        return;
+      }
+
+      /* ===================================================
+         COMPLETE FINANCIAL PAYMENT
+
+         If payment fails after this point, the customer
+         must authenticate with the passkey again.
+      ================================================== */
+
       const result =
         await confirmWalletPayment({
           paymentId,
 
           customerId:
-            customerId.toString(),
+            normalizedCustomerId,
         });
 
       res.status(200).json({
@@ -605,98 +982,46 @@ export const confirmMerchantWalletPaymentController =
             ? "Payment was already completed."
             : "Payment completed successfully.",
 
-        payment: {
-          id:
-            result.payment.paymentId,
-
-          status:
-            result.payment.status,
-
-          amount:
-            result.payment.amount.toString(),
-
-          currency:
-            result.payment.currency,
-
-          merchantId:
-            result.payment.merchantId.toString(),
-
-          customerId:
-            result.payment.customerId?.toString(),
-
-          orderId:
-            result.payment.orderId,
-
-          provider:
-            result.payment.provider,
-
-          sourceType:
-            result.payment.sourceType,
-
-          completedAt:
-            result.payment.completedAt,
-        },
+        payment:
+          serializePayment(
+            result.payment
+          ),
 
         ...(result.wallet
           ? {
-              wallet:
-                result.wallet,
+              wallet: {
+                balance:
+                  result.wallet
+                    .balance,
+
+                currency:
+                  result.wallet
+                    .currency,
+              },
             }
           : {}),
       });
     } catch (error) {
       console.error(
-        "CONFIRM MERCHANT WALLET PAYMENT ERROR:",
+        "CONFIRM COFFER WALLET PAYMENT ERROR:",
         error
       );
 
-      const message =
-        errorMessage(
-          error
-        );
-
-      let statusCode =
-        400;
-
-      if (
-        message ===
-          "Payment not found." ||
-        message ===
-          "Customer wallet not found or is not active."
-      ) {
-        statusCode =
-          404;
-      }
-
-      if (
-        message ===
-        "You are not authorized to approve this payment."
-      ) {
-        statusCode =
-          403;
-      }
-
-      if (
-        message ===
-        "You are not authorized to access this payment."
-      ) {
-        statusCode =
-          403;
-      }
-
-      if (
-        message ===
-        "Insufficient wallet balance."
-      ) {
-        statusCode =
-          400;
-      }
-
-      res.status(
-        statusCode
-      ).json({
-        success: false,
-        message,
-      });
+      sendControllerError(
+        res,
+        error,
+        "Unable to complete Coffer payment."
+      );
     }
   };
+
+/* =========================================================
+   DEFAULT EXPORT
+========================================================= */
+
+export default {
+  createMerchantPaymentController,
+  getMerchantPaymentController,
+  getCustomerCheckoutPaymentController,
+  confirmMerchantWalletPaymentController,
+};
