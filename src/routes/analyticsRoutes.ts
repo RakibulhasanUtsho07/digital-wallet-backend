@@ -1,42 +1,44 @@
-import express from "express";
+import {
+  Router,
+} from "express";
 
 import {
   protect,
 } from "../middlewares/authMiddleware.js";
 
 import {
-  requireAdmin,
+  requireAnalyticsAccess,
 } from "../middlewares/adminAuthorization.js";
 
 import {
-  analyticsExportLimiter,
-  analyticsReadLimiter,
-  analyticsReportLimiter,
-} from "../middlewares/analyticsRateLimiters.js";
+  securityReadLimiter,
+} from "../middlewares/securityRateLimiters.js";
 
 import {
-  createAnalyticsReportController,
-  downloadAnalyticsReportController,
-  exportAnalyticsController,
-  getAnalyticsDashboardController,
-  getAnalyticsReportController,
-} from "../controllers/analyticsController.js";
+  getAnalystOverviewController,
+} from "../controllers/analystOverviewController.js";
+
+import {
+  getAnalystLivePulseController,
+} from "../controllers/analystLivePulseController.js";
 
 const router =
-  express.Router();
+  Router();
 
 /* =========================================================
-   ADMIN AUTHORIZATION
+   COMMON ANALYST PROTECTION
+
+   Read-only access:
+   - analyst
+   - admin
+   - super_admin
 ========================================================= */
 
 router.use(
   protect,
-  requireAdmin
+  requireAnalyticsAccess,
+  securityReadLimiter
 );
-
-/* =========================================================
-   NO-STORE
-========================================================= */
 
 router.use(
   (
@@ -46,7 +48,7 @@ router.use(
   ) => {
     res.setHeader(
       "Cache-Control",
-      "no-store"
+      "private, no-store, max-age=0"
     );
 
     next();
@@ -54,45 +56,25 @@ router.use(
 );
 
 /* =========================================================
-   DASHBOARD
+   ANALYST EXECUTIVE OVERVIEW
+
+   GET /api/analyst/overview
 ========================================================= */
 
 router.get(
-  "/dashboard",
-  analyticsReadLimiter,
-  getAnalyticsDashboardController
+  "/overview",
+  getAnalystOverviewController
 );
 
 /* =========================================================
-   EXPORT
+   LIVE PLATFORM PULSE
+
+   GET /api/analyst/live-pulse
 ========================================================= */
 
 router.get(
-  "/export",
-  analyticsExportLimiter,
-  exportAnalyticsController
-);
-
-/* =========================================================
-   REPORTS
-========================================================= */
-
-router.post(
-  "/reports",
-  analyticsReportLimiter,
-  createAnalyticsReportController
-);
-
-router.get(
-  "/reports/:id",
-  analyticsReadLimiter,
-  getAnalyticsReportController
-);
-
-router.get(
-  "/reports/:id/download",
-  analyticsExportLimiter,
-  downloadAnalyticsReportController
+  "/live-pulse",
+  getAnalystLivePulseController
 );
 
 export default router;
