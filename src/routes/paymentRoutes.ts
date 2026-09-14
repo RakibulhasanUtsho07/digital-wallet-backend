@@ -1,4 +1,6 @@
-import express from "express";
+import {
+  Router,
+} from "express";
 
 import {
   addMoney,
@@ -10,12 +12,16 @@ import {
 } from "../middlewares/authMiddleware.js";
 
 import {
+  requireVerifiedKYC,
+} from "../middlewares/kycMiddleware.js";
+
+import {
   securityReadLimiter,
   securitySensitiveLimiter,
 } from "../middlewares/securityRateLimiters.js";
 
 const router =
-  express.Router();
+  Router();
 
 /* =========================================================
    VALIDATE PAYMENT SOURCE
@@ -25,8 +31,11 @@ const router =
 
 router.post(
   "/validate-source",
+
   protect,
+
   securityReadLimiter,
+
   validatePaymentSource
 );
 
@@ -38,8 +47,13 @@ router.post(
 
 router.post(
   "/add-money",
+
   protect,
+
+  requireVerifiedKYC,
+
   securitySensitiveLimiter,
+
   addMoney
 );
 
