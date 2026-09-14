@@ -16,7 +16,9 @@ import type {
 /* =========================================================
    VALID VALUES
 ========================================================= */
-
+import {
+  consumeMerchantPaymentAuthorization,
+} from "../services/paymentAuthorizationService.js";
 const PAYMENT_STATUSES:
   MerchantPaymentStatus[] = [
   "pending",
