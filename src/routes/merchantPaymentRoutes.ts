@@ -7,8 +7,17 @@ import {
 } from "../middlewares/authMiddleware.js";
 
 import {
+  requireVerifiedKYC,
+} from "../middlewares/kycMiddleware.js";
+
+import {
   merchantApiAuth,
 } from "../middlewares/merchantAuth.js";
+
+import {
+  securityReadLimiter,
+  securitySensitiveLimiter,
+} from "../middlewares/securityRateLimiters.js";
 
 import {
   createMerchantPaymentController,
@@ -21,64 +30,84 @@ const router =
   Router();
 
 /* =========================================================
-   CREATE PAYMENT
- *
- * POST /api/v1/payments
- *
- * Merchant API key
- * Scope: payments:write
+   CREATE COFFER PAYMENT
+
+   POST /api/v1/payments
+
+   Required:
+   - Merchant Secret API Key
+   - payments:write scope
 ========================================================= */
 
 router.post(
   "/",
+
   merchantApiAuth(
     "payments:write"
   ),
+
   createMerchantPaymentController
 );
 
 /* =========================================================
    CUSTOMER CHECKOUT
- *
- * GET /api/v1/payments/:paymentId/checkout
- *
- * DAMO authenticated customer
+
+   GET /api/v1/payments/:paymentId/checkout
+
+   Required:
+   - Authenticated Coffer customer
 ========================================================= */
 
 router.get(
   "/:paymentId/checkout",
+
   protect,
+
+  securityReadLimiter,
+
   getCustomerCheckoutPaymentController
 );
 
 /* =========================================================
-   CUSTOMER CONFIRM
- *
- * POST /api/v1/payments/:paymentId/confirm
- *
- * DAMO authenticated customer
+   CONFIRM COFFER PAYMENT
+
+   POST /api/v1/payments/:paymentId/confirm
+
+   Required:
+   - Authenticated customer
+   - Verified KYC
+   - Passkey authorization token
 ========================================================= */
 
 router.post(
   "/:paymentId/confirm",
+
   protect,
+
+  requireVerifiedKYC,
+
+  securitySensitiveLimiter,
+
   confirmMerchantWalletPaymentController
 );
 
 /* =========================================================
-   GET MERCHANT PAYMENT
- *
- * GET /api/v1/payments/:paymentId
- *
- * Merchant API key
- * Scope: payments:read
+   GET PAYMENT FOR MERCHANT
+
+   GET /api/v1/payments/:paymentId
+
+   Required:
+   - Merchant Secret API Key
+   - payments:read scope
 ========================================================= */
 
 router.get(
   "/:paymentId",
+
   merchantApiAuth(
     "payments:read"
   ),
+
   getMerchantPaymentController
 );
 
