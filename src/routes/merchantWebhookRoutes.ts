@@ -10,18 +10,16 @@ import {
   createMerchantWebhookEndpointController,
   deleteMerchantWebhookEndpointController,
   listMerchantWebhookEndpointsController,
+  listMerchantWebhookEventsController,
+  retryMerchantWebhookEventController,
+  rotateMerchantWebhookSecretController,
 } from "../controllers/merchantWebhookController.js";
 
 const router =
   Router();
 
 /* =========================================================
-   CREATE WEBHOOK
- *
- * POST /api/v1/webhooks/endpoints
- *
- * Scope:
- * webhooks:manage
+   CREATE ENDPOINT
 ========================================================= */
 
 router.post(
@@ -33,12 +31,33 @@ router.post(
 );
 
 /* =========================================================
-   LIST WEBHOOKS
- *
- * GET /api/v1/webhooks
- *
- * Scope:
- * webhooks:manage
+   LIST DELIVERY EVENTS
+
+   Must be declared before /:id routes.
+========================================================= */
+
+router.get(
+  "/events",
+  merchantApiAuth(
+    "webhooks:manage"
+  ),
+  listMerchantWebhookEventsController
+);
+
+/* =========================================================
+   RETRY DELIVERY
+========================================================= */
+
+router.post(
+  "/events/:eventId/retry",
+  merchantApiAuth(
+    "webhooks:manage"
+  ),
+  retryMerchantWebhookEventController
+);
+
+/* =========================================================
+   LIST ENDPOINTS
 ========================================================= */
 
 router.get(
@@ -50,9 +69,19 @@ router.get(
 );
 
 /* =========================================================
-   DELETE WEBHOOK
- *
- * DELETE /api/v1/webhooks/:id
+   ROTATE SECRET
+========================================================= */
+
+router.post(
+  "/:id/rotate-secret",
+  merchantApiAuth(
+    "webhooks:manage"
+  ),
+  rotateMerchantWebhookSecretController
+);
+
+/* =========================================================
+   DISABLE ENDPOINT
 ========================================================= */
 
 router.delete(
