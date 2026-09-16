@@ -350,20 +350,50 @@ async function findMerchantForOwner(
 /* =========================================================
    FIND MERCHANT PAYABLE ACCOUNT
 ========================================================= */
+/* =========================================================
+   FIND MERCHANT PAYABLE ACCOUNT
+========================================================= */
 
 async function findMerchantPayableAccount(
-  merchantId: mongoose.Types.ObjectId,
-  currency: string
+  merchantId:
+    mongoose.Types.ObjectId,
+
+  currency:
+    string
 ): Promise<
-  ILedgerAccount | null
+  ILedgerAccount |
+  null
 > {
-  const expectedAccountCode =
-    `merchant_payable_${merchantId.toString()}`;
+  const merchantIdText =
+    merchantId.toString();
+
+  /*
+   * Current account code created by
+   * walletPaymentService:
+   *
+   * merchant:payable:<merchantId>
+   *
+   * Legacy compatibility:
+   *
+   * merchant_payable_<merchantId>
+   */
+  const knownAccountCodes =
+    [
+      `merchant:payable:${merchantIdText}`,
+      `merchant_payable_${merchantIdText}`,
+    ].map(
+      (
+        value
+      ) =>
+        value.toLowerCase()
+    );
 
   const exact =
     await LedgerAccount.findOne({
-      accountCode:
-        expectedAccountCode,
+      accountCode: {
+        $in:
+          knownAccountCodes,
+      },
 
       ownerType:
         "merchant",
@@ -376,16 +406,29 @@ async function findMerchantPayableAccount(
 
       currency,
 
-      status:
-        "active",
-    }).lean();
+      status: {
+        $in: [
+          "active",
+          "frozen",
+        ],
+      },
+    })
+      .sort({
+        createdAt:
+          1,
+      })
+      .lean();
 
-  if (exact) {
+  if (
+    exact
+  ) {
     return exact;
   }
 
   /*
-   * Fallback for older merchant payable accounts.
+   * Compatibility fallback for accounts
+   * created before account-code naming
+   * was standardized.
    */
   const fallback =
     await LedgerAccount.findOne({
@@ -400,11 +443,16 @@ async function findMerchantPayableAccount(
 
       currency,
 
-      status:
-        "active",
+      status: {
+        $in: [
+          "active",
+          "frozen",
+        ],
+      },
     })
       .sort({
-        createdAt: 1,
+        createdAt:
+          1,
       })
       .lean();
 
@@ -415,15 +463,47 @@ async function findMerchantPayableAccount(
    GET MERCHANT PAYABLE BALANCE
 ========================================================= */
 
+/* =========================================================
+   GET MERCHANT PAYABLE BALANCE
+
+   IMPORTANT:
+
+   reverseLedgerGroup() currently does BOTH:
+
+   1. original entries -> status "reversed"
+   2. creates opposite-direction posted entries
+
+   Therefore balance calculation must retain both sides
+   of the historical accounting movement.
+
+   Example:
+
+   original payment:
+     CREDIT 1000 -> later marked reversed
+
+   reversal:
+     DEBIT 1000 -> posted
+
+   actual balance:
+     +1000 -1000 = 0
+========================================================= */
+
 async function getMerchantPayableBalance(
-  merchantId: mongoose.Types.ObjectId,
-  currency: string,
-  session?: mongoose.ClientSession
+  merchantId:
+    mongoose.Types.ObjectId,
+
+  currency:
+    string,
+
+  session?:
+    mongoose.ClientSession
 ): Promise<{
   account:
-    | ILedgerAccount
-    | null;
-  balance: number;
+    ILedgerAccount |
+    null;
+
+  balance:
+    number;
 }> {
   const account =
     await findMerchantPayableAccount(
@@ -431,10 +511,15 @@ async function getMerchantPayableBalance(
       currency
     );
 
-  if (!account) {
+  if (
+    !account
+  ) {
     return {
-      account: null,
-      balance: 0,
+      account:
+        null,
+
+      balance:
+        0,
     };
   }
 
@@ -442,16 +527,36 @@ async function getMerchantPayableBalance(
     LedgerEntry.find({
       accountId:
         account._id,
+
       currency,
-      status:
-        "posted",
+
+      /*
+       * Do NOT read only "posted".
+       *
+       * Original reversed entries plus their
+       * compensating entries are both required
+       * for the actual accounting result.
+       */
+      status: {
+        $in: [
+          "posted",
+          "reversed",
+        ],
+      },
     })
       .select(
-        "direction amount"
+        [
+          "direction",
+          "amount",
+        ].join(
+          " "
+        )
       )
       .lean();
 
-  if (session) {
+  if (
+    session
+  ) {
     entriesQuery.session(
       session
     );
@@ -460,10 +565,16 @@ async function getMerchantPayableBalance(
   const entries =
     await entriesQuery.exec();
 
-  let credits = 0;
-  let debits = 0;
+  let credits =
+    0;
 
-  for (const entry of entries) {
+  let debits =
+    0;
+
+  for (
+    const entry of
+      entries
+  ) {
     const amount =
       decimalToNumber(
         entry.amount
@@ -473,24 +584,33 @@ async function getMerchantPayableBalance(
       entry.direction ===
       "credit"
     ) {
-      credits += amount;
+      credits +=
+        amount;
     } else {
-      debits += amount;
+      debits +=
+        amount;
     }
   }
 
   const balance =
-    credits - debits;
+    roundNumber(
+      credits -
+        debits
+    );
 
   return {
     account,
-    balance:
-      roundNumber(
-        Math.max(
-          balance,
-          0
-        )
-      ),
+
+    /*
+     * Ledger balance itself is returned honestly.
+     *
+     * We do not silently convert a negative ledger
+     * position to zero here because a negative value
+     * signals a reconciliation/accounting problem.
+     *
+     * availableBalance is clamped later where needed.
+     */
+    balance,
   };
 }
 /* =========================================================
