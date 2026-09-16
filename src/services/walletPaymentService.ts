@@ -41,8 +41,8 @@ export interface CreateWalletPaymentInput {
    * Optional because a merchant normally does not know
    * the customer's internal Coffer user ID.
    *
-   * The authenticated customer is bound securely when
-   * the payment is confirmed.
+   * For normal hosted checkout, customer identity is
+   * established later through checkout verification.
    */
   customerId?: string;
 
@@ -54,7 +54,8 @@ export interface CreateWalletPaymentInput {
 
   /*
    * Internal Coffer Order ObjectId only.
-   * Merchant's own order number should be sent using
+   *
+   * Merchant's external reference/order number belongs in
    * merchantReference.
    */
   orderId?: string;
@@ -62,16 +63,19 @@ export interface CreateWalletPaymentInput {
   merchantReference?: string;
 
   returnUrl?: string;
+
   cancelUrl?: string;
 
   mode:
     PaymentMode;
 
-  idempotencyKey: string;
+  idempotencyKey:
+    string;
 }
 
 export interface WalletPaymentResult {
-  duplicate: boolean;
+  duplicate:
+    boolean;
 
   payment:
     InstanceType<
@@ -102,127 +106,152 @@ const MAX_IDEMPOTENCY_LENGTH =
    BASIC HELPERS
 ========================================================= */
 
-const normalizeString = (
-  value: unknown
-): string => {
-  return typeof value ===
-    "string"
-    ? value.trim()
-    : "";
-};
+const normalizeString =
+  (
+    value:
+      unknown
+  ): string => {
+    return typeof value ===
+      "string"
+      ? value.trim()
+      : "";
+  };
 
-const normalizeCurrency = (
-  value: unknown
-): string => {
-  return (
-    normalizeString(
+/* =========================================================
+   CURRENCY
+========================================================= */
+
+const normalizeCurrency =
+  (
+    value:
+      unknown
+  ): string => {
+    return (
+      normalizeString(
+        value
+      ) ||
+      "BDT"
+    ).toUpperCase();
+  };
+
+/* =========================================================
+   OBJECT ID
+========================================================= */
+
+const isValidObjectId =
+  (
+    value:
+      string
+  ): boolean => {
+    return mongoose.isValidObjectId(
       value
-    ) ||
-    "BDT"
-  ).toUpperCase();
-};
-
-const isValidObjectId = (
-  value: string
-): boolean => {
-  return mongoose.isValidObjectId(
-    value
-  );
-};
+    );
+  };
 
 /* =========================================================
    AMOUNT
 ========================================================= */
 
-const parseAmount = (
-  value: unknown
-): string => {
-  let raw: string;
+const parseAmount =
+  (
+    value:
+      unknown
+  ): string => {
+    let raw:
+      string;
 
-  if (
-    typeof value ===
-    "number"
-  ) {
+    if (
+      typeof value ===
+      "number"
+    ) {
+      if (
+        !Number.isFinite(
+          value
+        )
+      ) {
+        throw new Error(
+          "Invalid payment amount."
+        );
+      }
+
+      raw =
+        String(
+          value
+        );
+    } else {
+      raw =
+        normalizeString(
+          value
+        );
+    }
+
+    if (
+      !raw
+    ) {
+      throw new Error(
+        "Payment amount is required."
+      );
+    }
+
+    if (
+      !/^\d+(?:\.\d{1,2})?$/.test(
+        raw
+      )
+    ) {
+      throw new Error(
+        "Payment amount can have maximum 2 decimal places."
+      );
+    }
+
+    const amount =
+      Number(
+        raw
+      );
+
     if (
       !Number.isFinite(
-        value
-      )
+        amount
+      ) ||
+      amount <=
+        0
     ) {
       throw new Error(
         "Invalid payment amount."
       );
     }
 
-    raw =
-      String(value);
-  } else {
-    raw =
-      normalizeString(
-        value
+    if (
+      amount >
+      MAX_PAYMENT_AMOUNT
+    ) {
+      throw new Error(
+        `Payment amount cannot exceed ${MAX_PAYMENT_AMOUNT}.`
       );
-  }
+    }
 
-  if (!raw) {
-    throw new Error(
-      "Payment amount is required."
+    const minorUnits =
+      Math.round(
+        amount *
+          100
+      );
+
+    if (
+      !Number.isSafeInteger(
+        minorUnits
+      )
+    ) {
+      throw new Error(
+        "Payment amount is too large."
+      );
+    }
+
+    return (
+      minorUnits /
+      100
+    ).toFixed(
+      2
     );
-  }
-
-  /*
-   * Only positive values with maximum two decimal places.
-   */
-  if (
-    !/^\d+(?:\.\d{1,2})?$/.test(
-      raw
-    )
-  ) {
-    throw new Error(
-      "Payment amount can have maximum 2 decimal places."
-    );
-  }
-
-  const amount =
-    Number(raw);
-
-  if (
-    !Number.isFinite(
-      amount
-    ) ||
-    amount <= 0
-  ) {
-    throw new Error(
-      "Invalid payment amount."
-    );
-  }
-
-  if (
-    amount >
-    MAX_PAYMENT_AMOUNT
-  ) {
-    throw new Error(
-      `Payment amount cannot exceed ${MAX_PAYMENT_AMOUNT}.`
-    );
-  }
-
-  const minorUnits =
-    Math.round(
-      amount * 100
-    );
-
-  if (
-    !Number.isSafeInteger(
-      minorUnits
-    )
-  ) {
-    throw new Error(
-      "Payment amount is too large."
-    );
-  }
-
-  return (
-    minorUnits / 100
-  ).toFixed(2);
-};
+  };
 
 /* =========================================================
    PAYMENT ID
@@ -232,303 +261,405 @@ const generatePaymentId =
   (): string => {
     return [
       "pay",
+
       new mongoose.Types.ObjectId()
         .toString(),
-      Date.now().toString(36),
-    ].join("_");
+
+      Date.now()
+        .toString(
+          36
+        ),
+    ].join(
+      "_"
+    );
   };
 
 /* =========================================================
    OPTIONAL TEXT
 ========================================================= */
 
-const normalizeOptionalText = (
-  value: unknown,
-  fieldName: string,
-  maxLength =
-    MAX_TEXT_LENGTH
-): string | undefined => {
-  const normalized =
-    normalizeString(
-      value
-    );
+const normalizeOptionalText =
+  (
+    value:
+      unknown,
 
-  if (!normalized) {
-    return undefined;
-  }
+    fieldName:
+      string,
 
-  if (
-    normalized.length >
-    maxLength
-  ) {
-    throw new Error(
-      `${fieldName} is too long.`
-    );
-  }
+    maxLength =
+      MAX_TEXT_LENGTH
+  ):
+    | string
+    | undefined => {
+    const normalized =
+      normalizeString(
+        value
+      );
 
-  return normalized;
-};
+    if (
+      !normalized
+    ) {
+      return undefined;
+    }
+
+    if (
+      normalized.length >
+      maxLength
+    ) {
+      throw new Error(
+        `${fieldName} is too long.`
+      );
+    }
+
+    return normalized;
+  };
 
 /* =========================================================
    OPTIONAL URL
 ========================================================= */
 
-const normalizeOptionalUrl = (
-  value: unknown,
-  fieldName: string
-): string | undefined => {
-  const normalized =
-    normalizeOptionalText(
-      value,
-      fieldName,
-      2048
-    );
+const normalizeOptionalUrl =
+  (
+    value:
+      unknown,
 
-  if (!normalized) {
-    return undefined;
-  }
-
-  let parsed: URL;
-
-  try {
-    parsed =
-      new URL(
-        normalized
+    fieldName:
+      string
+  ):
+    | string
+    | undefined => {
+    const normalized =
+      normalizeOptionalText(
+        value,
+        fieldName,
+        2048
       );
-  } catch {
-    throw new Error(
-      `${fieldName} is invalid.`
-    );
-  }
 
-  if (
-    parsed.protocol !==
-      "http:" &&
-    parsed.protocol !==
-      "https:"
-  ) {
-    throw new Error(
-      `${fieldName} must use HTTP or HTTPS.`
-    );
-  }
+    if (
+      !normalized
+    ) {
+      return undefined;
+    }
 
-  if (
-    process.env.NODE_ENV ===
-      "production" &&
-    parsed.protocol !==
-      "https:"
-  ) {
-    throw new Error(
-      `${fieldName} must use HTTPS in production.`
-    );
-  }
+    let parsed:
+      URL;
 
-  if (
-    parsed.username ||
-    parsed.password
-  ) {
-    throw new Error(
-      `${fieldName} cannot contain URL credentials.`
-    );
-  }
+    try {
+      parsed =
+        new URL(
+          normalized
+        );
+    } catch {
+      throw new Error(
+        `${fieldName} is invalid.`
+      );
+    }
 
-  return parsed.toString();
-};
+    if (
+      parsed.protocol !==
+        "http:" &&
+      parsed.protocol !==
+        "https:"
+    ) {
+      throw new Error(
+        `${fieldName} must use HTTP or HTTPS.`
+      );
+    }
+
+    if (
+      process.env.NODE_ENV ===
+        "production" &&
+      parsed.protocol !==
+        "https:"
+    ) {
+      throw new Error(
+        `${fieldName} must use HTTPS in production.`
+      );
+    }
+
+    if (
+      parsed.username ||
+      parsed.password
+    ) {
+      throw new Error(
+        `${fieldName} cannot contain URL credentials.`
+      );
+    }
+
+    return parsed.toString();
+  };
 
 /* =========================================================
-   MERCHANT VALIDATION
+   MERCHANT ACCESS POLICY
+
+   TEST
+   - pending merchant allowed
+   - active merchant allowed
+   - verification NOT required
+   - testEnabled must be true
+
+   LIVE
+   - merchant must be active
+   - merchant must be verified
+   - liveEnabled must be true
 ========================================================= */
 
-const validateMerchantAccess = (
-  merchant: {
-    status: string;
-    verificationStatus: string;
-    defaultCurrency: string;
-    testEnabled: boolean;
-    liveEnabled: boolean;
-  },
-  mode: PaymentMode
-): void => {
-  if (
-    merchant.status !==
-    "active"
-  ) {
-    throw new Error(
-      "Merchant account is not active."
-    );
-  }
+const validateMerchantAccess =
+  (
+    merchant: {
+      status:
+        string;
 
-  if (
-    mode === "test" &&
-    merchant.testEnabled !==
-      true
-  ) {
-    throw new Error(
-      "Test payment access is not enabled for this merchant."
-    );
-  }
+      verificationStatus:
+        string;
 
-  if (
-    mode === "live" &&
-    merchant.liveEnabled !==
-      true
-  ) {
-    throw new Error(
-      "Live payment access is not enabled for this merchant."
-    );
-  }
+      defaultCurrency:
+        string;
 
-  if (
-    mode === "live" &&
-    merchant.verificationStatus !==
-      "verified"
-  ) {
+      testEnabled:
+        boolean;
+
+      liveEnabled:
+        boolean;
+    },
+
+    mode:
+      PaymentMode
+  ): void => {
+    /* =====================================================
+       TEST
+    ====================================================== */
+
+    if (
+      mode ===
+      "test"
+    ) {
+      const allowedStatus =
+        merchant.status ===
+          "pending" ||
+        merchant.status ===
+          "active";
+
+      if (
+        !allowedStatus
+      ) {
+        throw new Error(
+          "Merchant account is not available for test payments."
+        );
+      }
+
+      if (
+        merchant.testEnabled !==
+        true
+      ) {
+        throw new Error(
+          "Test payment access is not enabled for this merchant."
+        );
+      }
+
+      return;
+    }
+
+    /* =====================================================
+       LIVE
+    ====================================================== */
+
+    if (
+      mode ===
+      "live"
+    ) {
+      if (
+        merchant.status !==
+        "active"
+      ) {
+        throw new Error(
+          "Merchant account must be active for live payments."
+        );
+      }
+
+      if (
+        merchant.verificationStatus !==
+        "verified"
+      ) {
+        throw new Error(
+          "Merchant verification is required for live payments."
+        );
+      }
+
+      if (
+        merchant.liveEnabled !==
+        true
+      ) {
+        throw new Error(
+          "Live payment access is not enabled for this merchant."
+        );
+      }
+
+      return;
+    }
+
     throw new Error(
-      "Merchant verification is required for live payments."
+      "Invalid payment mode."
     );
-  }
-};
+  };
 
 /* =========================================================
    CHECKOUT URL
 ========================================================= */
 
-const createCheckoutUrl = (
-  paymentId: string
-): string => {
-  const clientUrl =
-    (
-      process.env.CLIENT_URL
-        ?.trim() ||
-      "http://localhost:3000"
-    ).replace(
-      /\/+$/,
-      ""
-    );
-
-  let parsedClientUrl:
-    URL;
-
-  try {
-    parsedClientUrl =
-      new URL(
-        clientUrl
+const createCheckoutUrl =
+  (
+    paymentId:
+      string
+  ): string => {
+    const clientUrl =
+      (
+        process.env.CLIENT_URL
+          ?.trim() ||
+        "http://localhost:3000"
+      ).replace(
+        /\/+$/,
+        ""
       );
-  } catch {
-    throw new Error(
-      "CLIENT_URL is invalid."
-    );
-  }
 
-  if (
-    process.env.NODE_ENV ===
-      "production" &&
-    parsedClientUrl.protocol !==
-      "https:"
-  ) {
-    throw new Error(
-      "CLIENT_URL must use HTTPS in production."
-    );
-  }
+    let parsedClientUrl:
+      URL;
 
-  return `${clientUrl}/payment/checkout/${encodeURIComponent(
-    paymentId
-  )}`;
-};
+    try {
+      parsedClientUrl =
+        new URL(
+          clientUrl
+        );
+    } catch {
+      throw new Error(
+        "CLIENT_URL is invalid."
+      );
+    }
+
+    if (
+      process.env.NODE_ENV ===
+        "production" &&
+      parsedClientUrl.protocol !==
+        "https:"
+    ) {
+      throw new Error(
+        "CLIENT_URL must use HTTPS in production."
+      );
+    }
+
+    return `${clientUrl}/payment/checkout/${encodeURIComponent(
+      paymentId
+    )}`;
+  };
 
 /* =========================================================
    IDEMPOTENCY VALIDATION
 ========================================================= */
 
-const validateExistingPayment = (
-  existing:
-    InstanceType<
-      typeof Payment
-    >,
-  input: {
-    amount: string;
-    currency: string;
-    customerId?: string;
-    merchantReference?: string;
-    returnUrl?: string;
-    cancelUrl?: string;
-  }
-): void => {
-  const existingAmount =
-    Number(
-      existing.amount.toString()
-    ).toFixed(2);
+const validateExistingPayment =
+  (
+    existing:
+      InstanceType<
+        typeof Payment
+      >,
 
-  if (
-    existingAmount !==
-    input.amount
-  ) {
-    throw new Error(
-      "This idempotency key has already been used for a different amount."
-    );
-  }
+    input: {
+      amount:
+        string;
 
-  if (
-    existing.currency !==
-    input.currency
-  ) {
-    throw new Error(
-      "This idempotency key has already been used with a different currency."
-    );
-  }
+      currency:
+        string;
 
-  const existingCustomerId =
-    existing.customerId
-      ?.toString();
+      customerId?:
+        string;
 
-  if (
-    existingCustomerId !==
-    input.customerId
-  ) {
-    throw new Error(
-      "This idempotency key has already been used for a different customer."
-    );
-  }
+      merchantReference?:
+        string;
 
-  if (
-    (
-      existing.merchantReference ||
-      undefined
-    ) !==
-    input.merchantReference
-  ) {
-    throw new Error(
-      "This idempotency key has already been used with a different merchant reference."
-    );
-  }
+      returnUrl?:
+        string;
 
-  if (
-    (
-      existing.returnUrl ||
-      undefined
-    ) !==
-    input.returnUrl
-  ) {
-    throw new Error(
-      "This idempotency key has already been used with a different return URL."
-    );
-  }
+      cancelUrl?:
+        string;
+    }
+  ): void => {
+    const existingAmount =
+      Number(
+        existing.amount.toString()
+      ).toFixed(
+        2
+      );
 
-  if (
-    (
-      existing.cancelUrl ||
-      undefined
-    ) !==
-    input.cancelUrl
-  ) {
-    throw new Error(
-      "This idempotency key has already been used with a different cancel URL."
-    );
-  }
-};
+    if (
+      existingAmount !==
+      input.amount
+    ) {
+      throw new Error(
+        "This idempotency key has already been used for a different amount."
+      );
+    }
+
+    if (
+      existing.currency !==
+      input.currency
+    ) {
+      throw new Error(
+        "This idempotency key has already been used with a different currency."
+      );
+    }
+
+    const existingCustomerId =
+      existing.customerId
+        ?.toString();
+
+    if (
+      existingCustomerId !==
+      input.customerId
+    ) {
+      throw new Error(
+        "This idempotency key has already been used for a different customer."
+      );
+    }
+
+    if (
+      (
+        existing.merchantReference ||
+        undefined
+      ) !==
+      input.merchantReference
+    ) {
+      throw new Error(
+        "This idempotency key has already been used with a different merchant reference."
+      );
+    }
+
+    if (
+      (
+        existing.returnUrl ||
+        undefined
+      ) !==
+      input.returnUrl
+    ) {
+      throw new Error(
+        "This idempotency key has already been used with a different return URL."
+      );
+    }
+
+    if (
+      (
+        existing.cancelUrl ||
+        undefined
+      ) !==
+      input.cancelUrl
+    ) {
+      throw new Error(
+        "This idempotency key has already been used with a different cancel URL."
+      );
+    }
+  };
 
 /* =========================================================
-   CREATE COFFER PAYMENT
+   CREATE COFFER WALLET PAYMENT
 ========================================================= */
 
 export const createWalletPayment =
@@ -551,6 +682,10 @@ export const createWalletPayment =
         input.idempotencyKey
       );
 
+    /* =====================================================
+       MERCHANT ID
+    ====================================================== */
+
     if (
       !isValidObjectId(
         merchantId
@@ -561,10 +696,10 @@ export const createWalletPayment =
       );
     }
 
-    /*
-     * Validate customer only when merchant intentionally
-     * creates a payment for a known Coffer customer.
-     */
+    /* =====================================================
+       OPTIONAL CUSTOMER
+    ====================================================== */
+
     if (
       customerId &&
       !isValidObjectId(
@@ -576,7 +711,13 @@ export const createWalletPayment =
       );
     }
 
-    if (!idempotencyKey) {
+    /* =====================================================
+       IDEMPOTENCY KEY
+    ====================================================== */
+
+    if (
+      !idempotencyKey
+    ) {
       throw new Error(
         "Idempotency key is required."
       );
@@ -591,6 +732,10 @@ export const createWalletPayment =
       );
     }
 
+    /* =====================================================
+       AMOUNT / CURRENCY
+    ====================================================== */
+
     const normalizedAmount =
       parseAmount(
         input.amount
@@ -601,6 +746,10 @@ export const createWalletPayment =
         input.currency
       );
 
+    /* =====================================================
+       INTERNAL ORDER ID
+    ====================================================== */
+
     const orderId =
       normalizeOptionalText(
         input.orderId,
@@ -608,13 +757,6 @@ export const createWalletPayment =
         100
       );
 
-    /*
-     * Payment.orderId references Coffer's internal
-     * Order model and must therefore be an ObjectId.
-     *
-     * External store order numbers belong in
-     * merchantReference.
-     */
     if (
       orderId &&
       !isValidObjectId(
@@ -626,12 +768,20 @@ export const createWalletPayment =
       );
     }
 
+    /* =====================================================
+       MERCHANT REFERENCE
+    ====================================================== */
+
     const merchantReference =
       normalizeOptionalText(
         input.merchantReference,
         "Merchant reference",
         150
       );
+
+    /* =====================================================
+       CALLBACK URLS
+    ====================================================== */
 
     const returnUrl =
       normalizeOptionalUrl(
@@ -660,11 +810,15 @@ export const createWalletPayment =
             "defaultCurrency",
             "testEnabled",
             "liveEnabled",
-          ].join(" ")
+          ].join(
+            " "
+          )
         )
         .lean();
 
-    if (!merchant) {
+    if (
+      !merchant
+    ) {
       throw new Error(
         "Merchant account not found."
       );
@@ -674,6 +828,10 @@ export const createWalletPayment =
       merchant,
       input.mode
     );
+
+    /* =====================================================
+       MERCHANT CURRENCY
+    ====================================================== */
 
     const merchantCurrency =
       normalizeCurrency(
@@ -691,32 +849,41 @@ export const createWalletPayment =
 
     /* =====================================================
        OPTIONAL PREASSIGNED CUSTOMER
+
+       Normally third-party merchants should NOT send this.
     ====================================================== */
 
-    if (customerId) {
+    if (
+      customerId
+    ) {
       const customerExists =
         await User.exists({
           _id:
             new mongoose.Types.ObjectId(
               customerId
             ),
+
+          accountStatus:
+            "active",
         });
 
-      if (!customerExists) {
+      if (
+        !customerExists
+      ) {
         throw new Error(
           "Customer account not found."
         );
       }
     }
 
-    /* =====================================================
-       IDEMPOTENCY
-    ====================================================== */
-
     const merchantObjectId =
       new mongoose.Types.ObjectId(
         merchantId
       );
+
+    /* =====================================================
+       IDEMPOTENCY LOOKUP
+    ====================================================== */
 
     const existing =
       await Payment.findOne({
@@ -729,7 +896,9 @@ export const createWalletPayment =
         idempotencyKey,
       });
 
-    if (existing) {
+    if (
+      existing
+    ) {
       validateExistingPayment(
         existing,
         {
@@ -751,14 +920,16 @@ export const createWalletPayment =
       );
 
       return {
-        duplicate: true,
+        duplicate:
+          true,
+
         payment:
           existing,
       };
     }
 
     /* =====================================================
-       PAYMENT
+       CREATE PAYMENT
     ====================================================== */
 
     const paymentId =
@@ -822,24 +993,33 @@ export const createWalletPayment =
         });
 
       return {
-        duplicate: false,
+        duplicate:
+          false,
+
         payment,
       };
-    } catch (error: unknown) {
-      /*
-       * Concurrent requests may reach the unique
-       * idempotency index at the same time.
-       */
+    } catch (
+      error:
+        unknown
+    ) {
+      /* ===================================================
+         RACE-SAFE IDEMPOTENCY
+      =================================================== */
+
       if (
         typeof error ===
           "object" &&
-        error !== null &&
-        "code" in error &&
+        error !==
+          null &&
+        "code" in
+          error &&
         (
           error as {
-            code?: unknown;
+            code?:
+              unknown;
           }
-        ).code === 11000
+        ).code ===
+          11000
       ) {
         const duplicate =
           await Payment.findOne({
@@ -852,7 +1032,9 @@ export const createWalletPayment =
             idempotencyKey,
           });
 
-        if (duplicate) {
+        if (
+          duplicate
+        ) {
           validateExistingPayment(
             duplicate,
             {
@@ -874,7 +1056,9 @@ export const createWalletPayment =
           );
 
           return {
-            duplicate: true,
+            duplicate:
+              true,
+
             payment:
               duplicate,
           };
@@ -886,7 +1070,7 @@ export const createWalletPayment =
   };
 
 /* =========================================================
-   GET PAYMENT FOR MERCHANT
+   GET PAYMENT FOR MERCHANT API
 ========================================================= */
 
 export const getWalletPayment =
@@ -894,8 +1078,11 @@ export const getWalletPayment =
     paymentId,
     merchantId,
   }: {
-    paymentId: string;
-    merchantId: string;
+    paymentId:
+      string;
+
+    merchantId:
+      string;
   }) => {
     const normalizedPaymentId =
       normalizeString(
@@ -907,7 +1094,9 @@ export const getWalletPayment =
         merchantId
       );
 
-    if (!normalizedPaymentId) {
+    if (
+      !normalizedPaymentId
+    ) {
       throw new Error(
         "Payment ID is required."
       );
@@ -934,7 +1123,9 @@ export const getWalletPayment =
           ),
       }).lean();
 
-    if (!payment) {
+    if (
+      !payment
+    ) {
       throw new Error(
         "Payment not found."
       );
@@ -944,7 +1135,13 @@ export const getWalletPayment =
   };
 
 /* =========================================================
-   GET CUSTOMER CHECKOUT PAYMENT
+   LEGACY / INTERNAL CUSTOMER CHECKOUT LOOKUP
+
+   This remains available for any internal flow which
+   already knows a trusted Coffer customer ID.
+
+   The new hosted merchant checkout does NOT require this
+   method for its initial public GET.
 ========================================================= */
 
 export const getCustomerCheckoutPayment =
@@ -952,8 +1149,11 @@ export const getCustomerCheckoutPayment =
     paymentId,
     customerId,
   }: {
-    paymentId: string;
-    customerId: string;
+    paymentId:
+      string;
+
+    customerId:
+      string;
   }) => {
     const normalizedPaymentId =
       normalizeString(
@@ -965,7 +1165,9 @@ export const getCustomerCheckoutPayment =
         customerId
       );
 
-    if (!normalizedPaymentId) {
+    if (
+      !normalizedPaymentId
+    ) {
       throw new Error(
         "Payment ID is required."
       );
@@ -981,28 +1183,20 @@ export const getCustomerCheckoutPayment =
       );
     }
 
-    /*
-     * Do not claim the payment during GET.
-     *
-     * GET requests must remain read-only. The payment will
-     * be bound atomically when the customer presses Pay.
-     */
     const payment =
       await Payment.findOne({
         paymentId:
           normalizedPaymentId,
       }).lean();
 
-    if (!payment) {
+    if (
+      !payment
+    ) {
       throw new Error(
         "Payment not found."
       );
     }
 
-    /*
-     * If the merchant preassigned this payment to a
-     * customer, only that customer may access it.
-     */
     if (
       payment.customerId &&
       payment.customerId.toString() !==
@@ -1017,7 +1211,15 @@ export const getCustomerCheckoutPayment =
   };
 
 /* =========================================================
-   CONFIRM COFFER WALLET PAYMENT
+   CONFIRM REAL COFFER WALLET PAYMENT
+
+   IMPORTANT:
+
+   This service is LIVE-WALLET ONLY.
+
+   TEST payments are confirmed through the dedicated
+   sandboxCheckoutPaymentService and must NEVER touch a
+   real wallet.
 ========================================================= */
 
 export const confirmWalletPayment =
@@ -1025,9 +1227,16 @@ export const confirmWalletPayment =
     paymentId,
     customerId,
   }: {
-    paymentId: string;
-    customerId: string;
+    paymentId:
+      string;
+
+    customerId:
+      string;
   }) => {
+    /* =====================================================
+       NORMALIZE
+    ====================================================== */
+
     const normalizedPaymentId =
       normalizeString(
         paymentId
@@ -1038,7 +1247,9 @@ export const confirmWalletPayment =
         customerId
       );
 
-    if (!normalizedPaymentId) {
+    if (
+      !normalizedPaymentId
+    ) {
       throw new Error(
         "Payment ID is required."
       );
@@ -1067,7 +1278,7 @@ export const confirmWalletPayment =
 
       /* ===================================================
          LOAD PAYMENT
-      ================================================== */
+      =================================================== */
 
       const originalPayment =
         await Payment.findOne({
@@ -1077,15 +1288,42 @@ export const confirmWalletPayment =
           session
         );
 
-      if (!originalPayment) {
+      if (
+        !originalPayment
+      ) {
         throw new Error(
           "Payment not found."
         );
       }
 
       /* ===================================================
+         CRITICAL SAFETY GUARD
+
+         Test payments must NEVER reach the real wallet
+         debit flow.
+      =================================================== */
+
+      if (
+        originalPayment.mode ===
+        "test"
+      ) {
+        throw new Error(
+          "Test payments must use sandbox payment confirmation."
+        );
+      }
+
+      if (
+        originalPayment.mode !==
+        "live"
+      ) {
+        throw new Error(
+          "Invalid payment mode."
+        );
+      }
+
+      /* ===================================================
          ALREADY COMPLETED
-      ================================================== */
+      =================================================== */
 
       if (
         originalPayment.status ===
@@ -1104,12 +1342,17 @@ export const confirmWalletPayment =
         await session.commitTransaction();
 
         return {
-          duplicate: true,
+          duplicate:
+            true,
 
           payment:
             originalPayment,
         };
       }
+
+      /* ===================================================
+         PAYMENT STATUS
+      =================================================== */
 
       if (
         originalPayment.status !==
@@ -1121,8 +1364,8 @@ export const confirmWalletPayment =
       }
 
       /* ===================================================
-         MERCHANT VALIDATION
-      ================================================== */
+         LOAD MERCHANT
+      =================================================== */
 
       const merchant =
         await Merchant.findById(
@@ -1135,18 +1378,26 @@ export const confirmWalletPayment =
               "defaultCurrency",
               "testEnabled",
               "liveEnabled",
-            ].join(" ")
+            ].join(
+              " "
+            )
           )
           .session(
             session
           )
           .lean();
 
-      if (!merchant) {
+      if (
+        !merchant
+      ) {
         throw new Error(
           "Merchant account not found."
         );
       }
+
+      /* ===================================================
+         LIVE MERCHANT POLICY
+      =================================================== */
 
       validateMerchantAccess(
         merchant,
@@ -1154,19 +1405,49 @@ export const confirmWalletPayment =
       );
 
       /* ===================================================
-         ATOMIC CUSTOMER CLAIM
+         CUSTOMER ACCOUNT
 
-         Conditions:
-         - payment must still be pending
-         - customerId must be empty or already equal to
-           the current authenticated customer
-      ================================================== */
+         Customer identity came from the verified checkout
+         token, but we still re-check account availability
+         immediately before moving money.
+      =================================================== */
+
+      const customer =
+        await User.findOne({
+          _id:
+            customerObjectId,
+
+          accountStatus:
+            "active",
+        })
+          .select(
+            "_id"
+          )
+          .session(
+            session
+          )
+          .lean();
+
+      if (
+        !customer
+      ) {
+        throw new Error(
+          "Customer account not found or is not active."
+        );
+      }
+
+      /* ===================================================
+         ATOMIC CUSTOMER CLAIM
+      =================================================== */
 
       const payment =
         await Payment.findOneAndUpdate(
           {
             _id:
               originalPayment._id,
+
+            mode:
+              "live",
 
             status:
               "pending",
@@ -1178,30 +1459,40 @@ export const confirmWalletPayment =
                     false,
                 },
               },
+
               {
                 customerId:
                   null,
               },
+
               {
                 customerId:
                   customerObjectId,
               },
             ],
           },
+
           {
             $set: {
               customerId:
                 customerObjectId,
             },
           },
+
           {
-            new: true,
+            new:
+              true,
+
             session,
-            runValidators: true,
+
+            runValidators:
+              true,
           }
         );
 
-      if (!payment) {
+      if (
+        !payment
+      ) {
         throw new Error(
           "This payment already belongs to another customer or is being processed."
         );
@@ -1209,7 +1500,7 @@ export const confirmWalletPayment =
 
       /* ===================================================
          CUSTOMER WALLET
-      ================================================== */
+      =================================================== */
 
       const wallet =
         await Wallet.findOne({
@@ -1222,11 +1513,17 @@ export const confirmWalletPayment =
           session
         );
 
-      if (!wallet) {
+      if (
+        !wallet
+      ) {
         throw new Error(
           "Customer wallet not found or is not active."
         );
       }
+
+      /* ===================================================
+         CURRENCY
+      =================================================== */
 
       if (
         wallet.currency.toUpperCase() !==
@@ -1237,6 +1534,10 @@ export const confirmWalletPayment =
         );
       }
 
+      /* ===================================================
+         PAYMENT AMOUNT
+      =================================================== */
+
       const paymentAmount =
         Number(
           payment.amount.toString()
@@ -1246,7 +1547,8 @@ export const confirmWalletPayment =
         !Number.isFinite(
           paymentAmount
         ) ||
-        paymentAmount <= 0
+        paymentAmount <=
+          0
       ) {
         throw new Error(
           "Invalid payment amount."
@@ -1255,7 +1557,7 @@ export const confirmWalletPayment =
 
       /* ===================================================
          LEDGER ACCOUNTS
-      ================================================== */
+      =================================================== */
 
       const customerLedgerAccount =
         await createLedgerAccount({
@@ -1310,7 +1612,7 @@ export const confirmWalletPayment =
 
       /* ===================================================
          AUTHORIZE
-      ================================================== */
+      =================================================== */
 
       await transitionPayment({
         paymentId:
@@ -1324,7 +1626,7 @@ export const confirmWalletPayment =
 
       /* ===================================================
          ATOMIC WALLET DEBIT
-      ================================================== */
+      =================================================== */
 
       const updatedWallet =
         await Wallet.findOneAndUpdate(
@@ -1340,20 +1642,28 @@ export const confirmWalletPayment =
                 paymentAmount,
             },
           },
+
           {
             $inc: {
               balance:
                 -paymentAmount,
             },
           },
+
           {
-            new: true,
+            new:
+              true,
+
             session,
-            runValidators: true,
+
+            runValidators:
+              true,
           }
         ).lean();
 
-      if (!updatedWallet) {
+      if (
+        !updatedWallet
+      ) {
         throw new Error(
           "Insufficient wallet balance."
         );
@@ -1361,7 +1671,7 @@ export const confirmWalletPayment =
 
       /* ===================================================
          CAPTURE
-      ================================================== */
+      =================================================== */
 
       await transitionPayment({
         paymentId:
@@ -1375,7 +1685,7 @@ export const confirmWalletPayment =
 
       /* ===================================================
          BALANCED LEDGER
-      ================================================== */
+      =================================================== */
 
       await postBalancedLedger({
         referenceType:
@@ -1399,7 +1709,9 @@ export const confirmWalletPayment =
               "debit",
 
             amount:
-              paymentAmount.toFixed(2),
+              paymentAmount.toFixed(
+                2
+              ),
 
             currency:
               payment.currency,
@@ -1407,6 +1719,7 @@ export const confirmWalletPayment =
             description:
               `Customer wallet debit for payment ${payment.paymentId}`,
           },
+
           {
             accountId:
               merchantLedgerAccount._id.toString(),
@@ -1415,7 +1728,9 @@ export const confirmWalletPayment =
               "credit",
 
             amount:
-              paymentAmount.toFixed(2),
+              paymentAmount.toFixed(
+                2
+              ),
 
             currency:
               payment.currency,
@@ -1430,7 +1745,7 @@ export const confirmWalletPayment =
 
       /* ===================================================
          COMPLETE
-      ================================================== */
+      =================================================== */
 
       const completedPayment =
         await transitionPayment({
@@ -1443,12 +1758,19 @@ export const confirmWalletPayment =
           session,
         });
 
+      /* ===================================================
+         COMMIT
+      =================================================== */
+
       await session.commitTransaction();
 
-      /*
-       * The financial transaction is already committed.
-       * Webhook creation must not roll it back.
-       */
+      /* ===================================================
+         WEBHOOK
+
+         Payment is already committed. Webhook failure must
+         not roll the payment back.
+      =================================================== */
+
       try {
         await createPaymentWebhookEvents({
           payment: {
@@ -1521,8 +1843,13 @@ export const confirmWalletPayment =
         );
       }
 
+      /* ===================================================
+         RESULT
+      =================================================== */
+
       return {
-        duplicate: false,
+        duplicate:
+          false,
 
         payment:
           completedPayment,
@@ -1535,7 +1862,9 @@ export const confirmWalletPayment =
             updatedWallet.currency,
         },
       };
-    } catch (error) {
+    } catch (
+      error
+    ) {
       if (
         session.inTransaction()
       ) {

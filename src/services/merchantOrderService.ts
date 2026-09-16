@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+
 import mongoose, {
   type PipelineStage,
 } from "mongoose";
@@ -23,65 +24,111 @@ import {
 ========================================================= */
 
 export interface MerchantApiContext {
-  merchantId: string;
-  mode: OrderMode;
+  merchantId:
+    string;
+
+  mode:
+    OrderMode;
 }
 
 export interface CreateMerchantOrderInput
   extends MerchantApiContext {
-  idempotencyKey: string;
-  amount: unknown;
-  currency?: unknown;
-  merchantReference?: unknown;
-  description?: unknown;
-  customer?: unknown;
-  items?: unknown;
-  metadata?: unknown;
-  returnUrl?: unknown;
-  cancelUrl?: unknown;
-  expiresInMinutes?: unknown;
+  idempotencyKey:
+    string;
+
+  amount:
+    unknown;
+
+  currency?:
+    unknown;
+
+  merchantReference?:
+    unknown;
+
+  description?:
+    unknown;
+
+  customer?:
+    unknown;
+
+  items?:
+    unknown;
+
+  metadata?:
+    unknown;
+
+  returnUrl?:
+    unknown;
+
+  cancelUrl?:
+    unknown;
+
+  expiresInMinutes?:
+    unknown;
 }
 
 export interface ListMerchantOrdersInput {
-  ownerId: string;
-  page?: unknown;
-  limit?: unknown;
-  search?: unknown;
-  status?: unknown;
-  mode?: unknown;
-  from?: unknown;
-  to?: unknown;
+  ownerId:
+    string;
+
+  page?:
+    unknown;
+
+  limit?:
+    unknown;
+
+  search?:
+    unknown;
+
+  status?:
+    unknown;
+
+  mode?:
+    unknown;
+
+  from?:
+    unknown;
+
+  to?:
+    unknown;
 }
 
 /* =========================================================
    CONSTANTS
 ========================================================= */
 
-const ORDER_STATUSES: readonly OrderStatus[] = [
-  "created",
-  "pending",
-  "paid",
-  "partially_refunded",
-  "refunded",
-  "cancelled",
-  "expired",
-  "failed",
-] as const;
+const ORDER_STATUSES:
+  readonly OrderStatus[] = [
+    "created",
+    "pending",
+    "paid",
+    "partially_refunded",
+    "refunded",
+    "cancelled",
+    "expired",
+    "failed",
+  ] as const;
 
-const MAX_ORDER_AMOUNT = 1_000_000_000;
+const MAX_ORDER_AMOUNT =
+  1_000_000_000;
 
-const DEFAULT_EXPIRY_MINUTES = 30;
+const DEFAULT_EXPIRY_MINUTES =
+  30;
 
 /* =========================================================
    BASIC HELPERS
 ========================================================= */
 
 function normalizeText(
-  value: unknown,
-  maximumLength = 500,
+  value:
+    unknown,
+
+  maximumLength =
+    500
 ): string | undefined {
   if (
-    typeof value !== "string"
+    typeof value !==
+    "string"
   ) {
     return undefined;
   }
@@ -89,33 +136,45 @@ function normalizeText(
   const normalized =
     value.trim();
 
-  if (!normalized) {
+  if (
+    !normalized
+  ) {
     return undefined;
   }
 
   return normalized.slice(
     0,
-    maximumLength,
+    maximumLength
   );
 }
 
+/* =========================================================
+   NORMALIZE MONEY
+========================================================= */
+
 function normalizeMoney(
-  value: unknown,
-  fieldName = "amount",
+  value:
+    unknown,
+
+  fieldName =
+    "amount"
 ): number {
   const amount =
-    Number(value);
+    Number(
+      value
+    );
 
   if (
     !Number.isFinite(
-      amount,
+      amount
     ) ||
-    amount <= 0 ||
+    amount <=
+      0 ||
     amount >
       MAX_ORDER_AMOUNT
   ) {
     throw new Error(
-      `${fieldName} must be greater than zero and within the supported limit.`,
+      `${fieldName} must be greater than zero and within the supported limit.`
     );
   }
 
@@ -124,96 +183,132 @@ function normalizeMoney(
       (
         amount +
         Number.EPSILON
-      ) * 100,
-    ) / 100
+      ) *
+        100
+    ) /
+    100
   );
 }
+
+/* =========================================================
+   DECIMAL
+========================================================= */
 
 function toDecimal(
-  value: number,
+  value:
+    number
 ): mongoose.Types.Decimal128 {
   return mongoose.Types.Decimal128.fromString(
-    value.toFixed(2),
+    value.toFixed(
+      2
+    )
   );
 }
 
+/* =========================================================
+   DECIMAL TO NUMBER
+========================================================= */
+
 function decimalToNumber(
-  value: unknown,
+  value:
+    unknown
 ): number {
   if (
-    value === null ||
-    value === undefined
+    value ===
+      null ||
+    value ===
+      undefined
   ) {
     return 0;
   }
 
   if (
-    typeof value === "number"
+    typeof value ===
+    "number"
   ) {
     return Number.isFinite(
-      value,
+      value
     )
       ? value
       : 0;
   }
 
   if (
-    typeof value === "object" &&
-    value !== null &&
-    "toString" in value
+    typeof value ===
+      "object" &&
+    value !==
+      null &&
+    "toString" in
+      value
   ) {
     const parsed =
       Number(
-        String(value),
+        String(
+          value
+        )
       );
 
     return Number.isFinite(
-      parsed,
+      parsed
     )
       ? parsed
       : 0;
   }
 
   const parsed =
-    Number(value);
+    Number(
+      value
+    );
 
   return Number.isFinite(
-    parsed,
+    parsed
   )
     ? parsed
     : 0;
 }
 
+/* =========================================================
+   CURRENCY
+========================================================= */
+
 function normalizeCurrency(
-  value: unknown,
-  fallback: string,
+  value:
+    unknown,
+
+  fallback:
+    string
 ): string {
   const normalized =
     normalizeText(
       value,
-      3,
+      3
     )?.toUpperCase() ||
     fallback.toUpperCase();
 
   if (
     !/^[A-Z]{3}$/.test(
-      normalized,
+      normalized
     )
   ) {
     throw new Error(
-      "currency must be a valid three-letter code.",
+      "currency must be a valid three-letter code."
     );
   }
 
   return normalized;
 }
 
+/* =========================================================
+   ESCAPE REGEX
+========================================================= */
+
 function escapeRegex(
-  value: string,
+  value:
+    string
 ): string {
   return value.replace(
     /[.*+?^${}()|[\]\\]/g,
-    "\\$&",
+    "\\$&"
   );
 }
 
@@ -222,30 +317,38 @@ function escapeRegex(
 ========================================================= */
 
 function normalizeUrl(
-  value: unknown,
-  fieldName: string,
-  mode: OrderMode,
+  value:
+    unknown,
+
+  fieldName:
+    string,
+
+  mode:
+    OrderMode
 ): string | undefined {
   const normalized =
     normalizeText(
       value,
-      1000,
+      1000
     );
 
-  if (!normalized) {
+  if (
+    !normalized
+  ) {
     return undefined;
   }
 
-  let parsedUrl: URL;
+  let parsedUrl:
+    URL;
 
   try {
     parsedUrl =
       new URL(
-        normalized,
+        normalized
       );
   } catch {
     throw new Error(
-      `${fieldName} must be a valid URL.`,
+      `${fieldName} must be a valid URL.`
     );
   }
 
@@ -257,19 +360,21 @@ function normalizeUrl(
 
   /*
    * Local HTTP is allowed only in test mode.
-   * Live / production redirects must use HTTPS.
+   *
+   * Live mode callback URLs must use HTTPS.
    */
 
   if (
     parsedUrl.protocol !==
       "https:" &&
     !(
-      mode === "test" &&
+      mode ===
+        "test" &&
       isLocalhost
     )
   ) {
     throw new Error(
-      `${fieldName} must use HTTPS outside local test mode.`,
+      `${fieldName} must use HTTPS outside local test mode.`
     );
   }
 
@@ -281,21 +386,27 @@ function normalizeUrl(
 ========================================================= */
 
 function normalizeCustomer(
-  value: unknown,
+  value:
+    unknown
 ) {
   if (
-    value === undefined ||
-    value === null
+    value ===
+      undefined ||
+    value ===
+      null
   ) {
     return undefined;
   }
 
   if (
-    typeof value !== "object" ||
-    Array.isArray(value)
+    typeof value !==
+      "object" ||
+    Array.isArray(
+      value
+    )
   ) {
     throw new Error(
-      "customer must be an object.",
+      "customer must be an object."
     );
   }
 
@@ -308,17 +419,17 @@ function normalizeCustomer(
   const email =
     normalizeText(
       customer.email,
-      254,
+      254
     )?.toLowerCase();
 
   if (
     email &&
     !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
-      email,
+      email
     )
   ) {
     throw new Error(
-      "customer.email is invalid.",
+      "customer.email is invalid."
     );
   }
 
@@ -326,7 +437,7 @@ function normalizeCustomer(
     name:
       normalizeText(
         customer.name,
-        150,
+        150
       ),
 
     email,
@@ -334,13 +445,13 @@ function normalizeCustomer(
     phone:
       normalizeText(
         customer.phone,
-        40,
+        40
       ),
 
     externalCustomerId:
       normalizeText(
         customer.externalCustomerId,
-        150,
+        150
       ),
   };
 }
@@ -350,36 +461,49 @@ function normalizeCustomer(
 ========================================================= */
 
 function normalizeItems(
-  value: unknown,
+  value:
+    unknown
 ) {
   if (
-    value === undefined ||
-    value === null
+    value ===
+      undefined ||
+    value ===
+      null
   ) {
     return [];
   }
 
   if (
-    !Array.isArray(value) ||
-    value.length > 100
+    !Array.isArray(
+      value
+    ) ||
+    value.length >
+      100
   ) {
     throw new Error(
-      "items must be an array containing at most 100 items.",
+      "items must be an array containing at most 100 items."
     );
   }
 
   return value.map(
     (
-      item: unknown,
-      index: number,
+      item:
+        unknown,
+
+      index:
+        number
     ) => {
       if (
-        typeof item !== "object" ||
-        item === null ||
-        Array.isArray(item)
+        typeof item !==
+          "object" ||
+        item ===
+          null ||
+        Array.isArray(
+          item
+        )
       ) {
         throw new Error(
-          `items[${index}] must be an object.`,
+          `items[${index}] must be an object.`
         );
       }
 
@@ -392,36 +516,40 @@ function normalizeItems(
       const name =
         normalizeText(
           rawItem.name,
-          180,
+          180
         );
 
-      if (!name) {
+      if (
+        !name
+      ) {
         throw new Error(
-          `items[${index}].name is required.`,
+          `items[${index}].name is required.`
         );
       }
 
       const quantity =
         Number(
-          rawItem.quantity,
+          rawItem.quantity
         );
 
       if (
         !Number.isInteger(
-          quantity,
+          quantity
         ) ||
-        quantity < 1 ||
-        quantity > 10_000
+        quantity <
+          1 ||
+        quantity >
+          10_000
       ) {
         throw new Error(
-          `items[${index}].quantity is invalid.`,
+          `items[${index}].quantity is invalid.`
         );
       }
 
       const unitAmount =
         normalizeMoney(
           rawItem.unitAmount,
-          `items[${index}].unitAmount`,
+          `items[${index}].unitAmount`
         );
 
       const totalAmount =
@@ -430,8 +558,10 @@ function normalizeItems(
             unitAmount *
               quantity +
             Number.EPSILON
-          ) * 100,
-        ) / 100;
+          ) *
+            100
+        ) /
+        100;
 
       return {
         name,
@@ -439,22 +569,22 @@ function normalizeItems(
         sku:
           normalizeText(
             rawItem.sku,
-            100,
+            100
           ),
 
         quantity,
 
         unitAmount:
           toDecimal(
-            unitAmount,
+            unitAmount
           ),
 
         totalAmount:
           toDecimal(
-            totalAmount,
+            totalAmount
           ),
       };
-    },
+    }
   );
 }
 
@@ -463,24 +593,30 @@ function normalizeItems(
 ========================================================= */
 
 function normalizeMetadata(
-  value: unknown,
+  value:
+    unknown
 ): Record<
   string,
   string
 > {
   if (
-    value === undefined ||
-    value === null
+    value ===
+      undefined ||
+    value ===
+      null
   ) {
     return {};
   }
 
   if (
-    typeof value !== "object" ||
-    Array.isArray(value)
+    typeof value !==
+      "object" ||
+    Array.isArray(
+      value
+    )
   ) {
     throw new Error(
-      "metadata must be an object.",
+      "metadata must be an object."
     );
   }
 
@@ -489,14 +625,15 @@ function normalizeMetadata(
       value as Record<
         string,
         unknown
-      >,
+      >
     );
 
   if (
-    entries.length > 20
+    entries.length >
+    20
   ) {
     throw new Error(
-      "metadata can contain at most 20 fields.",
+      "metadata can contain at most 20 fields."
     );
   }
 
@@ -511,12 +648,14 @@ function normalizeMetadata(
             .trim()
             .slice(
               0,
-              50,
+              50
             );
 
-        if (!key) {
+        if (
+          !key
+        ) {
           throw new Error(
-            "metadata keys cannot be empty.",
+            "metadata keys cannot be empty."
           );
         }
 
@@ -529,21 +668,22 @@ function normalizeMetadata(
             "boolean"
         ) {
           throw new Error(
-            `metadata.${key} must be a string, number or boolean.`,
+            `metadata.${key} must be a string, number or boolean.`
           );
         }
 
         return [
           key,
+
           String(
-            rawValue,
+            rawValue
           ).slice(
             0,
-            500,
+            500
           ),
         ];
-      },
-    ),
+      }
+    )
   );
 }
 
@@ -552,17 +692,22 @@ function normalizeMetadata(
 ========================================================= */
 
 function generateOrderId(
-  mode: OrderMode,
+  mode:
+    OrderMode
 ): string {
   const timestamp =
     Date.now().toString(
-      36,
+      36
     );
 
   const randomPart =
     crypto
-      .randomBytes(12)
-      .toString("hex");
+      .randomBytes(
+        12
+      )
+      .toString(
+        "hex"
+      );
 
   return `ord_${mode}_${timestamp}_${randomPart}`;
 }
@@ -572,7 +717,8 @@ function generateOrderId(
 ========================================================= */
 
 function createCheckoutUrl(
-  orderId: string,
+  orderId:
+    string
 ): string {
   const baseUrl =
     process.env
@@ -581,22 +727,26 @@ function createCheckoutUrl(
       .CLIENT_URL?.trim() ||
     "http://localhost:3000";
 
-  let parsedBaseUrl: URL;
+  let parsedBaseUrl:
+    URL;
 
   try {
     parsedBaseUrl =
-      new URL(baseUrl);
+      new URL(
+        baseUrl
+      );
   } catch {
     throw new Error(
-      "CHECKOUT_BASE_URL is invalid.",
+      "CHECKOUT_BASE_URL is invalid."
     );
   }
 
   return new URL(
     `/checkout/${encodeURIComponent(
-      orderId,
+      orderId
     )}`,
-    parsedBaseUrl,
+
+    parsedBaseUrl
   ).toString();
 }
 
@@ -610,7 +760,7 @@ function formatOrder(
     | Record<
         string,
         unknown
-      >,
+      >
 ) {
   const rawOrder =
     order as unknown as Record<
@@ -622,15 +772,15 @@ function formatOrder(
     rawOrder.customer &&
     typeof rawOrder.customer ===
       "object"
-      ? (rawOrder.customer as Record<
+      ? rawOrder.customer as Record<
           string,
           unknown
-        >)
+        >
       : undefined;
 
   const rawItems =
     Array.isArray(
-      rawOrder.items,
+      rawOrder.items
     )
       ? rawOrder.items
       : [];
@@ -641,7 +791,7 @@ function formatOrder(
   return {
     id:
       String(
-        rawOrder._id,
+        rawOrder._id
       ),
 
     orderId:
@@ -649,7 +799,7 @@ function formatOrder(
 
     merchantId:
       String(
-        rawOrder.merchantId,
+        rawOrder.merchantId
       ),
 
     mode:
@@ -660,7 +810,7 @@ function formatOrder(
 
     amount:
       decimalToNumber(
-        rawOrder.amount,
+        rawOrder.amount
       ),
 
     currency:
@@ -698,7 +848,8 @@ function formatOrder(
     items:
       rawItems.map(
         (
-          rawItem: unknown,
+          rawItem:
+            unknown
         ) => {
           const item =
             rawItem as Record<
@@ -716,27 +867,27 @@ function formatOrder(
 
             quantity:
               Number(
-                item.quantity,
+                item.quantity
               ),
 
             unitAmount:
               decimalToNumber(
-                item.unitAmount,
+                item.unitAmount
               ),
 
             totalAmount:
               decimalToNumber(
-                item.totalAmount,
+                item.totalAmount
               ),
           };
-        },
+        }
       ),
 
     metadata:
       rawMetadata instanceof
       Map
         ? Object.fromEntries(
-            rawMetadata.entries(),
+            rawMetadata.entries()
           )
         : rawMetadata ??
           {},
@@ -785,9 +936,11 @@ function formatPayment(
         string,
         unknown
       >
-    | null,
+    | null
 ) {
-  if (!payment) {
+  if (
+    !payment
+  ) {
     return null;
   }
 
@@ -800,7 +953,7 @@ function formatPayment(
 
     amount:
       decimalToNumber(
-        payment.amount,
+        payment.amount
       ),
 
     currency:
@@ -829,19 +982,20 @@ function formatPayment(
 }
 
 /* =========================================================
-   MERCHANT LOOKUP
+   MERCHANT LOOKUP FOR DASHBOARD
 ========================================================= */
 
 async function findMerchantForOwner(
-  ownerId: string,
+  ownerId:
+    string
 ) {
   if (
     !mongoose.isValidObjectId(
-      ownerId,
+      ownerId
     )
   ) {
     throw new Error(
-      "Invalid merchant owner ID.",
+      "Invalid merchant owner ID."
     );
   }
 
@@ -849,7 +1003,7 @@ async function findMerchantForOwner(
     await Merchant.findOne({
       ownerId:
         new mongoose.Types.ObjectId(
-          ownerId,
+          ownerId
         ),
     })
       .select(
@@ -864,13 +1018,17 @@ async function findMerchantForOwner(
           "defaultCurrency",
           "testEnabled",
           "liveEnabled",
-        ].join(" "),
+        ].join(
+          " "
+        )
       )
       .lean();
 
-  if (!merchant) {
+  if (
+    !merchant
+  ) {
     throw new Error(
-      "Merchant account not found.",
+      "Merchant account not found."
     );
   }
 
@@ -882,33 +1040,48 @@ async function findMerchantForOwner(
 ========================================================= */
 
 export async function createMerchantOrder(
-  input: CreateMerchantOrderInput,
+  input:
+    CreateMerchantOrderInput
 ) {
+  /* =======================================================
+     MERCHANT ID
+  ======================================================= */
+
   if (
     !mongoose.isValidObjectId(
-      input.merchantId,
+      input.merchantId
     )
   ) {
     throw new Error(
-      "Invalid merchant ID.",
+      "Invalid merchant ID."
     );
   }
+
+  /* =======================================================
+     IDEMPOTENCY KEY
+  ======================================================= */
 
   const idempotencyKey =
     normalizeText(
       input.idempotencyKey,
-      200,
+      200
     );
 
-  if (!idempotencyKey) {
+  if (
+    !idempotencyKey
+  ) {
     throw new Error(
-      "Idempotency-Key header is required.",
+      "Idempotency-Key header is required."
     );
   }
 
+  /* =======================================================
+     LOAD MERCHANT
+  ======================================================= */
+
   const merchant =
     await Merchant.findById(
-      input.merchantId,
+      input.merchantId
     )
       .select(
         [
@@ -918,47 +1091,110 @@ export async function createMerchantOrder(
           "testEnabled",
           "liveEnabled",
           "verificationStatus",
-        ].join(" "),
+        ].join(
+          " "
+        )
       )
       .lean();
 
   if (
-    !merchant ||
-    merchant.status !==
-      "active"
+    !merchant
   ) {
     throw new Error(
-      "Merchant account is not active.",
-    );
-  }
-
-  if (
-    input.mode === "test" &&
-    merchant.testEnabled !==
-      true
-  ) {
-    throw new Error(
-      "Test mode is disabled.",
-    );
-  }
-
-  if (
-    input.mode === "live" &&
-    (
-      merchant.liveEnabled !==
-        true ||
-      merchant.verificationStatus !==
-        "verified"
-    )
-  ) {
-    throw new Error(
-      "Live mode is not available for this merchant.",
+      "Merchant account not found."
     );
   }
 
   /* =======================================================
+     TEST MODE ACCESS
+
+     Pending merchants are intentionally allowed to use the
+     sandbox environment.
+
+     This lets merchants integrate and test Coffer before
+     completing official verification / KYB.
+
+     Allowed:
+     - pending
+     - active
+
+     Blocked:
+     - suspended
+     - disabled
+  ======================================================= */
+
+  if (
+    input.mode ===
+    "test"
+  ) {
+    const allowedStatus =
+      merchant.status ===
+        "pending" ||
+      merchant.status ===
+        "active";
+
+    if (
+      !allowedStatus
+    ) {
+      throw new Error(
+        "Merchant account is not available for test mode."
+      );
+    }
+
+    if (
+      merchant.testEnabled !==
+      true
+    ) {
+      throw new Error(
+        "Test mode is disabled."
+      );
+    }
+  }
+
+  /* =======================================================
+     LIVE MODE ACCESS
+
+     Live payments require:
+     - active merchant
+     - verified merchant
+     - live access enabled
+  ======================================================= */
+
+  if (
+    input.mode ===
+    "live"
+  ) {
+    if (
+      merchant.status !==
+      "active"
+    ) {
+      throw new Error(
+        "Merchant account must be active for live mode."
+      );
+    }
+
+    if (
+      merchant.verificationStatus !==
+      "verified"
+    ) {
+      throw new Error(
+        "Merchant verification is required for live mode."
+      );
+    }
+
+    if (
+      merchant.liveEnabled !==
+      true
+    ) {
+      throw new Error(
+        "Live mode is not enabled for this merchant."
+      );
+    }
+  }
+
+  /* =======================================================
      IDEMPOTENCY CHECK
-  ======================================================== */
+  ======================================================= */
 
   const existingOrder =
     await Order.findOne({
@@ -970,43 +1206,46 @@ export async function createMerchantOrder(
 
       idempotencyKey,
     }).select(
-      "+idempotencyKey",
+      "+idempotencyKey"
     );
 
-  if (existingOrder) {
+  if (
+    existingOrder
+  ) {
     return {
-      duplicate: true,
+      duplicate:
+        true,
 
       order:
         formatOrder(
-          existingOrder,
+          existingOrder
         ),
     };
   }
 
   /* =======================================================
      NORMALIZE INPUT
-  ======================================================== */
+  ======================================================= */
 
   const amount =
     normalizeMoney(
-      input.amount,
+      input.amount
     );
 
   const normalizedCurrency =
     normalizeCurrency(
       input.currency,
-      merchant.defaultCurrency,
+      merchant.defaultCurrency
     );
 
   const normalizedItems =
     normalizeItems(
-      input.items,
+      input.items
     );
 
   /* =======================================================
      ITEM TOTAL VALIDATION
-  ======================================================== */
+  ======================================================= */
 
   if (
     normalizedItems.length >
@@ -1016,62 +1255,64 @@ export async function createMerchantOrder(
       normalizedItems.reduce(
         (
           total,
-          item,
+          item
         ) =>
           total +
           decimalToNumber(
-            item.totalAmount,
+            item.totalAmount
           ),
-        0,
+        0
       );
 
     if (
       Math.abs(
         itemTotal -
-          amount,
-      ) > 0.009
+          amount
+      ) >
+      0.009
     ) {
       throw new Error(
-        "The sum of item totals must equal the order amount.",
+        "The sum of item totals must equal the order amount."
       );
     }
   }
 
   /* =======================================================
      EXPIRATION
-  ======================================================== */
+  ======================================================= */
 
   const expiresInMinutes =
     Number(
       input.expiresInMinutes ??
-        DEFAULT_EXPIRY_MINUTES,
+        DEFAULT_EXPIRY_MINUTES
     );
 
   if (
     !Number.isInteger(
-      expiresInMinutes,
+      expiresInMinutes
     ) ||
-    expiresInMinutes < 5 ||
+    expiresInMinutes <
+      5 ||
     expiresInMinutes >
       1440
   ) {
     throw new Error(
-      "expiresInMinutes must be between 5 and 1440.",
+      "expiresInMinutes must be between 5 and 1440."
     );
   }
 
   /* =======================================================
      GENERATE ORDER ID
-  ======================================================== */
+  ======================================================= */
 
   const orderId =
     generateOrderId(
-      input.mode,
+      input.mode
     );
 
   /* =======================================================
-     CREATE
-  ======================================================== */
+     CREATE ORDER
+  ======================================================= */
 
   try {
     const order =
@@ -1089,7 +1330,7 @@ export async function createMerchantOrder(
 
         amount:
           toDecimal(
-            amount,
+            amount
           ),
 
         currency:
@@ -1098,18 +1339,18 @@ export async function createMerchantOrder(
         merchantReference:
           normalizeText(
             input.merchantReference,
-            150,
+            150
           ),
 
         description:
           normalizeText(
             input.description,
-            500,
+            500
           ),
 
         customer:
           normalizeCustomer(
-            input.customer,
+            input.customer
           ),
 
         items:
@@ -1117,26 +1358,26 @@ export async function createMerchantOrder(
 
         metadata:
           normalizeMetadata(
-            input.metadata,
+            input.metadata
           ),
 
         returnUrl:
           normalizeUrl(
             input.returnUrl,
             "returnUrl",
-            input.mode,
+            input.mode
           ),
 
         cancelUrl:
           normalizeUrl(
             input.cancelUrl,
             "cancelUrl",
-            input.mode,
+            input.mode
           ),
 
         checkoutUrl:
           createCheckoutUrl(
-            orderId,
+            orderId
           ),
 
         idempotencyKey,
@@ -1145,20 +1386,22 @@ export async function createMerchantOrder(
           new Date(
             Date.now() +
               expiresInMinutes *
-                60_000,
+                60_000
           ),
       });
 
     return {
-      duplicate: false,
+      duplicate:
+        false,
 
       order:
         formatOrder(
-          order,
+          order
         ),
     };
   } catch (
-    error: unknown
+    error:
+      unknown
   ) {
     /*
      * Race-safe duplicate handling.
@@ -1167,9 +1410,12 @@ export async function createMerchantOrder(
     if (
       typeof error ===
         "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === 11000
+      error !==
+        null &&
+      "code" in
+        error &&
+      error.code ===
+        11000
     ) {
       const duplicateOrder =
         await Order.findOne({
@@ -1181,16 +1427,19 @@ export async function createMerchantOrder(
 
           idempotencyKey,
         }).select(
-          "+idempotencyKey",
+          "+idempotencyKey"
         );
 
-      if (duplicateOrder) {
+      if (
+        duplicateOrder
+      ) {
         return {
-          duplicate: true,
+          duplicate:
+            true,
 
           order:
             formatOrder(
-              duplicateOrder,
+              duplicateOrder
             ),
         };
       }
@@ -1205,26 +1454,30 @@ export async function createMerchantOrder(
 ========================================================= */
 
 export async function getOrderByMerchantApi(
-  input: MerchantApiContext & {
-    orderId: string;
-  },
+  input:
+    MerchantApiContext & {
+      orderId:
+        string;
+    }
 ) {
   const orderId =
     input.orderId.trim();
 
-  if (!orderId) {
+  if (
+    !orderId
+  ) {
     throw new Error(
-      "Order ID is required.",
+      "Order ID is required."
     );
   }
 
   if (
     !mongoose.isValidObjectId(
-      input.merchantId,
+      input.merchantId
     )
   ) {
     throw new Error(
-      "Invalid merchant ID.",
+      "Invalid merchant ID."
     );
   }
 
@@ -1234,16 +1487,18 @@ export async function getOrderByMerchantApi(
 
       merchantId:
         new mongoose.Types.ObjectId(
-          input.merchantId,
+          input.merchantId
         ),
 
       mode:
         input.mode,
     });
 
-  if (!order) {
+  if (
+    !order
+  ) {
     throw new Error(
-      "Order not found.",
+      "Order not found."
     );
   }
 
@@ -1251,21 +1506,22 @@ export async function getOrderByMerchantApi(
     await Payment.findOne({
       merchantId:
         new mongoose.Types.ObjectId(
-          input.merchantId,
+          input.merchantId
         ),
 
       orderId:
         order._id,
     })
       .sort({
-        createdAt: -1,
+        createdAt:
+          -1,
       })
       .lean();
 
   return {
     order:
       formatOrder(
-        order,
+        order
       ),
 
     payment:
@@ -1275,7 +1531,7 @@ export async function getOrderByMerchantApi(
               string,
               unknown
             >
-          | null,
+          | null
       ),
   };
 }
@@ -1285,69 +1541,82 @@ export async function getOrderByMerchantApi(
 ========================================================= */
 
 export async function listMerchantDashboardOrders(
-  input: ListMerchantOrdersInput,
+  input:
+    ListMerchantOrdersInput
 ) {
   const merchant =
     await findMerchantForOwner(
-      input.ownerId,
+      input.ownerId
     );
 
   /* =======================================================
      PAGINATION
-  ======================================================== */
+  ======================================================= */
 
   const parsedPage =
-    Number(input.page);
+    Number(
+      input.page
+    );
 
   const page =
     Number.isInteger(
-      parsedPage,
-    ) && parsedPage > 0
+      parsedPage
+    ) &&
+    parsedPage >
+      0
       ? parsedPage
       : 1;
 
   const parsedLimit =
-    Number(input.limit);
+    Number(
+      input.limit
+    );
 
   const limit =
     Number.isInteger(
-      parsedLimit,
+      parsedLimit
     ) &&
-    parsedLimit >= 5
+    parsedLimit >=
+      5
       ? Math.min(
           parsedLimit,
-          100,
+          100
         )
       : 20;
 
   /* =======================================================
      FILTER VALUES
-  ======================================================== */
+  ======================================================= */
 
   const search =
     normalizeText(
       input.search,
-      150,
-    ) || "";
+      150
+    ) ||
+    "";
 
   const status =
     ORDER_STATUSES.includes(
-      input.status as OrderStatus,
+      input.status as
+        OrderStatus
     )
-      ? (input.status as OrderStatus)
+      ? input.status as
+          OrderStatus
       : undefined;
 
   const mode:
     | OrderMode
     | undefined =
-    input.mode === "test" ||
-    input.mode === "live"
+    input.mode ===
+      "test" ||
+    input.mode ===
+      "live"
       ? input.mode
       : undefined;
 
   /* =======================================================
      BASE FILTER
-  ======================================================== */
+  ======================================================= */
 
   const filter:
     Record<
@@ -1358,27 +1627,33 @@ export async function listMerchantDashboardOrders(
       merchant._id,
   };
 
-  if (status) {
+  if (
+    status
+  ) {
     filter.status =
       status;
   }
 
-  if (mode) {
+  if (
+    mode
+  ) {
     filter.mode =
       mode;
   }
 
   /* =======================================================
      SEARCH
-  ======================================================== */
+  ======================================================= */
 
-  if (search) {
+  if (
+    search
+  ) {
     const regex =
       new RegExp(
         escapeRegex(
-          search,
+          search
         ),
-        "i",
+        "i"
       );
 
     filter.$or = [
@@ -1406,43 +1681,48 @@ export async function listMerchantDashboardOrders(
 
   /* =======================================================
      DATE FILTER
-  ======================================================== */
+  ======================================================= */
 
   const from =
     normalizeText(
       input.from,
-      30,
+      30
     );
 
   const to =
     normalizeText(
       input.to,
-      30,
+      30
     );
 
-  if (from || to) {
+  if (
+    from ||
+    to
+  ) {
     const dateRange:
       Record<
         string,
         Date
       > = {};
 
-    if (from) {
+    if (
+      from
+    ) {
       const fromDate =
         new Date(
-          from,
+          from
         );
 
       if (
         !Number.isNaN(
-          fromDate.getTime(),
+          fromDate.getTime()
         )
       ) {
         fromDate.setHours(
           0,
           0,
           0,
-          0,
+          0
         );
 
         dateRange.$gte =
@@ -1450,22 +1730,24 @@ export async function listMerchantDashboardOrders(
       }
     }
 
-    if (to) {
+    if (
+      to
+    ) {
       const toDate =
         new Date(
-          to,
+          to
         );
 
       if (
         !Number.isNaN(
-          toDate.getTime(),
+          toDate.getTime()
         )
       ) {
         toDate.setHours(
           23,
           59,
           59,
-          999,
+          999
         );
 
         dateRange.$lte =
@@ -1475,8 +1757,9 @@ export async function listMerchantDashboardOrders(
 
     if (
       Object.keys(
-        dateRange,
-      ).length > 0
+        dateRange
+      ).length >
+      0
     ) {
       filter.createdAt =
         dateRange;
@@ -1485,11 +1768,11 @@ export async function listMerchantDashboardOrders(
 
   /* =======================================================
      TOTAL
-  ======================================================== */
+  ======================================================= */
 
   const total =
     await Order.countDocuments(
-      filter,
+      filter
     );
 
   const totalPages =
@@ -1497,48 +1780,57 @@ export async function listMerchantDashboardOrders(
       1,
       Math.ceil(
         total /
-          limit,
-      ),
+          limit
+      )
     );
 
   const safePage =
     Math.min(
       page,
-      totalPages,
+      totalPages
     );
 
   /* =======================================================
      ORDERS
-  ======================================================== */
+  ======================================================= */
 
   const orders =
     await Order.find(
-      filter,
+      filter
     )
       .sort({
-        createdAt: -1,
+        createdAt:
+          -1,
       })
       .skip(
         (
           safePage -
           1
-        ) * limit,
+        ) *
+          limit
       )
       .limit(
-        limit,
+        limit
       )
       .lean();
 
   /* =======================================================
      SUMMARY
-  ======================================================== */
+  ======================================================= */
 
   const summaryResult =
     await Order.aggregate<{
-      totalOrders: number;
-      paidOrders: number;
-      pendingOrders: number;
-      grossAmount: unknown;
+      totalOrders:
+        number;
+
+      paidOrders:
+        number;
+
+      pendingOrders:
+        number;
+
+      grossAmount:
+        unknown;
     }>(
       [
         {
@@ -1550,10 +1842,12 @@ export async function listMerchantDashboardOrders(
 
         {
           $group: {
-            _id: null,
+            _id:
+              null,
 
             totalOrders: {
-              $sum: 1,
+              $sum:
+                1,
             },
 
             paidOrders: {
@@ -1579,6 +1873,7 @@ export async function listMerchantDashboardOrders(
                   {
                     $in: [
                       "$status",
+
                       [
                         "created",
                         "pending",
@@ -1611,7 +1906,7 @@ export async function listMerchantDashboardOrders(
             },
           },
         },
-      ] as PipelineStage[],
+      ] as PipelineStage[]
     );
 
   const summary =
@@ -1619,7 +1914,7 @@ export async function listMerchantDashboardOrders(
 
   /* =======================================================
      MERCHANT DISPLAY NAME
-  ======================================================== */
+  ======================================================= */
 
   const merchantRaw =
     merchant as unknown as Record<
@@ -1643,13 +1938,13 @@ export async function listMerchantDashboardOrders(
 
   /* =======================================================
      RESPONSE
-  ======================================================== */
+  ======================================================= */
 
   return {
     merchant: {
       id:
         String(
-          merchant._id,
+          merchant._id
         ),
 
       businessName,
@@ -1661,14 +1956,14 @@ export async function listMerchantDashboardOrders(
     orders:
       orders.map(
         (
-          order,
+          order
         ) =>
           formatOrder(
             order as unknown as Record<
               string,
               unknown
-            >,
-          ),
+            >
+          )
       ),
 
     summary: {
@@ -1687,7 +1982,7 @@ export async function listMerchantDashboardOrders(
       grossAmount:
         decimalToNumber(
           summary?.grossAmount ??
-            0,
+            0
         ),
     },
 
@@ -1717,20 +2012,25 @@ export async function listMerchantDashboardOrders(
 ========================================================= */
 
 export async function getMerchantDashboardOrder(
-  ownerId: string,
-  orderIdValue: string,
+  ownerId:
+    string,
+
+  orderIdValue:
+    string
 ) {
   const merchant =
     await findMerchantForOwner(
-      ownerId,
+      ownerId
     );
 
   const orderId =
     orderIdValue.trim();
 
-  if (!orderId) {
+  if (
+    !orderId
+  ) {
     throw new Error(
-      "Order ID is required.",
+      "Order ID is required."
     );
   }
 
@@ -1742,9 +2042,11 @@ export async function getMerchantDashboardOrder(
         merchant._id,
     });
 
-  if (!order) {
+  if (
+    !order
+  ) {
     throw new Error(
-      "Order not found.",
+      "Order not found."
     );
   }
 
@@ -1757,14 +2059,15 @@ export async function getMerchantDashboardOrder(
         order._id,
     })
       .sort({
-        createdAt: -1,
+        createdAt:
+          -1,
       })
       .lean();
 
   return {
     order:
       formatOrder(
-        order,
+        order
       ),
 
     payment:
@@ -1774,7 +2077,7 @@ export async function getMerchantDashboardOrder(
               string,
               unknown
             >
-          | null,
+          | null
       ),
   };
 }
