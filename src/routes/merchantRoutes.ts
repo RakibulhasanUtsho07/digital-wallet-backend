@@ -16,8 +16,16 @@ import {
 } from "../middlewares/securityRateLimiters.js";
 
 import {
+  merchantAiRateLimiter,
+} from "../middlewares/merchantAiRateLimiter.js";
+
+import {
   parseMerchantVerificationDocuments,
 } from "../middlewares/merchantVerificationUpload.js";
+
+/* =========================================================
+   CONTROLLERS
+========================================================= */
 
 import {
   getMyMerchantController,
@@ -27,13 +35,6 @@ import {
   completeMerchantOnboardingController,
   getMerchantOnboardingStatusController,
 } from "../controllers/merchantOnboardingController.js";
-
-import {
-  createMerchantApiKeyController,
-  listMerchantApiKeysController,
-  revokeMerchantApiKeyController,
-  rotateMerchantApiKeyController,
-} from "../controllers/merchantDashboardApiKeyController.js";
 
 import {
   getMerchantVerificationController,
@@ -82,16 +83,57 @@ import {
 } from "../controllers/merchantTransactionController.js";
 
 import {
+  createMerchantPayoutController,
+  getMerchantPayoutController,
+  listMerchantPayoutsController,
+} from "../controllers/merchantPayoutController.js";
+
+import {
+  createMerchantSettlementController,
+  getMerchantSettlementController,
+  listMerchantSettlementsController,
+} from "../controllers/merchantSettlementController.js";
+
+import {
+  getMerchantDisputesController,
+} from "../controllers/merchantDisputesController.js";
+
+import {
+  getMerchantDisputeDetailController,
+} from "../controllers/merchantDisputeDetailController.js";
+
+/*
+ * NEW
+ */
+import {
+  getMerchantAnalyticsController,
+} from "../controllers/merchantAnalyticsController.js";
+
+import {
   getMerchantReportController,
 } from "../controllers/merchantReportController.js";
+
+import {
+  createMerchantApiKeyController,
+  listMerchantApiKeysController,
+  revokeMerchantApiKeyController,
+  rotateMerchantApiKeyController,
+} from "../controllers/merchantDashboardApiKeyController.js";
+
+import {
+  getMerchantAiContextController,
+  merchantAiChatController,
+} from "../controllers/merchantAiAssistantController.js";
+
+/* =========================================================
+   ROUTER
+========================================================= */
 
 const router =
   Router();
 
 /* =========================================================
    CREATE MERCHANT
-
-   POST /api/merchants
 ========================================================= */
 
 router.post(
@@ -102,12 +144,7 @@ router.post(
 );
 
 /* =========================================================
-   MERCHANT AUTH / ONBOARDING STATUS
-
-   GET /api/merchants/onboarding-status
-
-   This route must not use requireMerchant because a normal
-   authenticated user calls it before becoming a merchant.
+   ONBOARDING
 ========================================================= */
 
 router.get(
@@ -119,36 +156,30 @@ router.get(
 
 /* =========================================================
    MY MERCHANT
-
-   GET /api/merchants/me
 ========================================================= */
 
 router.get(
   "/me",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMyMerchantController
 );
 
 /* =========================================================
-   MERCHANT OVERVIEW
-
-   GET /api/merchants/overview
+   OVERVIEW
 ========================================================= */
 
 router.get(
   "/overview",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMerchantOverviewController
 );
 
 /* =========================================================
-   MERCHANT VERIFICATION / KYB
-
-   The owner must complete NID/e-KYC before submitting
-   business documents. Live API access remains locked until
-   an administrator approves the business verification.
+   VERIFICATION
 ========================================================= */
 
 router.get(
@@ -169,13 +200,14 @@ router.post(
 );
 
 /* =========================================================
-   MERCHANT PAYMENTS
+   PAYMENTS
 ========================================================= */
 
 router.get(
   "/payments",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMerchantPaymentsController
 );
 
@@ -183,17 +215,19 @@ router.get(
   "/payments/:paymentId",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMerchantPaymentDetailController
 );
 
 /* =========================================================
-   MERCHANT GATEWAY ORDERS
+   ORDERS
 ========================================================= */
 
 router.get(
   "/orders",
   protect,
   requireMerchant,
+  securityReadLimiter,
   listMerchantDashboardOrdersController
 );
 
@@ -201,14 +235,12 @@ router.get(
   "/orders/:orderId",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMerchantDashboardOrderController
 );
 
 /* =========================================================
-   MERCHANT SANDBOX
-
-   These dashboard-session endpoints create and read only
-   test-mode orders. The mode cannot be changed by input.
+   SANDBOX
 ========================================================= */
 
 router.post(
@@ -236,13 +268,14 @@ router.get(
 );
 
 /* =========================================================
-   MERCHANT CUSTOMERS
+   CUSTOMERS
 ========================================================= */
 
 router.get(
   "/customers",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMerchantCustomersController
 );
 
@@ -250,17 +283,19 @@ router.get(
   "/customers/:customerId",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMerchantCustomerDetailController
 );
 
 /* =========================================================
-   MERCHANT REFUNDS
+   REFUNDS
 ========================================================= */
 
 router.get(
   "/refunds",
   protect,
   requireMerchant,
+  securityReadLimiter,
   listMerchantRefundsController
 );
 
@@ -268,17 +303,19 @@ router.get(
   "/refunds/:refundId",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMerchantDashboardRefundController
 );
 
 /* =========================================================
-   MERCHANT TRANSACTIONS
+   TRANSACTIONS
 ========================================================= */
 
 router.get(
   "/transactions",
   protect,
   requireMerchant,
+  securityReadLimiter,
   listMerchantTransactionsController
 );
 
@@ -286,26 +323,114 @@ router.get(
   "/transactions/:transactionId",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMerchantTransactionController
 );
 
 /* =========================================================
-   MERCHANT REPORTS
+   PAYOUTS
+========================================================= */
+
+router.get(
+  "/payouts",
+  protect,
+  requireMerchant,
+  securityReadLimiter,
+  listMerchantPayoutsController
+);
+
+router.post(
+  "/payouts",
+  protect,
+  requireMerchant,
+  securitySensitiveLimiter,
+  createMerchantPayoutController
+);
+
+router.get(
+  "/payouts/:payoutId",
+  protect,
+  requireMerchant,
+  securityReadLimiter,
+  getMerchantPayoutController
+);
+
+/* =========================================================
+   SETTLEMENTS
+========================================================= */
+
+router.get(
+  "/settlements",
+  protect,
+  requireMerchant,
+  securityReadLimiter,
+  listMerchantSettlementsController
+);
+
+router.post(
+  "/settlements",
+  protect,
+  requireMerchant,
+  securitySensitiveLimiter,
+  createMerchantSettlementController
+);
+
+router.get(
+  "/settlements/:settlementId",
+  protect,
+  requireMerchant,
+  securityReadLimiter,
+  getMerchantSettlementController
+);
+
+/* =========================================================
+   DISPUTES
+========================================================= */
+
+router.get(
+  "/disputes",
+  protect,
+  requireMerchant,
+  securityReadLimiter,
+  getMerchantDisputesController
+);
+
+router.get(
+  "/disputes/:disputeId",
+  protect,
+  requireMerchant,
+  securityReadLimiter,
+  getMerchantDisputeDetailController
+);
+
+/* =========================================================
+   ANALYTICS
+
+   GET /api/merchants/analytics
+========================================================= */
+
+router.get(
+  "/analytics",
+  protect,
+  requireMerchant,
+  securityReadLimiter,
+  getMerchantAnalyticsController
+);
+
+/* =========================================================
+   REPORTS
 ========================================================= */
 
 router.get(
   "/reports",
   protect,
   requireMerchant,
+  securityReadLimiter,
   getMerchantReportController
 );
 
 /* =========================================================
-   MERCHANT API KEYS
-
-   Test keys are available before KYB approval. Creating,
-   rotating, and using live keys requires verified owner
-   e-KYC plus approved merchant business verification.
+   API KEYS
 ========================================================= */
 
 router.post(
@@ -339,5 +464,29 @@ router.post(
   securitySensitiveLimiter,
   rotateMerchantApiKeyController
 );
+
+/* =========================================================
+   AI ASSISTANT
+========================================================= */
+
+router.get(
+  "/ai-assistant/context",
+  protect,
+  requireMerchant,
+  securityReadLimiter,
+  getMerchantAiContextController
+);
+
+router.post(
+  "/ai-assistant/chat",
+  protect,
+  requireMerchant,
+  merchantAiRateLimiter,
+  merchantAiChatController
+);
+
+/* =========================================================
+   EXPORT
+========================================================= */
 
 export default router;
