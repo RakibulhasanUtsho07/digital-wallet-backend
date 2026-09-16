@@ -12,20 +12,34 @@ import {
 
 /* =========================================================
    GET MERCHANT ANALYTICS
+
    GET /api/merchants/analytics
 ========================================================= */
 
 export async function getMerchantAnalyticsController(
-  req: AuthRequest,
-  res: Response
+  req:
+    AuthRequest,
+
+  res:
+    Response
 ): Promise<void> {
   try {
+    /* =====================================================
+       AUTHENTICATION
+    ====================================================== */
+
     const ownerId =
       req.user?._id;
 
-    if (!ownerId) {
-      res.status(401).json({
-        success: false,
+    if (
+      !ownerId
+    ) {
+      res.status(
+        401
+      ).json({
+        success:
+          false,
+
         message:
           "Authentication is required.",
       });
@@ -33,9 +47,16 @@ export async function getMerchantAnalyticsController(
       return;
     }
 
+    /* =====================================================
+       SERVICE
+    ====================================================== */
+
     const result =
       await getMerchantAnalytics({
-        ownerId,
+        ownerId:
+          String(
+            ownerId
+          ),
 
         period:
           req.query.period,
@@ -47,25 +68,64 @@ export async function getMerchantAnalyticsController(
           req.query.to,
       });
 
-    res.status(200).json({
-      success: true,
-      data: result,
+    /* =====================================================
+       RESPONSE
+    ====================================================== */
+
+    res.status(
+      200
+    ).json({
+      success:
+        true,
+
+      data:
+        result,
     });
   } catch (
-    error: unknown
+    error:
+      unknown
   ) {
     console.error(
       "GET MERCHANT ANALYTICS ERROR:",
       error
     );
 
-    res.status(400).json({
-      success: false,
+    const message =
+      error instanceof
+        Error
+        ? error.message
+        : "Unable to load merchant analytics.";
 
-      message:
-        error instanceof Error
-          ? error.message
-          : "Unable to load merchant analytics.",
+    let statusCode =
+      400;
+
+    if (
+      message ===
+      "Authenticated merchant owner is required."
+    ) {
+      statusCode =
+        401;
+    } else if (
+      message ===
+        "Merchant account not found."
+    ) {
+      statusCode =
+        404;
+    } else if (
+      message ===
+        "Merchant account is not active."
+    ) {
+      statusCode =
+        403;
+    }
+
+    res.status(
+      statusCode
+    ).json({
+      success:
+        false,
+
+      message,
     });
   }
 }

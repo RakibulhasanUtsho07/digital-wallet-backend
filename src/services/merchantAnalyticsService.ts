@@ -1,7 +1,12 @@
 import mongoose from "mongoose";
 
-import { Merchant } from "../models/Merchant.js";
-import { Payment } from "../models/Payment.js";
+import {
+  Merchant,
+} from "../models/Merchant.js";
+
+import {
+  Payment,
+} from "../models/Payment.js";
 
 /* =========================================================
    TYPES
@@ -16,8 +21,11 @@ export type MerchantAnalyticsPeriod =
 
 export interface MerchantAnalyticsInput {
   ownerId: string;
+
   period?: unknown;
+
   from?: unknown;
+
   to?: unknown;
 }
 
@@ -26,31 +34,49 @@ export interface MerchantAnalyticsInput {
 ========================================================= */
 
 function normalizeText(
-  value: unknown,
-  maxLength = 500
+  value:
+    unknown,
+
+  maxLength =
+    500
 ): string | undefined {
-  if (typeof value !== "string") {
+  if (
+    typeof value !==
+    "string"
+  ) {
     return undefined;
   }
 
-  const normalized = value.trim();
+  const normalized =
+    value.trim();
 
-  if (!normalized) {
+  if (
+    !normalized
+  ) {
     return undefined;
   }
 
-  return normalized.slice(0, maxLength);
+  return normalized.slice(
+    0,
+    maxLength
+  );
 }
 
 function normalizePeriod(
-  value: unknown
+  value:
+    unknown
 ): MerchantAnalyticsPeriod {
   if (
-    value === "7d" ||
-    value === "30d" ||
-    value === "90d" ||
-    value === "12m" ||
-    value === "all"
+    value ===
+      "7d" ||
+    value ===
+      "30d" ||
+    value ===
+      "90d" ||
+    value ===
+      "12m" ||
+    value ===
+      "all"
   ) {
     return value;
   }
@@ -58,7 +84,10 @@ function normalizePeriod(
   return "30d";
 }
 
-function toNumber(value: unknown): number {
+function toNumber(
+  value:
+    unknown
+): number {
   if (
     value === null ||
     value === undefined
@@ -66,51 +95,80 @@ function toNumber(value: unknown): number {
     return 0;
   }
 
-  if (typeof value === "number") {
-    return Number.isFinite(value)
+  if (
+    typeof value ===
+    "number"
+  ) {
+    return Number.isFinite(
+      value
+    )
       ? value
       : 0;
   }
 
   if (
-    typeof value === "object" &&
-    value !== null &&
-    "toString" in value
+    typeof value ===
+      "object" &&
+    value !==
+      null &&
+    "toString" in
+      value
   ) {
-    const parsed = Number(
-      String(value)
-    );
+    const parsed =
+      Number(
+        String(
+          value
+        )
+      );
 
-    return Number.isFinite(parsed)
+    return Number.isFinite(
+      parsed
+    )
       ? parsed
       : 0;
   }
 
-  const parsed = Number(value);
+  const parsed =
+    Number(
+      value
+    );
 
-  return Number.isFinite(parsed)
+  return Number.isFinite(
+    parsed
+  )
     ? parsed
     : 0;
 }
 
 function roundNumber(
-  value: number,
-  digits = 2
+  value:
+    number,
+
+  digits =
+    2
 ): number {
   const multiplier =
-    10 ** digits;
+    10 **
+    digits;
 
   return (
     Math.round(
-      (value + Number.EPSILON) *
+      (
+        value +
+        Number.EPSILON
+      ) *
         multiplier
-    ) / multiplier
+    ) /
+    multiplier
   );
 }
 
 function parseDate(
-  value: unknown,
-  endOfDay = false
+  value:
+    unknown,
+
+  endOfDay =
+    false
 ): Date | null {
   const normalized =
     normalizeText(
@@ -118,12 +176,16 @@ function parseDate(
       50
     );
 
-  if (!normalized) {
+  if (
+    !normalized
+  ) {
     return null;
   }
 
   const date =
-    new Date(normalized);
+    new Date(
+      normalized
+    );
 
   if (
     Number.isNaN(
@@ -133,12 +195,21 @@ function parseDate(
     return null;
   }
 
-  if (endOfDay) {
+  if (
+    endOfDay
+  ) {
     date.setHours(
       23,
       59,
       59,
       999
+    );
+  } else {
+    date.setHours(
+      0,
+      0,
+      0,
+      0
     );
   }
 
@@ -146,17 +217,24 @@ function parseDate(
 }
 
 function resolvePeriodStart(
-  period: MerchantAnalyticsPeriod
+  period:
+    MerchantAnalyticsPeriod
 ): Date | null {
-  const now = new Date();
+  const now =
+    new Date();
 
-  switch (period) {
+  switch (
+    period
+  ) {
     case "7d": {
       const date =
-        new Date(now);
+        new Date(
+          now
+        );
 
       date.setDate(
-        date.getDate() - 7
+        date.getDate() -
+          7
       );
 
       return date;
@@ -164,10 +242,13 @@ function resolvePeriodStart(
 
     case "30d": {
       const date =
-        new Date(now);
+        new Date(
+          now
+        );
 
       date.setDate(
-        date.getDate() - 30
+        date.getDate() -
+          30
       );
 
       return date;
@@ -175,10 +256,13 @@ function resolvePeriodStart(
 
     case "90d": {
       const date =
-        new Date(now);
+        new Date(
+          now
+        );
 
       date.setDate(
-        date.getDate() - 90
+        date.getDate() -
+          90
       );
 
       return date;
@@ -186,10 +270,13 @@ function resolvePeriodStart(
 
     case "12m": {
       const date =
-        new Date(now);
+        new Date(
+          now
+        );
 
       date.setMonth(
-        date.getMonth() - 12
+        date.getMonth() -
+          12
       );
 
       return date;
@@ -199,18 +286,17 @@ function resolvePeriodStart(
       return null;
 
     default:
-      return resolvePeriodStart(
-        "30d"
-      );
+      return null;
   }
 }
 
 /* =========================================================
-   MERCHANT LOOKUP
+   MERCHANT
 ========================================================= */
 
 async function findMerchantForOwner(
-  ownerId: string
+  ownerId:
+    string
 ) {
   const normalizedOwnerId =
     normalizeText(
@@ -218,7 +304,9 @@ async function findMerchantForOwner(
       100
     );
 
-  if (!normalizedOwnerId) {
+  if (
+    !normalizedOwnerId
+  ) {
     throw new Error(
       "Authenticated merchant owner is required."
     );
@@ -250,11 +338,15 @@ async function findMerchantForOwner(
           "status",
           "verificationStatus",
           "defaultCurrency",
-        ].join(" ")
+        ].join(
+          " "
+        )
       )
       .lean();
 
-  if (!merchant) {
+  if (
+    !merchant
+  ) {
     throw new Error(
       "Merchant account not found."
     );
@@ -273,11 +365,12 @@ async function findMerchantForOwner(
 }
 
 /* =========================================================
-   MAIN ANALYTICS
+   MAIN
 ========================================================= */
 
 export async function getMerchantAnalytics(
-  input: MerchantAnalyticsInput
+  input:
+    MerchantAnalyticsInput
 ) {
   const merchant =
     await findMerchantForOwner(
@@ -308,19 +401,24 @@ export async function getMerchantAnalytics(
   let endDate =
     new Date();
 
-  if (customFrom) {
+  if (
+    customFrom
+  ) {
     startDate =
       customFrom;
   }
 
-  if (customTo) {
+  if (
+    customTo
+  ) {
     endDate =
       customTo;
   }
 
   if (
     startDate &&
-    startDate > endDate
+    startDate >
+      endDate
   ) {
     throw new Error(
       "Analytics start date cannot be later than end date."
@@ -328,27 +426,39 @@ export async function getMerchantAnalytics(
   }
 
   const merchantId =
-    merchant._id as mongoose.Types.ObjectId;
+    merchant._id as
+      mongoose.Types.ObjectId;
 
-  const match: Record<
-    string,
-    unknown
-  > = {
+  /* =======================================================
+     BASE MATCH
+  ======================================================== */
+
+  const match:
+    Record<
+      string,
+      unknown
+    > = {
     merchantId,
   };
 
-  if (startDate || endDate) {
+  if (
+    startDate
+  ) {
     match.createdAt = {
-      ...(startDate
-        ? {
-            $gte: startDate,
-          }
-        : {}),
-      ...(endDate
-        ? {
-            $lte: endDate,
-          }
-        : {}),
+      $gte:
+        startDate,
+
+      $lte:
+        endDate,
+    };
+  } else {
+    /*
+     * All-time:
+     * no artificial 30-day start limit.
+     */
+    match.createdAt = {
+      $lte:
+        endDate,
     };
   }
 
@@ -358,28 +468,52 @@ export async function getMerchantAnalytics(
 
   const overviewResult =
     await Payment.aggregate<{
-      totalPayments: number;
-      completedPayments: number;
-      pendingPayments: number;
-      processingPayments: number;
-      failedPayments: number;
-      cancelledPayments: number;
-      expiredPayments: number;
-      grossVolume: unknown;
-      totalFees: unknown;
-      averageAmount: unknown;
-      uniqueCustomers: number;
+      totalPayments:
+        number;
+
+      completedPayments:
+        number;
+
+      pendingPayments:
+        number;
+
+      processingPayments:
+        number;
+
+      failedPayments:
+        number;
+
+      cancelledPayments:
+        number;
+
+      expiredPayments:
+        number;
+
+      grossVolume:
+        unknown;
+
+      totalFees:
+        unknown;
+
+      averageAmount:
+        unknown;
+
+      uniqueCustomers:
+        number;
     }>([
       {
-        $match: match,
+        $match:
+          match,
       },
 
       {
         $group: {
-          _id: null,
+          _id:
+            null,
 
           totalPayments: {
-            $sum: 1,
+            $sum:
+              1,
           },
 
           completedPayments: {
@@ -391,7 +525,9 @@ export async function getMerchantAnalytics(
                     "completed",
                   ],
                 },
+
                 1,
+
                 0,
               ],
             },
@@ -406,7 +542,9 @@ export async function getMerchantAnalytics(
                     "pending",
                   ],
                 },
+
                 1,
+
                 0,
               ],
             },
@@ -418,13 +556,16 @@ export async function getMerchantAnalytics(
                 {
                   $in: [
                     "$status",
+
                     [
                       "authorized",
                       "captured",
                     ],
                   ],
                 },
+
                 1,
+
                 0,
               ],
             },
@@ -439,7 +580,9 @@ export async function getMerchantAnalytics(
                     "failed",
                   ],
                 },
+
                 1,
+
                 0,
               ],
             },
@@ -454,7 +597,9 @@ export async function getMerchantAnalytics(
                     "cancelled",
                   ],
                 },
+
                 1,
+
                 0,
               ],
             },
@@ -469,7 +614,9 @@ export async function getMerchantAnalytics(
                     "expired",
                   ],
                 },
+
                 1,
+
                 0,
               ],
             },
@@ -484,7 +631,9 @@ export async function getMerchantAnalytics(
                     "completed",
                   ],
                 },
+
                 "$amount",
+
                 0,
               ],
             },
@@ -499,12 +648,14 @@ export async function getMerchantAnalytics(
                     "completed",
                   ],
                 },
+
                 {
                   $ifNull: [
                     "$feeAmount",
                     0,
                   ],
                 },
+
                 0,
               ],
             },
@@ -519,7 +670,9 @@ export async function getMerchantAnalytics(
                     "completed",
                   ],
                 },
+
                 "$amount",
+
                 null,
               ],
             },
@@ -534,22 +687,45 @@ export async function getMerchantAnalytics(
 
       {
         $project: {
-          totalPayments: 1,
-          completedPayments: 1,
-          pendingPayments: 1,
-          processingPayments: 1,
-          failedPayments: 1,
-          cancelledPayments: 1,
-          expiredPayments: 1,
-          grossVolume: 1,
-          totalFees: 1,
-          averageAmount: 1,
+          totalPayments:
+            1,
+
+          completedPayments:
+            1,
+
+          pendingPayments:
+            1,
+
+          processingPayments:
+            1,
+
+          failedPayments:
+            1,
+
+          cancelledPayments:
+            1,
+
+          expiredPayments:
+            1,
+
+          grossVolume:
+            1,
+
+          totalFees:
+            1,
+
+          averageAmount:
+            1,
+
           uniqueCustomers: {
             $size: {
               $filter: {
                 input:
                   "$uniqueCustomers",
-                as: "customerId",
+
+                as:
+                  "customerId",
+
                 cond: {
                   $ne: [
                     "$$customerId",
@@ -568,54 +744,63 @@ export async function getMerchantAnalytics(
 
   const totalPayments =
     Number(
-      overview?.totalPayments ??
+      overview
+        ?.totalPayments ??
         0
     );
 
   const completedPayments =
     Number(
-      overview?.completedPayments ??
+      overview
+        ?.completedPayments ??
         0
     );
 
   const pendingPayments =
     Number(
-      overview?.pendingPayments ??
+      overview
+        ?.pendingPayments ??
         0
     );
 
   const processingPayments =
     Number(
-      overview?.processingPayments ??
+      overview
+        ?.processingPayments ??
         0
     );
 
   const failedPayments =
     Number(
-      overview?.failedPayments ??
+      overview
+        ?.failedPayments ??
         0
     );
 
   const cancelledPayments =
     Number(
-      overview?.cancelledPayments ??
+      overview
+        ?.cancelledPayments ??
         0
     );
 
   const expiredPayments =
     Number(
-      overview?.expiredPayments ??
+      overview
+        ?.expiredPayments ??
         0
     );
 
   const grossVolume =
     toNumber(
-      overview?.grossVolume
+      overview
+        ?.grossVolume
     );
 
   const totalFees =
     toNumber(
-      overview?.totalFees
+      overview
+        ?.totalFees
     );
 
   const netRevenue =
@@ -623,7 +808,8 @@ export async function getMerchantAnalytics(
     totalFees;
 
   const successRate =
-    totalPayments > 0
+    totalPayments >
+    0
       ? (
           completedPayments /
           totalPayments
@@ -633,49 +819,47 @@ export async function getMerchantAnalytics(
 
   const averagePaymentValue =
     toNumber(
-      overview?.averageAmount
+      overview
+        ?.averageAmount
     );
 
   const uniqueCustomers =
     Number(
-      overview?.uniqueCustomers ??
+      overview
+        ?.uniqueCustomers ??
         0
     );
 
   /* =======================================================
-     DAILY TREND
+     TREND
+
+     Important:
+     Uses the SAME period/range as overview.
+
+     Previous implementation used last 30 days when
+     period = all, which caused mismatched analytics.
   ======================================================== */
-
-  const trendStart =
-    startDate ??
-    (() => {
-      const date =
-        new Date();
-
-      date.setDate(
-        date.getDate() - 30
-      );
-
-      return date;
-    })();
 
   const trendResult =
     await Payment.aggregate<{
-      _id: string;
-      paymentCount: number;
-      completedCount: number;
-      failedCount: number;
-      volume: unknown;
+      _id:
+        string;
+
+      paymentCount:
+        number;
+
+      completedCount:
+        number;
+
+      failedCount:
+        number;
+
+      volume:
+        unknown;
     }>([
       {
-        $match: {
-          merchantId,
-
-          createdAt: {
-            $gte: trendStart,
-            $lte: endDate,
-          },
-        },
+        $match:
+          match,
       },
 
       {
@@ -691,7 +875,8 @@ export async function getMerchantAnalytics(
           },
 
           paymentCount: {
-            $sum: 1,
+            $sum:
+              1,
           },
 
           completedCount: {
@@ -703,7 +888,9 @@ export async function getMerchantAnalytics(
                     "completed",
                   ],
                 },
+
                 1,
+
                 0,
               ],
             },
@@ -718,7 +905,9 @@ export async function getMerchantAnalytics(
                     "failed",
                   ],
                 },
+
                 1,
+
                 0,
               ],
             },
@@ -733,7 +922,9 @@ export async function getMerchantAnalytics(
                     "completed",
                   ],
                 },
+
                 "$amount",
+
                 0,
               ],
             },
@@ -743,14 +934,17 @@ export async function getMerchantAnalytics(
 
       {
         $sort: {
-          _id: 1,
+          _id:
+            1,
         },
       },
     ]);
 
   const trend =
     trendResult.map(
-      (item) => ({
+      (
+        item
+      ) => ({
         date:
           item._id,
 
@@ -779,14 +973,19 @@ export async function getMerchantAnalytics(
     );
 
   /* =======================================================
-     PAYMENT METHOD
+     PAYMENT METHODS
   ======================================================== */
 
   const methodResult =
     await Payment.aggregate<{
-      _id: string;
-      count: number;
-      volume: unknown;
+      _id:
+        string | null;
+
+      count:
+        number;
+
+      volume:
+        unknown;
     }>([
       {
         $match: {
@@ -803,7 +1002,8 @@ export async function getMerchantAnalytics(
             "$sourceType",
 
           count: {
-            $sum: 1,
+            $sum:
+              1,
           },
 
           volume: {
@@ -815,16 +1015,20 @@ export async function getMerchantAnalytics(
 
       {
         $sort: {
-          volume: -1,
+          volume:
+            -1,
         },
       },
     ]);
 
   const paymentMethods =
     methodResult.map(
-      (item) => ({
+      (
+        item
+      ) => ({
         key:
-          item._id,
+          item._id ||
+          "unknown",
 
         count:
           Number(
@@ -841,14 +1045,19 @@ export async function getMerchantAnalytics(
     );
 
   /* =======================================================
-     PROVIDER
+     PROVIDERS
   ======================================================== */
 
   const providerResult =
     await Payment.aggregate<{
-      _id: string;
-      count: number;
-      volume: unknown;
+      _id:
+        string | null;
+
+      count:
+        number;
+
+      volume:
+        unknown;
     }>([
       {
         $match: {
@@ -865,7 +1074,8 @@ export async function getMerchantAnalytics(
             "$provider",
 
           count: {
-            $sum: 1,
+            $sum:
+              1,
           },
 
           volume: {
@@ -877,16 +1087,20 @@ export async function getMerchantAnalytics(
 
       {
         $sort: {
-          volume: -1,
+          volume:
+            -1,
         },
       },
     ]);
 
   const providers =
     providerResult.map(
-      (item) => ({
+      (
+        item
+      ) => ({
         key:
-          item._id,
+          item._id ||
+          "unknown",
 
         count:
           Number(
@@ -908,12 +1122,18 @@ export async function getMerchantAnalytics(
 
   const statusResult =
     await Payment.aggregate<{
-      _id: string;
-      count: number;
-      volume: unknown;
+      _id:
+        string | null;
+
+      count:
+        number;
+
+      volume:
+        unknown;
     }>([
       {
-        $match: match,
+        $match:
+          match,
       },
 
       {
@@ -922,7 +1142,8 @@ export async function getMerchantAnalytics(
             "$status",
 
           count: {
-            $sum: 1,
+            $sum:
+              1,
           },
 
           volume: {
@@ -934,16 +1155,20 @@ export async function getMerchantAnalytics(
 
       {
         $sort: {
-          count: -1,
+          count:
+            -1,
         },
       },
     ]);
 
   const statusBreakdown =
     statusResult.map(
-      (item) => ({
+      (
+        item
+      ) => ({
         key:
-          item._id,
+          item._id ||
+          "unknown",
 
         count:
           Number(
@@ -964,16 +1189,24 @@ export async function getMerchantAnalytics(
   ======================================================== */
 
   const topDays =
-    [...trend]
+    [
+      ...trend,
+    ]
       .sort(
-        (a, b) =>
-          b.volume -
-          a.volume
+        (
+          first,
+          second
+        ) =>
+          second.volume -
+          first.volume
       )
-      .slice(0, 5);
+      .slice(
+        0,
+        5
+      );
 
   /* =======================================================
-     RESULT
+     RESPONSE
   ======================================================== */
 
   return {

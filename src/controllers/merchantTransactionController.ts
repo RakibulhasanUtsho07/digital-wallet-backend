@@ -9,34 +9,32 @@ import type {
 import {
   getMerchantTransaction,
   listMerchantTransactions,
+  MerchantTransactionError,
 } from "../services/merchantTransactionService.js";
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
-/**
- * Express req.query values can be:
- * string
- * ParsedQs
- * string[]
- * ParsedQs[]
- * undefined
- *
- * We only need a simple string value for our filters.
- */
 function getSingleString(
-  value: unknown
+  value:
+    unknown
 ): string | undefined {
   if (
     typeof value ===
     "string"
   ) {
-    return value;
+    const normalized =
+      value.trim();
+
+    return normalized ||
+      undefined;
   }
 
   if (
-    Array.isArray(value)
+    Array.isArray(
+      value
+    )
   ) {
     const first =
       value[0];
@@ -45,67 +43,107 @@ function getSingleString(
       typeof first ===
       "string"
     ) {
-      return first;
-    }
+      const normalized =
+        first.trim();
 
-    return undefined;
+      return normalized ||
+        undefined;
+    }
   }
 
   return undefined;
 }
 
-/**
- * Route params normally come as strings,
- * but keeping this helper unknown-safe avoids
- * TypeScript incompatibility.
- */
-function getParamString(
-  value: unknown
-): string | undefined {
+function handleMerchantTransactionError(
+  error:
+    unknown,
+
+  res:
+    Response
+): void {
   if (
-    typeof value ===
-    "string"
+    error instanceof
+    MerchantTransactionError
   ) {
-    return value;
+    res.status(
+      error.statusCode
+    ).json({
+      success:
+        false,
+
+      code:
+        error.code,
+
+      message:
+        error.message,
+    });
+
+    return;
   }
 
-  if (
-    Array.isArray(value)
-  ) {
-    const first =
-      value[0];
+  console.error(
+    "MERCHANT TRANSACTION ERROR:",
 
-    if (
-      typeof first ===
-      "string"
-    ) {
-      return first;
-    }
-  }
+    error instanceof
+      Error
+      ? error.message
+      : error
+  );
 
-  return undefined;
+  res.status(
+    500
+  ).json({
+    success:
+      false,
+
+    message:
+      "Unable to process merchant transaction request.",
+  });
 }
 
 /* =========================================================
    LIST
    GET /api/merchants/transactions
+
+   Supported query parameters:
+
+   page
+   limit
+   search
+   type
+   direction
+   status
+   currency
+   from
+   to
+
+   Example:
+
+   /api/merchants/transactions
+     ?type=REFUND
+     &direction=DEBIT
+     &currency=BDT
 ========================================================= */
 
 export async function listMerchantTransactionsController(
-  req: AuthRequest,
-  res: Response
+  req:
+    AuthRequest,
+
+  res:
+    Response
 ): Promise<void> {
   try {
-    /* -------------------------------------------------------
-       AUTHENTICATED OWNER
-    ------------------------------------------------------- */
-
     const ownerId =
       req.user?._id;
 
-    if (!ownerId) {
-      res.status(401).json({
-        success: false,
+    if (
+      !ownerId
+    ) {
+      res.status(
+        401
+      ).json({
+        success:
+          false,
 
         message:
           "Authentication is required.",
@@ -114,114 +152,73 @@ export async function listMerchantTransactionsController(
       return;
     }
 
-    /* -------------------------------------------------------
-       QUERY VALUES
-    ------------------------------------------------------- */
-
-    const page =
-      getSingleString(
-        req.query.page
-      );
-
-    const limit =
-      getSingleString(
-        req.query.limit
-      );
-
-    const search =
-      getSingleString(
-        req.query.search
-      );
-
-    const status =
-      getSingleString(
-        req.query.status
-      );
-
-    const type =
-      getSingleString(
-        req.query.type
-      );
-
-    const currency =
-      getSingleString(
-        req.query.currency
-      );
-
-    const provider =
-      getSingleString(
-        req.query.provider
-      );
-
-    const mode =
-      getSingleString(
-        req.query.mode
-      );
-
-    const from =
-      getSingleString(
-        req.query.from
-      );
-
-    const to =
-      getSingleString(
-        req.query.to
-      );
-
-    /* -------------------------------------------------------
-       SERVICE
-    ------------------------------------------------------- */
-
     const result =
       await listMerchantTransactions({
         ownerId,
 
-        page,
+        page:
+          getSingleString(
+            req.query.page
+          ),
 
-        limit,
+        limit:
+          getSingleString(
+            req.query.limit
+          ),
 
-        search,
+        search:
+          getSingleString(
+            req.query.search
+          ),
 
-        status,
+        type:
+          getSingleString(
+            req.query.type
+          ),
 
-        type,
+        direction:
+          getSingleString(
+            req.query.direction
+          ),
 
-        currency,
+        status:
+          getSingleString(
+            req.query.status
+          ),
 
-        provider,
+        currency:
+          getSingleString(
+            req.query.currency
+          ),
 
-        mode,
+        from:
+          getSingleString(
+            req.query.from
+          ),
 
-        from,
-
-        to,
+        to:
+          getSingleString(
+            req.query.to
+          ),
       });
 
-    /* -------------------------------------------------------
-       RESPONSE
-    ------------------------------------------------------- */
+    res.status(
+      200
+    ).json({
+      success:
+        true,
 
-    res.status(200).json({
-      success: true,
-
-      data: result,
+      data:
+        result,
     });
   } catch (
-    error: unknown
+    error:
+      unknown
   ) {
-    console.error(
-      "LIST MERCHANT TRANSACTIONS ERROR:",
-      error
+    handleMerchantTransactionError(
+      error,
+      res
     );
-
-    res.status(400).json({
-      success: false,
-
-      message:
-        error instanceof Error
-          ? error.message
-          : "Unable to load merchant transactions.",
-    });
   }
 }
 
@@ -231,20 +228,24 @@ export async function listMerchantTransactionsController(
 ========================================================= */
 
 export async function getMerchantTransactionController(
-  req: AuthRequest,
-  res: Response
+  req:
+    AuthRequest,
+
+  res:
+    Response
 ): Promise<void> {
   try {
-    /* -------------------------------------------------------
-       AUTHENTICATED OWNER
-    ------------------------------------------------------- */
-
     const ownerId =
       req.user?._id;
 
-    if (!ownerId) {
-      res.status(401).json({
-        success: false,
+    if (
+      !ownerId
+    ) {
+      res.status(
+        401
+      ).json({
+        success:
+          false,
 
         message:
           "Authentication is required.",
@@ -253,18 +254,19 @@ export async function getMerchantTransactionController(
       return;
     }
 
-    /* -------------------------------------------------------
-       TRANSACTION ID
-    ------------------------------------------------------- */
-
     const transactionId =
-      getParamString(
+      getSingleString(
         req.params.transactionId
       );
 
-    if (!transactionId) {
-      res.status(400).json({
-        success: false,
+    if (
+      !transactionId
+    ) {
+      res.status(
+        400
+      ).json({
+        success:
+          false,
 
         message:
           "Transaction ID is required.",
@@ -273,40 +275,28 @@ export async function getMerchantTransactionController(
       return;
     }
 
-    /* -------------------------------------------------------
-       SERVICE
-    ------------------------------------------------------- */
-
     const result =
       await getMerchantTransaction(
         ownerId,
         transactionId
       );
 
-    /* -------------------------------------------------------
-       RESPONSE
-    ------------------------------------------------------- */
+    res.status(
+      200
+    ).json({
+      success:
+        true,
 
-    res.status(200).json({
-      success: true,
-
-      data: result,
+      data:
+        result,
     });
   } catch (
-    error: unknown
+    error:
+      unknown
   ) {
-    console.error(
-      "GET MERCHANT TRANSACTION ERROR:",
-      error
+    handleMerchantTransactionError(
+      error,
+      res
     );
-
-    res.status(404).json({
-      success: false,
-
-      message:
-        error instanceof Error
-          ? error.message
-          : "Merchant transaction not found.",
-    });
   }
 }

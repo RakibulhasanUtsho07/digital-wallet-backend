@@ -1,7 +1,12 @@
 import mongoose from "mongoose";
 
-import { Merchant } from "../models/Merchant.js";
-import { Payment } from "../models/Payment.js";
+import {
+  Merchant,
+} from "../models/Merchant.js";
+
+import {
+  Payment,
+} from "../models/Payment.js";
 
 /* =========================================================
    TYPES
@@ -17,37 +22,72 @@ export type MerchantOverviewPeriod =
 
 interface MerchantOverviewInput {
   userId: string;
-  period?: MerchantOverviewPeriod;
+
+  period?:
+    MerchantOverviewPeriod;
 }
 
 interface PaymentAggregationResult {
-  totalPayments: number;
-  successfulPayments: number;
-  pendingPayments: number;
-  processingPayments: number;
-  failedPayments: number;
-  cancelledPayments: number;
-  expiredPayments: number;
+  totalPayments:
+    number;
 
-  grossVolume: number;
-  totalFees: number;
-  netRevenue: number;
+  successfulPayments:
+    number;
 
-  successRate: number;
-  averagePaymentValue: number;
-  uniqueCustomers: number;
+  pendingPayments:
+    number;
+
+  processingPayments:
+    number;
+
+  failedPayments:
+    number;
+
+  cancelledPayments:
+    number;
+
+  expiredPayments:
+    number;
+
+  grossVolume:
+    number;
+
+  totalFees:
+    number;
+
+  netRevenue:
+    number;
+
+  successRate:
+    number;
+
+  averagePaymentValue:
+    number;
+
+  uniqueCustomers:
+    number;
 }
 
 interface TrendItem {
-  date: string;
-  paymentCount: number;
-  volume: number;
+  date:
+    string;
+
+  paymentCount:
+    number;
+
+  volume:
+    number;
 }
 
 interface BreakdownItem {
-  key: string;
-  count: number;
-  amount: number;
+  key:
+    string;
+
+  count:
+    number;
+
+  amount:
+    number;
 }
 
 /* =========================================================
@@ -55,38 +95,82 @@ interface BreakdownItem {
 ========================================================= */
 
 function resolvePeriodStart(
-  period: MerchantOverviewPeriod
+  period:
+    MerchantOverviewPeriod
 ): Date | null {
-  const now = new Date();
+  const now =
+    new Date();
 
-  switch (period) {
+  switch (
+    period
+  ) {
     case "1d": {
-      const date = new Date(now);
-      date.setDate(date.getDate() - 1);
+      const date =
+        new Date(
+          now
+        );
+
+      date.setDate(
+        date.getDate() -
+          1
+      );
+
       return date;
     }
 
     case "7d": {
-      const date = new Date(now);
-      date.setDate(date.getDate() - 7);
+      const date =
+        new Date(
+          now
+        );
+
+      date.setDate(
+        date.getDate() -
+          7
+      );
+
       return date;
     }
 
     case "30d": {
-      const date = new Date(now);
-      date.setDate(date.getDate() - 30);
+      const date =
+        new Date(
+          now
+        );
+
+      date.setDate(
+        date.getDate() -
+          30
+      );
+
       return date;
     }
 
     case "90d": {
-      const date = new Date(now);
-      date.setDate(date.getDate() - 90);
+      const date =
+        new Date(
+          now
+        );
+
+      date.setDate(
+        date.getDate() -
+          90
+      );
+
       return date;
     }
 
     case "12m": {
-      const date = new Date(now);
-      date.setMonth(date.getMonth() - 12);
+      const date =
+        new Date(
+          now
+        );
+
+      date.setMonth(
+        date.getMonth() -
+          12
+      );
+
       return date;
     }
 
@@ -94,12 +178,15 @@ function resolvePeriodStart(
       return null;
 
     default:
-      return resolvePeriodStart("30d");
+      return resolvePeriodStart(
+        "30d"
+      );
   }
 }
 
 function normalizePeriod(
-  value: unknown
+  value:
+    unknown
 ): MerchantOverviewPeriod {
   if (
     value === "1d" ||
@@ -120,7 +207,8 @@ function normalizePeriod(
 ========================================================= */
 
 function toNumber(
-  value: unknown
+  value:
+    unknown
 ): number {
   if (
     value === null ||
@@ -130,46 +218,125 @@ function toNumber(
   }
 
   if (
-    typeof value === "number"
+    typeof value ===
+    "number"
   ) {
-    return Number.isFinite(value)
+    return Number.isFinite(
+      value
+    )
       ? value
       : 0;
   }
 
   if (
-    typeof value === "object" &&
-    value !== null &&
-    "toString" in value
+    typeof value ===
+    "string"
   ) {
-    const parsed = Number(
-      String(value)
-    );
+    const parsed =
+      Number(
+        value
+      );
 
-    return Number.isFinite(parsed)
+    return Number.isFinite(
+      parsed
+    )
       ? parsed
       : 0;
   }
 
-  const parsed = Number(value);
+  /*
+   * MongoDB Decimal128 support.
+   */
+  if (
+    typeof value ===
+      "object" &&
+    value !== null
+  ) {
+    if (
+      "$numberDecimal" in
+      value
+    ) {
+      const decimalValue =
+        (
+          value as {
+            $numberDecimal?:
+              string;
+          }
+        ).$numberDecimal;
 
-  return Number.isFinite(parsed)
+      if (
+        typeof decimalValue ===
+        "string"
+      ) {
+        const parsed =
+          Number(
+            decimalValue
+          );
+
+        return Number.isFinite(
+          parsed
+        )
+          ? parsed
+          : 0;
+      }
+    }
+
+    if (
+      "toString" in
+      value &&
+      typeof (
+        value as {
+          toString?: unknown;
+        }
+      ).toString ===
+        "function"
+    ) {
+      const parsed =
+        Number(
+          String(
+            value
+          )
+        );
+
+      return Number.isFinite(
+        parsed
+      )
+        ? parsed
+        : 0;
+    }
+  }
+
+  const parsed =
+    Number(
+      value
+    );
+
+  return Number.isFinite(
+    parsed
+  )
     ? parsed
     : 0;
 }
 
 function roundNumber(
-  value: number,
-  digits = 2
+  value:
+    number,
+  digits =
+    2
 ): number {
   const multiplier =
-    10 ** digits;
+    10 **
+    digits;
 
   return (
     Math.round(
-      (value + Number.EPSILON) *
+      (
+        value +
+        Number.EPSILON
+      ) *
         multiplier
-    ) / multiplier
+    ) /
+    multiplier
   );
 }
 
@@ -178,7 +345,8 @@ function roundNumber(
 ========================================================= */
 
 async function findMerchantForOwner(
-  userId: string
+  userId:
+    string
 ) {
   if (
     !mongoose.isValidObjectId(
@@ -209,14 +377,19 @@ async function findMerchantForOwner(
           "defaultCurrency",
           "testEnabled",
           "liveEnabled",
-        ].join(" ")
+        ].join(
+          " "
+        )
       )
       .sort({
-        createdAt: -1,
+        createdAt:
+          -1,
       })
       .lean();
 
-  if (!merchant) {
+  if (
+    !merchant
+  ) {
     throw new Error(
       "Merchant account not found."
     );
@@ -230,20 +403,28 @@ async function findMerchantForOwner(
 ========================================================= */
 
 function buildPaymentMatch(
-  merchantId: mongoose.Types.ObjectId,
-  startDate: Date | null
+  merchantId:
+    mongoose.Types.ObjectId,
+  startDate:
+    Date | null
 ) {
-  const match: Record<
-    string,
-    unknown
-  > = {
+  const match:
+    Record<
+      string,
+      unknown
+    > = {
     merchantId,
   };
 
-  if (startDate) {
+  if (
+    startDate
+  ) {
     match.createdAt = {
-      $gte: startDate,
-      $lte: new Date(),
+      $gte:
+        startDate,
+
+      $lte:
+        new Date(),
     };
   }
 
@@ -255,11 +436,13 @@ function buildPaymentMatch(
 ========================================================= */
 
 export async function getMerchantOverview(
-  input: MerchantOverviewInput
+  input:
+    MerchantOverviewInput
 ) {
-  const period = normalizePeriod(
-    input.period
-  );
+  const period =
+    normalizePeriod(
+      input.period
+    );
 
   const merchant =
     await findMerchantForOwner(
@@ -267,7 +450,8 @@ export async function getMerchantOverview(
     );
 
   const merchantObjectId =
-    merchant._id as mongoose.Types.ObjectId;
+    merchant._id as
+      mongoose.Types.ObjectId;
 
   const periodStart =
     resolvePeriodStart(
@@ -287,7 +471,8 @@ export async function getMerchantOverview(
   const summaryResult =
     await Payment.aggregate([
       {
-        $match: match,
+        $match:
+          match,
       },
 
       {
@@ -295,10 +480,12 @@ export async function getMerchantOverview(
           totals: [
             {
               $group: {
-                _id: null,
+                _id:
+                  null,
 
                 totalPayments: {
-                  $sum: 1,
+                  $sum:
+                    1,
                 },
 
                 successfulPayments: {
@@ -310,7 +497,9 @@ export async function getMerchantOverview(
                           "completed",
                         ],
                       },
+
                       1,
+
                       0,
                     ],
                   },
@@ -325,7 +514,9 @@ export async function getMerchantOverview(
                           "pending",
                         ],
                       },
+
                       1,
+
                       0,
                     ],
                   },
@@ -343,7 +534,9 @@ export async function getMerchantOverview(
                           ],
                         ],
                       },
+
                       1,
+
                       0,
                     ],
                   },
@@ -358,7 +551,9 @@ export async function getMerchantOverview(
                           "failed",
                         ],
                       },
+
                       1,
+
                       0,
                     ],
                   },
@@ -373,7 +568,9 @@ export async function getMerchantOverview(
                           "cancelled",
                         ],
                       },
+
                       1,
+
                       0,
                     ],
                   },
@@ -388,7 +585,9 @@ export async function getMerchantOverview(
                           "expired",
                         ],
                       },
+
                       1,
+
                       0,
                     ],
                   },
@@ -403,7 +602,9 @@ export async function getMerchantOverview(
                           "completed",
                         ],
                       },
+
                       "$amount",
+
                       0,
                     ],
                   },
@@ -418,12 +619,14 @@ export async function getMerchantOverview(
                           "completed",
                         ],
                       },
+
                       {
                         $ifNull: [
                           "$feeAmount",
                           0,
                         ],
                       },
+
                       0,
                     ],
                   },
@@ -436,7 +639,8 @@ export async function getMerchantOverview(
             {
               $match: {
                 customerId: {
-                  $ne: null,
+                  $ne:
+                    null,
                 },
               },
             },
@@ -458,45 +662,51 @@ export async function getMerchantOverview(
     ]);
 
   const totals =
-    summaryResult?.[0]?.totals?.[0] ??
+    summaryResult
+      ?.[0]
+      ?.totals
+      ?.[0] ??
     {};
 
   const customerResult =
-    summaryResult?.[0]?.customers?.[0];
+    summaryResult
+      ?.[0]
+      ?.customers
+      ?.[0];
 
   const totalPayments =
-    Number(
-      totals.totalPayments ?? 0
+    toNumber(
+      totals.totalPayments
     );
 
   const successfulPayments =
-    Number(
-      totals.successfulPayments ?? 0
+    toNumber(
+      totals.successfulPayments
     );
 
   const pendingPayments =
-    Number(
-      totals.pendingPayments ?? 0
+    toNumber(
+      totals.pendingPayments
     );
 
   const processingPayments =
-    Number(
-      totals.processingPayments ?? 0
+    toNumber(
+      totals.processingPayments
     );
 
   const failedPayments =
-    Number(
-      totals.failedPayments ?? 0
+    toNumber(
+      totals.failedPayments
     );
 
   const cancelledPayments =
-    Number(
-      totals.cancelledPayments ?? 0
+    toNumber(
+      totals.cancelledPayments
     );
 
   const expiredPayments =
-    Number(
-      totals.expiredPayments ?? 0
+    toNumber(
+      totals.expiredPayments
     );
 
   const grossVolume =
@@ -514,66 +724,103 @@ export async function getMerchantOverview(
     totalFees;
 
   const successRate =
-    totalPayments > 0
-      ? (successfulPayments /
-          totalPayments) *
+    totalPayments >
+    0
+      ? (
+          successfulPayments /
+          totalPayments
+        ) *
         100
       : 0;
 
   const averagePaymentValue =
-    successfulPayments > 0
+    successfulPayments >
+    0
       ? grossVolume /
         successfulPayments
       : 0;
 
   const uniqueCustomers =
-    Number(
-      customerResult?.count ?? 0
+    toNumber(
+      customerResult
+        ?.count
     );
 
   const summary:
     PaymentAggregationResult = {
-      totalPayments,
+    totalPayments:
+      roundNumber(
+        totalPayments,
+        0
+      ),
 
-      successfulPayments,
+    successfulPayments:
+      roundNumber(
+        successfulPayments,
+        0
+      ),
 
-      pendingPayments,
+    pendingPayments:
+      roundNumber(
+        pendingPayments,
+        0
+      ),
 
-      processingPayments,
+    processingPayments:
+      roundNumber(
+        processingPayments,
+        0
+      ),
 
-      failedPayments,
+    failedPayments:
+      roundNumber(
+        failedPayments,
+        0
+      ),
 
-      cancelledPayments,
+    cancelledPayments:
+      roundNumber(
+        cancelledPayments,
+        0
+      ),
 
-      expiredPayments,
+    expiredPayments:
+      roundNumber(
+        expiredPayments,
+        0
+      ),
 
-      grossVolume:
-        roundNumber(
-          grossVolume
-        ),
+    grossVolume:
+      roundNumber(
+        grossVolume
+      ),
 
-      totalFees:
-        roundNumber(
-          totalFees
-        ),
+    totalFees:
+      roundNumber(
+        totalFees
+      ),
 
-      netRevenue:
-        roundNumber(
-          netRevenue
-        ),
+    netRevenue:
+      roundNumber(
+        netRevenue
+      ),
 
-      successRate:
-        roundNumber(
-          successRate
-        ),
+    successRate:
+      roundNumber(
+        successRate
+      ),
 
-      averagePaymentValue:
-        roundNumber(
-          averagePaymentValue
-        ),
+    averagePaymentValue:
+      roundNumber(
+        averagePaymentValue
+      ),
 
-      uniqueCustomers,
-    };
+    uniqueCustomers:
+      roundNumber(
+        uniqueCustomers,
+        0
+      ),
+  };
 
   /* =======================================================
      PAYMENT STATUS BREAKDOWN
@@ -582,7 +829,8 @@ export async function getMerchantOverview(
   const statusBreakdownRaw =
     await Payment.aggregate([
       {
-        $match: match,
+        $match:
+          match,
       },
 
       {
@@ -591,18 +839,21 @@ export async function getMerchantOverview(
             "$status",
 
           count: {
-            $sum: 1,
+            $sum:
+              1,
           },
 
           amount: {
-            $sum: "$amount",
+            $sum:
+              "$amount",
           },
         },
       },
 
       {
         $sort: {
-          count: -1,
+          count:
+            -1,
         },
       },
     ]);
@@ -612,16 +863,21 @@ export async function getMerchantOverview(
     statusBreakdownRaw.map(
       (
         item: {
-          _id: string;
-          count: number;
-          amount: unknown;
+          _id:
+            string;
+
+          count:
+            number;
+
+          amount:
+            unknown;
         }
       ) => ({
         key:
           item._id,
 
         count:
-          Number(
+          toNumber(
             item.count
           ),
 
@@ -643,6 +899,7 @@ export async function getMerchantOverview(
       {
         $match: {
           ...match,
+
           status:
             "completed",
         },
@@ -654,18 +911,21 @@ export async function getMerchantOverview(
             "$sourceType",
 
           count: {
-            $sum: 1,
+            $sum:
+              1,
           },
 
           amount: {
-            $sum: "$amount",
+            $sum:
+              "$amount",
           },
         },
       },
 
       {
         $sort: {
-          amount: -1,
+          amount:
+            -1,
         },
       },
     ]);
@@ -675,16 +935,21 @@ export async function getMerchantOverview(
     methodBreakdownRaw.map(
       (
         item: {
-          _id: string;
-          count: number;
-          amount: unknown;
+          _id:
+            string;
+
+          count:
+            number;
+
+          amount:
+            unknown;
         }
       ) => ({
         key:
           item._id,
 
         count:
-          Number(
+          toNumber(
             item.count
           ),
 
@@ -706,6 +971,7 @@ export async function getMerchantOverview(
       {
         $match: {
           ...match,
+
           status:
             "completed",
         },
@@ -717,18 +983,21 @@ export async function getMerchantOverview(
             "$provider",
 
           count: {
-            $sum: 1,
+            $sum:
+              1,
           },
 
           amount: {
-            $sum: "$amount",
+            $sum:
+              "$amount",
           },
         },
       },
 
       {
         $sort: {
-          amount: -1,
+          amount:
+            -1,
         },
       },
     ]);
@@ -738,16 +1007,21 @@ export async function getMerchantOverview(
     providerBreakdownRaw.map(
       (
         item: {
-          _id: string;
-          count: number;
-          amount: unknown;
+          _id:
+            string;
+
+          count:
+            number;
+
+          amount:
+            unknown;
         }
       ) => ({
         key:
           item._id,
 
         count:
-          Number(
+          toNumber(
             item.count
           ),
 
@@ -762,39 +1036,41 @@ export async function getMerchantOverview(
 
   /* =======================================================
      REVENUE / PAYMENT TREND
+
+     IMPORTANT:
+     - 1d / 7d / 30d / 90d / 12m use periodStart
+     - all means genuinely ALL completed payments
   ======================================================= */
 
-  const trendStart =
-    periodStart ??
-    (() => {
-      const date =
-        new Date();
+  const trendMatch:
+    Record<
+      string,
+      unknown
+    > = {
+    merchantId:
+      merchantObjectId,
 
-      date.setDate(
-        date.getDate() - 30
-      );
+    status:
+      "completed",
+  };
 
-      return date;
-    })();
+  if (
+    periodStart
+  ) {
+    trendMatch.createdAt = {
+      $gte:
+        periodStart,
+
+      $lte:
+        new Date(),
+    };
+  }
 
   const trendRaw =
     await Payment.aggregate([
       {
-        $match: {
-          merchantId:
-            merchantObjectId,
-
-          createdAt: {
-            $gte:
-              trendStart,
-
-            $lte:
-              new Date(),
-          },
-
-          status:
-            "completed",
-        },
+        $match:
+          trendMatch,
       },
 
       {
@@ -810,18 +1086,21 @@ export async function getMerchantOverview(
           },
 
           paymentCount: {
-            $sum: 1,
+            $sum:
+              1,
           },
 
           volume: {
-            $sum: "$amount",
+            $sum:
+              "$amount",
           },
         },
       },
 
       {
         $sort: {
-          _id: 1,
+          _id:
+            1,
         },
       },
     ]);
@@ -831,16 +1110,21 @@ export async function getMerchantOverview(
     trendRaw.map(
       (
         item: {
-          _id: string;
-          paymentCount: number;
-          volume: unknown;
+          _id:
+            string;
+
+          paymentCount:
+            number;
+
+          volume:
+            unknown;
         }
       ) => ({
         date:
           item._id,
 
         paymentCount:
-          Number(
+          toNumber(
             item.paymentCount
           ),
 
@@ -855,6 +1139,10 @@ export async function getMerchantOverview(
 
   /* =======================================================
      RECENT PAYMENTS
+
+     IMPORTANT:
+     Mongo Decimal128 values are converted to plain numbers
+     BEFORE sending data to frontend.
   ======================================================= */
 
   const recentPayments =
@@ -862,9 +1150,12 @@ export async function getMerchantOverview(
       match
     )
       .sort({
-        createdAt: -1,
+        createdAt:
+          -1,
       })
-      .limit(8)
+      .limit(
+        12
+      )
       .select(
         [
           "paymentId",
@@ -883,13 +1174,17 @@ export async function getMerchantOverview(
           "failureMessage",
           "createdAt",
           "completedAt",
-        ].join(" ")
+        ].join(
+          " "
+        )
       )
       .lean();
 
   const formattedRecentPayments =
     recentPayments.map(
-      (payment) => ({
+      (
+        payment
+      ) => ({
         paymentId:
           payment.paymentId,
 
@@ -920,8 +1215,18 @@ export async function getMerchantOverview(
             )
           ),
 
+        /*
+         * Do not use:
+         *
+         * payment.netAmount ? ... : null
+         *
+         * Because numeric zero is valid.
+         */
         netAmount:
-          payment.netAmount
+          payment.netAmount !==
+            null &&
+          payment.netAmount !==
+            undefined
             ? roundNumber(
                 toNumber(
                   payment.netAmount
@@ -1014,6 +1319,13 @@ export async function getMerchantOverview(
 
     trend,
 
-    recentPayments,
+    /*
+     * IMPORTANT:
+     *
+     * Return formatted recent payments.
+     * Never return raw Mongo Decimal128 payment amounts.
+     */
+    recentPayments:
+      formattedRecentPayments,
   };
 }

@@ -12,20 +12,29 @@ import {
 
 /* =========================================================
    GET MERCHANT REPORT
+
    GET /api/merchants/reports
 ========================================================= */
 
 export async function getMerchantReportController(
-  req: AuthRequest,
-  res: Response
+  req:
+    AuthRequest,
+
+  res:
+    Response
 ): Promise<void> {
   try {
     const ownerId =
       req.user?._id;
 
-    if (!ownerId) {
-      res.status(401).json({
-        success: false,
+    if (
+      !ownerId
+    ) {
+      res.status(
+        401
+      ).json({
+        success:
+          false,
 
         message:
           "Authentication is required.",
@@ -36,56 +45,102 @@ export async function getMerchantReportController(
 
     const result =
       await getMerchantReport({
-        ownerId,
+        ownerId:
+          String(
+            ownerId
+          ),
 
         reportType:
-          req.query.reportType,
+          req.query
+            .reportType,
 
         from:
-          req.query.from,
+          req.query
+            .from,
 
         to:
-          req.query.to,
+          req.query
+            .to,
 
         status:
-          req.query.status,
+          req.query
+            .status,
 
         provider:
-          req.query.provider,
+          req.query
+            .provider,
 
         sourceType:
-          req.query.sourceType,
+          req.query
+            .sourceType,
 
         payoutMethod:
-          req.query.payoutMethod,
+          req.query
+            .payoutMethod,
 
         currency:
-          req.query.currency,
+          req.query
+            .currency,
 
         mode:
-          req.query.mode,
+          req.query
+            .mode,
       });
 
-    res.status(200).json({
-      success: true,
+    res.status(
+      200
+    ).json({
+      success:
+        true,
 
-      data: result,
+      data:
+        result,
     });
   } catch (
-    error: unknown
+    error:
+      unknown
   ) {
     console.error(
       "GET MERCHANT REPORT ERROR:",
       error
     );
 
-    res.status(400).json({
-      success: false,
+    const message =
+      error instanceof
+        Error
+        ? error.message
+        : "Unable to generate merchant report.";
 
-      message:
-        error instanceof Error
-          ? error.message
-          : "Unable to generate merchant report.",
+    let statusCode =
+      400;
+
+    if (
+      message ===
+      "Authenticated merchant owner is required."
+    ) {
+      statusCode =
+        401;
+    } else if (
+      message ===
+      "Merchant account not found."
+    ) {
+      statusCode =
+        404;
+    } else if (
+      message ===
+      "Merchant account is not active."
+    ) {
+      statusCode =
+        403;
+    }
+
+    res.status(
+      statusCode
+    ).json({
+      success:
+        false,
+
+      message,
     });
   }
 }
