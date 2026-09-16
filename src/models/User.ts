@@ -18,23 +18,118 @@ export interface IEncryptedData {
    USER ROLES
 ========================================================= */
 
-/*
- * Platform Roles
- *
- * user
- * merchant
- * support
- * analyst
- * admin
- * super_admin
- */
+export const USER_ROLES = [
+  "user",
+  "merchant",
+  "support",
+  "analyst",
+  "admin",
+  "super_admin",
+] as const;
+
 export type UserRole =
-  | "user"
-  | "merchant"
-  | "support"
-  | "analyst"
-  | "admin"
-  | "super_admin";
+  (typeof USER_ROLES)[number];
+
+const USER_ROLE_SET =
+  new Set<string>(
+    USER_ROLES
+  );
+
+/* =========================================================
+   ROLE NORMALIZATION
+
+   Canonical database/application roles:
+
+   user
+   merchant
+   support
+   analyst
+   admin
+   super_admin
+
+   Limited legacy aliases are accepted so older
+   development records do not break authorization.
+
+   IMPORTANT:
+   This never converts an actual normal "user"
+   into an analyst.
+========================================================= */
+
+export const normalizeUserRole = (
+  value: unknown
+): UserRole | null => {
+  if (
+    typeof value !==
+    "string"
+  ) {
+    return null;
+  }
+
+  const normalized =
+    value
+      .trim()
+      .toLowerCase()
+      .replace(
+        /[\s-]+/g,
+        "_"
+      );
+
+  /* =======================================================
+     CANONICAL ROLE
+  ======================================================= */
+
+  if (
+    USER_ROLE_SET.has(
+      normalized
+    )
+  ) {
+    return normalized as UserRole;
+  }
+
+  /* =======================================================
+     LIMITED LEGACY ALIASES
+  ======================================================= */
+
+  switch (
+    normalized
+  ) {
+    case "analist":
+      return "analyst";
+
+    case "administrator":
+      return "admin";
+
+    case "superadmin":
+    case "super_administrator":
+      return "super_admin";
+
+    case "support_agent":
+      return "support";
+
+    default:
+      return null;
+  }
+};
+
+/* =========================================================
+   CANONICAL ROLE CHECK
+========================================================= */
+
+export const isCanonicalUserRole = (
+  value: unknown
+): value is UserRole => {
+  return (
+    typeof value ===
+      "string" &&
+    USER_ROLE_SET.has(
+      value
+    )
+  );
+};
+
+/* =========================================================
+   ACCOUNT TYPES
+========================================================= */
 
 export type AccountStatus =
   | "active"
@@ -69,65 +164,92 @@ export interface IUserPreferences {
    USER
 ========================================================= */
 
-export interface IUser extends Document {
+export interface IUser
+  extends Document {
   name: string;
 
   /* Cloudinary */
+
   avatarUrl?: string;
   avatarPublicId?: string;
 
   /* Secure contact storage */
-  emailEncrypted: IEncryptedData;
-  emailLookup: string;
 
-  phoneEncrypted?: IEncryptedData;
-  phoneLookup?: string;
+  emailEncrypted:
+    IEncryptedData;
+
+  emailLookup:
+    string;
+
+  phoneEncrypted?:
+    IEncryptedData;
+
+  phoneLookup?:
+    string;
 
   /* Authentication */
-  password: string;
 
-  /*
-   * User's platform role.
-   *
-   * Supported roles:
-   * user
-   * merchant
-   * support
-   * analyst
-   * admin
-   * super_admin
-   */
-  role: UserRole;
+  password:
+    string;
 
-  authVersion: number;
+  role:
+    UserRole;
+
+  authVersion:
+    number;
 
   /* Account */
-  accountStatus: AccountStatus;
-  deletedAt?: Date;
+
+  accountStatus:
+    AccountStatus;
+
+  deletedAt?:
+    Date;
 
   /* Email verification */
-  emailVerified: boolean;
-  emailVerifiedAt?: Date;
+
+  emailVerified:
+    boolean;
+
+  emailVerifiedAt?:
+    Date;
 
   /* Security */
-  passwordPolicyVersion: number;
-  passwordChangedAt?: Date;
+
+  passwordPolicyVersion:
+    number;
+
+  passwordChangedAt?:
+    Date;
 
   /* KYC */
-  kycStatus: KYCStatus;
+
+  kycStatus:
+    KYCStatus;
 
   /* Wallet */
-  walletId?: mongoose.Types.ObjectId;
 
-  /* User Preferences */
-  preferences: IUserPreferences;
+  walletId?:
+    mongoose.Types.ObjectId;
+
+  /* Preferences */
+
+  preferences:
+    IUserPreferences;
 
   /* Password reset */
-  resetPasswordTokenHash?: string;
-  resetPasswordExpires?: Date;
 
-  createdAt: Date;
-  updatedAt: Date;
+  resetPasswordTokenHash?:
+    string;
+
+  resetPasswordExpires?:
+    Date;
+
+  createdAt:
+    Date;
+
+  updatedAt:
+    Date;
 }
 
 /* =========================================================
@@ -138,22 +260,33 @@ const encryptedDataSchema =
   new Schema<IEncryptedData>(
     {
       encrypted: {
-        type: String,
-        required: true,
+        type:
+          String,
+
+        required:
+          true,
       },
 
       iv: {
-        type: String,
-        required: true,
+        type:
+          String,
+
+        required:
+          true,
       },
 
       authTag: {
-        type: String,
-        required: true,
+        type:
+          String,
+
+        required:
+          true,
       },
     },
+
     {
-      _id: false,
+      _id:
+        false,
     }
   );
 
@@ -165,7 +298,8 @@ const userPreferencesSchema =
   new Schema<IUserPreferences>(
     {
       theme: {
-        type: String,
+        type:
+          String,
 
         enum: [
           "light",
@@ -175,12 +309,17 @@ const userPreferencesSchema =
           "forest",
         ],
 
-        default: "light",
-        required: true,
+        default:
+          "light",
+
+        required:
+          true,
       },
     },
+
     {
-      _id: false,
+      _id:
+        false,
     }
   );
 
@@ -196,11 +335,20 @@ const userSchema =
       ====================================================== */
 
       name: {
-        type: String,
-        required: true,
-        trim: true,
-        minlength: 2,
-        maxlength: 100,
+        type:
+          String,
+
+        required:
+          true,
+
+        trim:
+          true,
+
+        minlength:
+          2,
+
+        maxlength:
+          100,
       },
 
       /* =====================================================
@@ -208,16 +356,28 @@ const userSchema =
       ====================================================== */
 
       avatarUrl: {
-        type: String,
-        trim: true,
-        default: "",
+        type:
+          String,
+
+        trim:
+          true,
+
+        default:
+          "",
       },
 
       avatarPublicId: {
-        type: String,
-        trim: true,
-        default: "",
-        select: false,
+        type:
+          String,
+
+        trim:
+          true,
+
+        default:
+          "",
+
+        select:
+          false,
       },
 
       /* =====================================================
@@ -225,14 +385,22 @@ const userSchema =
       ====================================================== */
 
       emailEncrypted: {
-        type: encryptedDataSchema,
-        required: true,
+        type:
+          encryptedDataSchema,
+
+        required:
+          true,
       },
 
       emailLookup: {
-        type: String,
-        required: true,
-        trim: true,
+        type:
+          String,
+
+        required:
+          true,
+
+        trim:
+          true,
       },
 
       /* =====================================================
@@ -240,14 +408,22 @@ const userSchema =
       ====================================================== */
 
       phoneEncrypted: {
-        type: encryptedDataSchema,
-        default: undefined,
+        type:
+          encryptedDataSchema,
+
+        default:
+          undefined,
       },
 
       phoneLookup: {
-        type: String,
-        trim: true,
-        default: undefined,
+        type:
+          String,
+
+        trim:
+          true,
+
+        default:
+          undefined,
       },
 
       /* =====================================================
@@ -255,9 +431,14 @@ const userSchema =
       ====================================================== */
 
       password: {
-        type: String,
-        required: true,
-        select: false,
+        type:
+          String,
+
+        required:
+          true,
+
+        select:
+          false,
       },
 
       /* =====================================================
@@ -265,7 +446,8 @@ const userSchema =
       ====================================================== */
 
       role: {
-        type: String,
+        type:
+          String,
 
         enum: [
           "user",
@@ -276,9 +458,34 @@ const userSchema =
           "super_admin",
         ],
 
-        default: "user",
-        required: true,
-        index: true,
+        /*
+         * Any future assignment such as:
+         *
+         * Analyst
+         * ANALYST
+         * analist
+         * super-admin
+         *
+         * is normalized before enum validation.
+         */
+
+        set: (
+          value:
+            unknown
+        ) =>
+          normalizeUserRole(
+            value
+          ) ??
+          value,
+
+        default:
+          "user",
+
+        required:
+          true,
+
+        index:
+          true,
       },
 
       /* =====================================================
@@ -286,9 +493,14 @@ const userSchema =
       ====================================================== */
 
       authVersion: {
-        type: Number,
-        default: 0,
-        min: 0,
+        type:
+          Number,
+
+        default:
+          0,
+
+        min:
+          0,
       },
 
       /* =====================================================
@@ -296,21 +508,30 @@ const userSchema =
       ====================================================== */
 
       accountStatus: {
-        type: String,
+        type:
+          String,
 
         enum: [
           "active",
           "deleted",
         ],
 
-        default: "active",
-        required: true,
-        index: true,
+        default:
+          "active",
+
+        required:
+          true,
+
+        index:
+          true,
       },
 
       deletedAt: {
-        type: Date,
-        default: undefined,
+        type:
+          Date,
+
+        default:
+          undefined,
       },
 
       /* =====================================================
@@ -318,14 +539,22 @@ const userSchema =
       ====================================================== */
 
       emailVerified: {
-        type: Boolean,
-        default: false,
-        index: true,
+        type:
+          Boolean,
+
+        default:
+          false,
+
+        index:
+          true,
       },
 
       emailVerifiedAt: {
-        type: Date,
-        default: undefined,
+        type:
+          Date,
+
+        default:
+          undefined,
       },
 
       /* =====================================================
@@ -333,14 +562,22 @@ const userSchema =
       ====================================================== */
 
       passwordPolicyVersion: {
-        type: Number,
-        default: 1,
-        min: 1,
+        type:
+          Number,
+
+        default:
+          1,
+
+        min:
+          1,
       },
 
       passwordChangedAt: {
-        type: Date,
-        default: undefined,
+        type:
+          Date,
+
+        default:
+          undefined,
       },
 
       /* =====================================================
@@ -348,7 +585,8 @@ const userSchema =
       ====================================================== */
 
       kycStatus: {
-        type: String,
+        type:
+          String,
 
         enum: [
           "not_started",
@@ -357,9 +595,14 @@ const userSchema =
           "rejected",
         ],
 
-        default: "not_started",
-        required: true,
-        index: true,
+        default:
+          "not_started",
+
+        required:
+          true,
+
+        index:
+          true,
       },
 
       /* =====================================================
@@ -367,9 +610,14 @@ const userSchema =
       ====================================================== */
 
       walletId: {
-        type: Schema.Types.ObjectId,
-        ref: "Wallet",
-        default: undefined,
+        type:
+          Schema.Types.ObjectId,
+
+        ref:
+          "Wallet",
+
+        default:
+          undefined,
       },
 
       /* =====================================================
@@ -377,13 +625,17 @@ const userSchema =
       ====================================================== */
 
       preferences: {
-        type: userPreferencesSchema,
+        type:
+          userPreferencesSchema,
 
-        default: () => ({
-          theme: "light",
-        }),
+        default:
+          () => ({
+            theme:
+              "light",
+          }),
 
-        required: true,
+        required:
+          true,
       },
 
       /* =====================================================
@@ -391,29 +643,45 @@ const userSchema =
       ====================================================== */
 
       resetPasswordTokenHash: {
-        type: String,
-        select: false,
-        default: undefined,
+        type:
+          String,
+
+        select:
+          false,
+
+        default:
+          undefined,
       },
 
       resetPasswordExpires: {
-        type: Date,
-        select: false,
-        default: undefined,
+        type:
+          Date,
+
+        select:
+          false,
+
+        default:
+          undefined,
       },
     },
 
     {
-      timestamps: true,
-      versionKey: false,
-      strict: true,
+      timestamps:
+        true,
+
+      versionKey:
+        false,
+
+      strict:
+        true,
 
       /* =====================================================
          SAFE JSON
       ====================================================== */
 
       toJSON: {
-        virtuals: true,
+        virtuals:
+          true,
 
         transform: (
           _document,
@@ -426,30 +694,41 @@ const userSchema =
             >;
 
           const {
-            password: _password,
+            password:
+              _password,
+
             avatarPublicId:
               _avatarPublicId,
+
             resetPasswordTokenHash:
               _resetPasswordTokenHash,
+
             resetPasswordExpires:
               _resetPasswordExpires,
+
             emailEncrypted:
               _emailEncrypted,
+
             phoneEncrypted:
               _phoneEncrypted,
+
             emailLookup:
               _emailLookup,
+
             phoneLookup:
               _phoneLookup,
+
             ...safeObject
-          } = rawObject;
+          } =
+            rawObject;
 
           return safeObject;
         },
       },
 
       toObject: {
-        virtuals: true,
+        virtuals:
+          true,
       },
     }
   );
@@ -458,91 +737,96 @@ const userSchema =
    INDEXES
 ========================================================= */
 
-/*
- * Unique email lookup.
- */
 userSchema.index(
   {
-    emailLookup: 1,
+    emailLookup:
+      1,
   },
+
   {
-    unique: true,
-    name: "unique_user_email_lookup",
+    unique:
+      true,
+
+    name:
+      "unique_user_email_lookup",
   }
 );
 
-/*
- * Unique phone lookup.
- *
- * Sparse allows multiple documents where phoneLookup
- * is not defined.
- */
 userSchema.index(
   {
-    phoneLookup: 1,
+    phoneLookup:
+      1,
   },
+
   {
-    unique: true,
-    sparse: true,
-    name: "unique_user_phone_lookup",
+    unique:
+      true,
+
+    sparse:
+      true,
+
+    name:
+      "unique_user_phone_lookup",
   }
 );
 
-/*
- * Role based listing.
- *
- * Useful for:
- * - Admin user management
- * - Merchant listing
- * - Analyst listing
- * - Support listing
- */
 userSchema.index(
   {
-    role: 1,
-    createdAt: -1,
+    role:
+      1,
+
+    createdAt:
+      -1,
   },
+
   {
-    name: "user_role_created_at",
+    name:
+      "user_role_created_at",
   }
 );
 
-/*
- * Account status + creation date.
- */
 userSchema.index(
   {
-    accountStatus: 1,
-    createdAt: -1,
+    accountStatus:
+      1,
+
+    createdAt:
+      -1,
   },
+
   {
-    name: "user_status_created_at",
+    name:
+      "user_status_created_at",
   }
 );
 
-/*
- * KYC status + creation date.
- */
 userSchema.index(
   {
-    kycStatus: 1,
-    createdAt: -1,
+    kycStatus:
+      1,
+
+    createdAt:
+      -1,
   },
+
   {
-    name: "user_kyc_status_created_at",
+    name:
+      "user_kyc_status_created_at",
   }
 );
 
-/*
- * Email verification + creation date.
- */
 userSchema.index(
   {
-    emailVerified: 1,
-    createdAt: -1,
+    emailVerified:
+      1,
+
+    createdAt:
+      -1,
   },
+
   {
-    name: "user_email_verified_created_at",
+    name:
+      "user_email_verified_created_at",
   }
 );
 
@@ -550,17 +834,22 @@ userSchema.index(
    MODEL
 ========================================================= */
 
-const UserModel: Model<IUser> =
-  (mongoose.models.User as Model<IUser>) ||
+const UserModel:
+  Model<IUser> =
+  (
+    mongoose.models
+      .User as Model<IUser>
+  ) ||
   mongoose.model<IUser>(
     "User",
     userSchema
   );
 
 /* =========================================================
-   EXPORTS
+   EXPORT
 ========================================================= */
 
-export const User = UserModel;
+export const User =
+  UserModel;
 
 export default UserModel;

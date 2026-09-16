@@ -7,198 +7,102 @@ import type {
   AuthRequest,
 } from "./authMiddleware.js";
 
-/* =========================================================
-   TYPES
-========================================================= */
-
-export type PlatformRole =
-  | "user"
-  | "merchant"
-  | "support"
-  | "analyst"
-  | "admin"
-  | "super_admin";
+import type {
+  UserRole,
+} from "../models/User.js";
 
 /* =========================================================
-   COMMON RESPONSE HELPERS
+   RESPONSE HELPERS
 ========================================================= */
 
 const unauthorized = (
-  res: Response
+  res:
+    Response
 ): void => {
-  res.status(401).json({
-    success: false,
-    message: "Not authorized.",
+  res.status(
+    401
+  ).json({
+    success:
+      false,
+
+    code:
+      "AUTHENTICATION_REQUIRED",
+
+    message:
+      "Not authorized.",
   });
 };
 
 const forbidden = (
-  res: Response,
-  message: string
+  res:
+    Response,
+
+  message:
+    string
 ): void => {
-  res.status(403).json({
-    success: false,
+  res.status(
+    403
+  ).json({
+    success:
+      false,
+
+    code:
+      "FORBIDDEN",
+
     message,
   });
 };
 
 /* =========================================================
-   AUTHENTICATED USER CHECK
+   AUTH CHECK
 ========================================================= */
 
-const requireAuthenticatedUser = (
-  req: AuthRequest,
-  res: Response
-): boolean => {
-  if (!req.user?._id) {
-    unauthorized(res);
-    return false;
-  }
-
-  return true;
-};
-
-/* =========================================================
-   ROLE CHECK
-========================================================= */
-
-/*
- * Generic role middleware.
- *
- * IMPORTANT:
- * This middleware must run AFTER protect.
- *
- * Example:
- *
- * router.get(
- *   "/...",
- *   protect,
- *   requireRoles("merchant"),
- *   controller
- * );
- */
-
-export const requireRoles =
+const requireAuthenticatedUser =
   (
-    ...allowedRoles: PlatformRole[]
-  ) => {
-    return (
-      req: AuthRequest,
-      res: Response,
-      next: NextFunction
-    ): void => {
-      /* ===================================================
-         AUTHENTICATED USER REQUIRED
-      ==================================================== */
+    req:
+      AuthRequest,
 
-      if (
-        !requireAuthenticatedUser(
-          req,
-          res
-        )
-      ) {
-        return;
-      }
+    res:
+      Response
+  ): boolean => {
+    if (
+      !req.user?._id
+    ) {
+      unauthorized(
+        res
+      );
 
-      /* ===================================================
-         ROLE CHECK
-      ==================================================== */
+      return false;
+    }
 
-      const userRole =
-        req.user?.role as PlatformRole;
-
-      if (
-        !allowedRoles.includes(
-          userRole
-        )
-      ) {
-        forbidden(
-          res,
-          "You do not have permission to access this resource."
-        );
-
-        return;
-      }
-
-      /* ===================================================
-         CONTINUE
-      ==================================================== */
-
-      next();
-    };
+    return true;
   };
 
 /* =========================================================
-   REQUIRE USER
+   GENERIC ROLE MIDDLEWARE
+
+   IMPORTANT:
+   protect MUST run before this middleware.
+
+   protect already normalizes the MongoDB role and stores
+   the canonical value in req.user.role.
 ========================================================= */
 
-/*
- * Customer / personal wallet access.
- *
- * Super Admin is intentionally NOT included.
- *
- * This keeps customer-only endpoints isolated.
- */
-
-export const requireUser =
-  requireRoles(
-    "user"
-  );
-
-/* =========================================================
-   REQUIRE MERCHANT
-========================================================= */
-
-export const requireMerchant =
-  requireRoles(
-    "merchant"
-  );
-
-/* =========================================================
-   REQUIRE SUPPORT
-========================================================= */
-
-export const requireSupport =
-  requireRoles(
-    "support"
-  );
-
-/* =========================================================
-   REQUIRE ANALYST
-========================================================= */
-
-export const requireAnalyst =
-  requireRoles(
-    "analyst"
-  );
-
-/* =========================================================
-   REQUIRE ADMIN
-========================================================= */
-
-/*
- * Existing application behaviour:
- *
- * requireAdmin()
- *     ↓
- * admin only
- *
- * We intentionally preserve this behaviour.
- *
- * SUPER ADMIN is handled separately through
- * requireAdminOrSuperAdmin().
- */
-
-export const requireAdmin =
+export const requireRoles =
   (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ): void => {
-    /* ===================================================
-       AUTHENTICATED USER REQUIRED
-    ==================================================== */
+    ...allowedRoles:
+      UserRole[]
+  ) =>
+  (
+    req:
+      AuthRequest,
 
+    res:
+      Response,
+
+    next:
+      NextFunction
+  ): void => {
     if (
       !requireAuthenticatedUser(
         req,
@@ -208,9 +112,100 @@ export const requireAdmin =
       return;
     }
 
-    /* ===================================================
-       ADMIN ROLE REQUIRED
-    ==================================================== */
+    const userRole =
+      req.user!.role;
+
+    if (
+      !allowedRoles.includes(
+        userRole
+      )
+    ) {
+      console.warn(
+        "RBAC ACCESS DENIED:",
+        {
+          path:
+            req.originalUrl,
+
+          userId:
+            req.user?._id,
+
+          currentRole:
+            userRole,
+
+          allowedRoles,
+        }
+      );
+
+      forbidden(
+        res,
+        "You do not have permission to access this resource."
+      );
+
+      return;
+    }
+
+    next();
+  };
+
+/* =========================================================
+   NORMAL USER
+========================================================= */
+
+export const requireUser =
+  requireRoles(
+    "user"
+  );
+
+/* =========================================================
+   MERCHANT
+========================================================= */
+
+export const requireMerchant =
+  requireRoles(
+    "merchant"
+  );
+
+/* =========================================================
+   SUPPORT
+========================================================= */
+
+export const requireSupport =
+  requireRoles(
+    "support"
+  );
+
+/* =========================================================
+   ANALYST
+========================================================= */
+
+export const requireAnalyst =
+  requireRoles(
+    "analyst"
+  );
+
+/* =========================================================
+   ADMIN ONLY
+========================================================= */
+
+export const requireAdmin =
+  (
+    req:
+      AuthRequest,
+
+    res:
+      Response,
+
+    next:
+      NextFunction
+  ): void => {
+    if (
+      !requireAuthenticatedUser(
+        req,
+        res
+      )
+    ) {
+      return;
+    }
 
     if (
       req.user?.role !==
@@ -224,40 +219,24 @@ export const requireAdmin =
       return;
     }
 
-    /* ===================================================
-       CONTINUE
-    ==================================================== */
-
     next();
   };
 
 /* =========================================================
-   REQUIRE SUPER ADMIN
+   SUPER ADMIN ONLY
 ========================================================= */
-
-/*
- * Super Admin has global platform control.
- *
- * Example:
- *
- * router.post(
- *   "/platform-config",
- *   protect,
- *   requireSuperAdmin,
- *   controller
- * );
- */
 
 export const requireSuperAdmin =
   (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ): void => {
-    /* ===================================================
-       AUTHENTICATED USER REQUIRED
-    ==================================================== */
+    req:
+      AuthRequest,
 
+    res:
+      Response,
+
+    next:
+      NextFunction
+  ): void => {
     if (
       !requireAuthenticatedUser(
         req,
@@ -266,10 +245,6 @@ export const requireSuperAdmin =
     ) {
       return;
     }
-
-    /* ===================================================
-       SUPER ADMIN ROLE REQUIRED
-    ==================================================== */
 
     if (
       req.user?.role !==
@@ -283,10 +258,6 @@ export const requireSuperAdmin =
       return;
     }
 
-    /* ===================================================
-       CONTINUE
-    ==================================================== */
-
     next();
   };
 
@@ -294,83 +265,15 @@ export const requireSuperAdmin =
    ADMIN OR SUPER ADMIN
 ========================================================= */
 
-/*
- * Use this for normal administration features
- * where both Admin and Super Admin are allowed.
- *
- * Example:
- *
- * router.get(
- *   "/users",
- *   protect,
- *   requireAdminOrSuperAdmin,
- *   controller
- * );
- */
-
 export const requireAdminOrSuperAdmin =
-  (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ): void => {
-    /* ===================================================
-       AUTHENTICATED USER REQUIRED
-    ==================================================== */
-
-    if (
-      !requireAuthenticatedUser(
-        req,
-        res
-      )
-    ) {
-      return;
-    }
-
-    /* ===================================================
-       ADMIN ROLE CHECK
-    ==================================================== */
-
-    if (
-      req.user?.role !==
-        "admin" &&
-      req.user?.role !==
-        "super_admin"
-    ) {
-      forbidden(
-        res,
-        "Administrator access is required."
-      );
-
-      return;
-    }
-
-    /* ===================================================
-       CONTINUE
-    ==================================================== */
-
-    next();
-  };
+  requireRoles(
+    "admin",
+    "super_admin"
+  );
 
 /* =========================================================
    INTERNAL OPERATIONS
 ========================================================= */
-
-/*
- * Analyst + Support + Admin + Super Admin.
- *
- * Useful for internal operational tools where
- * customer users and merchants should not have access.
- *
- * Example:
- *
- * router.get(
- *   "/operations/...",
- *   protect,
- *   requireInternalOperations,
- *   controller
- * );
- */
 
 export const requireInternalOperations =
   requireRoles(
@@ -381,15 +284,8 @@ export const requireInternalOperations =
   );
 
 /* =========================================================
-   BACK-OFFICE ACCESS
+   BACK OFFICE
 ========================================================= */
-
-/*
- * Support + Analyst + Admin + Super Admin.
- *
- * Similar to internal operations but named separately
- * so future permission rules can be evolved independently.
- */
 
 export const requireBackOffice =
   requireRoles(
@@ -400,18 +296,8 @@ export const requireBackOffice =
   );
 
 /* =========================================================
-   FINANCIAL OPERATIONS ACCESS
+   FINANCIAL OPERATIONS
 ========================================================= */
-
-/*
- * Financial operational access.
- *
- * This does NOT automatically grant permission to
- * perform every financial mutation.
- *
- * Action-level permissions should still be enforced
- * inside the relevant domain/service.
- */
 
 export const requireFinancialOperations =
   requireRoles(
@@ -421,15 +307,8 @@ export const requireFinancialOperations =
   );
 
 /* =========================================================
-   MERCHANT PLATFORM ACCESS
+   MERCHANT PLATFORM
 ========================================================= */
-
-/*
- * Merchant dashboard + platform merchant operations.
- *
- * Admin and Super Admin are included because they may
- * need to inspect/manage merchant resources.
- */
 
 export const requireMerchantPlatformAccess =
   requireRoles(
@@ -439,15 +318,17 @@ export const requireMerchantPlatformAccess =
   );
 
 /* =========================================================
-   ANALYTICS ACCESS
-========================================================= */
+   ANALYTICS
 
-/*
- * Analyst + Admin + Super Admin.
- *
- * Merchant analytics should use a dedicated merchant
- * authorization layer with merchant ownership checks.
- */
+   Analyst dashboard APIs:
+
+   analyst
+   admin
+   super_admin
+
+   Normal users, merchants and support agents are NOT
+   automatically granted analyst access.
+========================================================= */
 
 export const requireAnalyticsAccess =
   requireRoles(
@@ -460,12 +341,6 @@ export const requireAnalyticsAccess =
    SUPPORT ACCESS
 ========================================================= */
 
-/*
- * Support + Admin + Super Admin.
- *
- * Admin can inspect support operations.
- */
-
 export const requireSupportAccess =
   requireRoles(
     "support",
@@ -474,28 +349,20 @@ export const requireSupportAccess =
   );
 
 /* =========================================================
-   ROLE UTILITY
+   ROLE HELPERS
 ========================================================= */
-
-/*
- * Small reusable helper for controllers/services.
- *
- * This does NOT replace middleware.
- *
- * Example:
- *
- * if (hasRole(req.user?.role, "super_admin")) {
- *   ...
- * }
- */
 
 export const hasRole = (
   role:
-    | PlatformRole
+    | UserRole
     | undefined,
-  ...allowedRoles: PlatformRole[]
+
+  ...allowedRoles:
+    UserRole[]
 ): boolean => {
-  if (!role) {
+  if (
+    !role
+  ) {
     return false;
   }
 
@@ -504,12 +371,9 @@ export const hasRole = (
   );
 };
 
-/* =========================================================
-   SUPER ADMIN CHECK
-========================================================= */
-
 export const isSuperAdmin = (
-  req: AuthRequest
+  req:
+    AuthRequest
 ): boolean => {
   return (
     req.user?.role ===
@@ -517,12 +381,9 @@ export const isSuperAdmin = (
   );
 };
 
-/* =========================================================
-   ADMIN CHECK
-========================================================= */
-
 export const isAdmin = (
-  req: AuthRequest
+  req:
+    AuthRequest
 ): boolean => {
   return (
     req.user?.role ===
@@ -530,12 +391,9 @@ export const isAdmin = (
   );
 };
 
-/* =========================================================
-   ADMIN FAMILY CHECK
-========================================================= */
-
 export const isAdminLevel = (
-  req: AuthRequest
+  req:
+    AuthRequest
 ): boolean => {
   return (
     req.user?.role ===

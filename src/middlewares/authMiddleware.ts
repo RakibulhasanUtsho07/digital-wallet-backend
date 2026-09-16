@@ -6,6 +6,7 @@ import type {
 
 import {
   User,
+  normalizeUserRole,
   type UserRole,
 } from "../models/User.js";
 
@@ -19,50 +20,34 @@ import {
 } from "../services/authSessionService.js";
 
 /* =========================================================
-   AUTH REQUEST TYPE
+   AUTH REQUEST
 ========================================================= */
 
 export interface AuthRequest
   extends Request {
   user?: {
-    _id: string;
+    _id:
+      string;
 
-    /*
-     * Must stay synchronized with UserRole.
-     */
-    role: UserRole;
+    role:
+      UserRole;
 
-    /*
-     * Server-side authentication session ID.
-     *
-     * Used by:
-     * - Security Center
-     * - Active Sessions
-     * - Current session detection
-     * - Logout specific session
-     * - Logout other sessions
-     */
-    sessionId?: string;
+    sessionId?:
+      string;
 
-    /*
-     * JWT issued-at timestamp.
-     * Seconds since Unix epoch.
-     */
-    tokenIssuedAt?: number;
+    tokenIssuedAt?:
+      number;
   };
 }
 
 /* =========================================================
-   CONSTANTS
+   CONSTANT
 ========================================================= */
 
-/*
- * Avoid updating lastActiveAt on every API request.
- * A session activity update is performed at most once
- * every 5 minutes.
- */
 const SESSION_ACTIVITY_REFRESH_MS =
-  5 * 60 * 1000;
+  5 *
+  60 *
+  1000;
 
 /* =========================================================
    PROTECT
@@ -76,7 +61,7 @@ export const protect =
   ): Promise<void> => {
     try {
       /* ===================================================
-         READ TOKEN
+         TOKEN
       ==================================================== */
 
       const token =
@@ -84,9 +69,14 @@ export const protect =
           req
         );
 
-      if (!token) {
-        res.status(401).json({
-          success: false,
+      if (
+        !token
+      ) {
+        res.status(
+          401
+        ).json({
+          success:
+            false,
 
           message:
             "Not authorized, no token provided",
@@ -96,7 +86,7 @@ export const protect =
       }
 
       /* ===================================================
-         VERIFY JWT
+         VERIFY TOKEN
       ==================================================== */
 
       const decoded =
@@ -105,11 +95,13 @@ export const protect =
         );
 
       if (
-        !decoded ||
-        !decoded.id
+        !decoded?.id
       ) {
-        res.status(401).json({
-          success: false,
+        res.status(
+          401
+        ).json({
+          success:
+            false,
 
           message:
             "Not authorized, invalid token",
@@ -119,7 +111,7 @@ export const protect =
       }
 
       /* ===================================================
-         LOAD USER
+         CURRENT DATABASE USER
       ==================================================== */
 
       const foundUser =
@@ -131,9 +123,14 @@ export const protect =
           )
           .lean();
 
-      if (!foundUser) {
-        res.status(401).json({
-          success: false,
+      if (
+        !foundUser
+      ) {
+        res.status(
+          401
+        ).json({
+          success:
+            false,
 
           message:
             "Not authorized, user not found",
@@ -150,11 +147,61 @@ export const protect =
         foundUser.accountStatus ===
         "deleted"
       ) {
-        res.status(401).json({
-          success: false,
+        res.status(
+          401
+        ).json({
+          success:
+            false,
 
           message:
             "This account is no longer active.",
+        });
+
+        return;
+      }
+
+      /* ===================================================
+         CURRENT ROLE
+
+         MongoDB is source of truth.
+
+         Legacy development role values are normalized:
+
+         analist -> analyst
+         Analyst -> analyst
+         super-admin -> super_admin
+      ==================================================== */
+
+      const currentRole =
+        normalizeUserRole(
+          foundUser.role
+        );
+
+      if (
+        !currentRole
+      ) {
+        console.error(
+          "AUTH ROLE ERROR:",
+          {
+            userId:
+              foundUser._id.toString(),
+
+            storedRole:
+              foundUser.role,
+          }
+        );
+
+        res.status(
+          403
+        ).json({
+          success:
+            false,
+
+          code:
+            "INVALID_ACCOUNT_ROLE",
+
+          message:
+            "This account has an invalid platform role.",
         });
 
         return;
@@ -166,34 +213,35 @@ export const protect =
 
       const tokenVersion =
         Number(
-          decoded.authVersion ?? 0
+          decoded.authVersion ??
+            0
         );
 
       const userVersion =
         Number(
-          foundUser.authVersion ?? 0
+          foundUser.authVersion ??
+            0
         );
 
-      /*
-       * authVersion is incremented when:
-       * - password is reset
-       * - sessions are globally revoked
-       * - other security events require JWT invalidation
-       */
       if (
         !Number.isInteger(
           tokenVersion
         ) ||
-        tokenVersion < 0 ||
+        tokenVersion <
+          0 ||
         !Number.isInteger(
           userVersion
         ) ||
-        userVersion < 0 ||
+        userVersion <
+          0 ||
         tokenVersion !==
           userVersion
       ) {
-        res.status(401).json({
-          success: false,
+        res.status(
+          401
+        ).json({
+          success:
+            false,
 
           code:
             "AUTH_VERSION_MISMATCH",
@@ -206,57 +254,56 @@ export const protect =
       }
 
       /* ===================================================
-         SERVER-SIDE SESSION VALIDATION
+         SERVER SESSION
       ==================================================== */
-
-      /*
-       * New security-enabled JWTs always contain `sid`.
-       *
-       * The sid connects:
-       *
-       * Browser
-       *   ↓
-       * JWT
-       *   ↓
-       * AuthSession
-       *
-       * This makes individual device/session revocation
-       * possible without revoking every session.
-       */
 
       let activeSession:
         | {
-            _id: unknown;
-            lastActiveAt?: Date;
+            _id:
+              unknown;
+
+            lastActiveAt?:
+              Date;
           }
-        | null = null;
+        | null =
+        null;
 
-      if (decoded.sid) {
+      if (
+        decoded.sid
+      ) {
         activeSession =
-          await AuthSession.findOne({
-            userId:
-              foundUser._id,
+          await AuthSession.findOne(
+            {
+              userId:
+                foundUser._id,
 
-            sessionId:
-              decoded.sid,
+              sessionId:
+                decoded.sid,
 
-            revokedAt: {
-              $exists: false,
-            },
+              revokedAt: {
+                $exists:
+                  false,
+              },
 
-            expiresAt: {
-              $gt:
-                new Date(),
-            },
-          })
+              expiresAt: {
+                $gt:
+                  new Date(),
+              },
+            }
+          )
             .select(
               "_id lastActiveAt"
             )
             .lean();
 
-        if (!activeSession) {
-          res.status(401).json({
-            success: false,
+        if (
+          !activeSession
+        ) {
+          res.status(
+            401
+          ).json({
+            success:
+              false,
 
             code:
               "SESSION_REVOKED_OR_EXPIRED",
@@ -269,27 +316,26 @@ export const protect =
         }
 
         /* =================================================
-           REFRESH SESSION ACTIVITY
+           REFRESH ACTIVITY
         ================================================== */
 
         const lastActiveTime =
-          activeSession.lastActiveAt
+          activeSession
+            .lastActiveAt
             instanceof Date
-            ? activeSession.lastActiveAt.getTime()
+            ? activeSession
+                .lastActiveAt
+                .getTime()
             : 0;
 
-        const sessionActivityAge =
+        const activityAge =
           Date.now() -
           lastActiveTime;
 
         if (
-          sessionActivityAge >=
+          activityAge >=
           SESSION_ACTIVITY_REFRESH_MS
         ) {
-          /*
-           * Update conditionally so a revoked/expired
-           * session cannot accidentally be refreshed.
-           */
           await AuthSession.updateOne(
             {
               _id:
@@ -302,7 +348,8 @@ export const protect =
                 decoded.sid,
 
               revokedAt: {
-                $exists: false,
+                $exists:
+                  false,
               },
 
               expiresAt: {
@@ -310,6 +357,7 @@ export const protect =
                   new Date(),
               },
             },
+
             {
               $set: {
                 lastActiveAt:
@@ -321,7 +369,11 @@ export const protect =
       }
 
       /* ===================================================
-         ATTACH AUTH CONTEXT
+         AUTH CONTEXT
+
+         IMPORTANT:
+         current DB role is used instead of trusting
+         JWT role for authorization.
       ==================================================== */
 
       req.user = {
@@ -329,15 +381,8 @@ export const protect =
           foundUser._id.toString(),
 
         role:
-          foundUser.role,
+          currentRole,
 
-        /*
-         * Important:
-         * This comes from the verified JWT.
-         *
-         * Security Center can now use:
-         * req.user.sessionId
-         */
         sessionId:
           decoded.sid,
 
@@ -345,21 +390,15 @@ export const protect =
           decoded.iat,
       };
 
-      /* ===================================================
-         CONTINUE
-      ==================================================== */
-
       next();
     } catch (
-      error: unknown
+      error:
+        unknown
     ) {
-      /*
-       * Never expose internal JWT, database,
-       * crypto, or authentication implementation details.
-       */
       console.error(
         "AUTH MIDDLEWARE ERROR:",
-        error instanceof Error
+        error instanceof
+          Error
           ? error.message
           : error
       );
@@ -370,8 +409,11 @@ export const protect =
         return;
       }
 
-      res.status(401).json({
-        success: false,
+      res.status(
+        401
+      ).json({
+        success:
+          false,
 
         message:
           "Not authorized, token failed",
@@ -379,35 +421,36 @@ export const protect =
     }
   };
 
-
-  /* =========================================================
-   ROLE-BASED ACCESS CONTROL
+/* =========================================================
+   GENERIC ROLE ACCESS
 ========================================================= */
 
-/*
- * Allows only the supplied application roles.
- *
- * Important:
- * - `protect` must run before this middleware.
- * - This middleware never authenticates the user.
- * - It only checks the role already attached by `protect`.
- */
 export const requireRoles =
-  (...allowedRoles: UserRole[]) =>
   (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
+    ...allowedRoles:
+      UserRole[]
+  ) =>
+  (
+    req:
+      AuthRequest,
+
+    res:
+      Response,
+
+    next:
+      NextFunction
   ): void => {
-    /* =====================================================
-       AUTHENTICATION CHECK
-    ====================================================== */
+    if (
+      !req.user
+    ) {
+      res.status(
+        401
+      ).json({
+        success:
+          false,
 
-    if (!req.user) {
-      res.status(401).json({
-        success: false,
-
-        code: "AUTHENTICATION_REQUIRED",
+        code:
+          "AUTHENTICATION_REQUIRED",
 
         message:
           "Not authorized. Authentication is required.",
@@ -416,19 +459,19 @@ export const requireRoles =
       return;
     }
 
-    /* =====================================================
-       ROLE CHECK
-    ====================================================== */
-
     if (
       !allowedRoles.includes(
         req.user.role
       )
     ) {
-      res.status(403).json({
-        success: false,
+      res.status(
+        403
+      ).json({
+        success:
+          false,
 
-        code: "FORBIDDEN",
+        code:
+          "FORBIDDEN",
 
         message:
           "You do not have permission to access this resource.",
@@ -437,47 +480,22 @@ export const requireRoles =
       return;
     }
 
-    /* =====================================================
-       ACCESS GRANTED
-    ====================================================== */
-
     next();
   };
 
 /* =========================================================
-   SUPPORT ROLE
+   SUPPORT
 ========================================================= */
 
-/*
- * Dedicated Support Agent access.
- *
- * Support agents are intentionally separated from:
- * - normal users
- * - merchants
- * - analysts
- * - admins
- * - super admins
- */
 export const requireSupport =
-  requireRoles("support");
+  requireRoles(
+    "support"
+  );
 
 /* =========================================================
-   SUPPORT + ADMIN ACCESS
+   SUPPORT OR ADMIN
 ========================================================= */
 
-/*
- * Used for shared support infrastructure where:
- *
- * Support Agent
- *     OR
- * Admin
- *     OR
- * Super Admin
- *
- * may access the resource.
- *
- * Existing Admin/Super Admin functionality remains intact.
- */
 export const requireSupportOrAdmin =
   requireRoles(
     "support",
@@ -486,17 +504,9 @@ export const requireSupportOrAdmin =
   );
 
 /* =========================================================
-   ADMIN + SUPER ADMIN ACCESS
+   ADMIN FAMILY
 ========================================================= */
 
-/*
- * Optional reusable replacement for duplicated
- * admin role checks.
- *
- * This does NOT replace any existing requireAdmin
- * middleware yet. It simply provides a compatible
- * role-based helper for future migration.
- */
 export const requireAdminOrSuperAdmin =
   requireRoles(
     "admin",

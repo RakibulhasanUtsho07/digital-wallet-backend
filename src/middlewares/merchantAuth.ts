@@ -28,21 +28,35 @@ export type MerchantApiEnvironment =
 
 export interface MerchantAuthContext {
   _id: string;
+
   ownerId: string;
+
   businessName: string;
+
   businessDisplayName?: string;
+
   slug: string;
+
   status: string;
+
   verificationStatus: string;
+
   defaultCurrency: string;
-  environment?: MerchantApiEnvironment;
-  apiKeyId?: string;
-  scopes?: MerchantApiScope[];
+
+  environment?:
+    MerchantApiEnvironment;
+
+  apiKeyId?:
+    string;
+
+  scopes?:
+    MerchantApiScope[];
 }
 
 export interface MerchantAuthRequest
   extends AuthRequest {
-  merchant?: MerchantAuthContext;
+  merchant?:
+    MerchantAuthContext;
 }
 
 /* =========================================================
@@ -67,8 +81,12 @@ function unauthorized(
   message =
     "Merchant authentication failed."
 ): void {
-  res.status(401).json({
-    success: false,
+  res.status(
+    401
+  ).json({
+    success:
+      false,
+
     message,
   });
 }
@@ -78,24 +96,39 @@ function forbidden(
   message =
     "You do not have permission to perform this action."
 ): void {
-  res.status(403).json({
-    success: false,
+  res.status(
+    403
+  ).json({
+    success:
+      false,
+
     message,
   });
 }
 
 /* =========================================================
-   API-KEY HELPERS
+   API KEY HELPERS
 ========================================================= */
 
 function hashSecret(
   secret: string
 ): string {
   return crypto
-    .createHash("sha256")
-    .update(secret, "utf8")
-    .digest("hex");
+    .createHash(
+      "sha256"
+    )
+    .update(
+      secret,
+      "utf8"
+    )
+    .digest(
+      "hex"
+    );
 }
+
+/* =========================================================
+   READ API KEY
+========================================================= */
 
 function readApiKey(
   req: AuthRequest
@@ -129,9 +162,15 @@ function readApiKey(
   return apiKey;
 }
 
+/* =========================================================
+   DETECT ENVIRONMENT
+========================================================= */
+
 function detectEnvironment(
   apiKey: string
-): MerchantApiEnvironment | undefined {
+):
+  | MerchantApiEnvironment
+  | undefined {
   if (
     apiKey.startsWith(
       TEST_SECRET_PREFIX
@@ -151,21 +190,33 @@ function detectEnvironment(
   return undefined;
 }
 
+/* =========================================================
+   GET KEY PREFIX
+========================================================= */
+
 function getKeyPrefix(
-  environment: MerchantApiEnvironment
+  environment:
+    MerchantApiEnvironment
 ): string {
-  return environment === "test"
+  return environment ===
+    "test"
     ? TEST_SECRET_PREFIX
     : LIVE_SECRET_PREFIX;
 }
 
+/* =========================================================
+   SAFE HASH MATCH
+========================================================= */
+
 /*
  * Constant-time comparison is kept as an additional
- * verification step after the database lookup.
+ * defence layer after exact hash lookup.
  */
 function safeHashMatches(
-  storedHash: string,
-  receivedHash: string
+  storedHash:
+    string,
+  receivedHash:
+    string
 ): boolean {
   const stored =
     Buffer.from(
@@ -197,20 +248,43 @@ function safeHashMatches(
 
    Used by server-to-server merchant endpoints.
 
-   Expected header:
+   Expected headers:
 
    Authorization: Bearer sk_test_xxxxx
    Authorization: Bearer sk_live_xxxxx
+
+   ACCESS POLICY
+
+   TEST:
+   - pending merchant allowed
+   - active merchant allowed
+   - testEnabled must be true
+   - verification not required
+
+   LIVE:
+   - merchant must be active
+   - merchant must be verified
+   - liveEnabled must be true
+
+   SUSPENDED / DISABLED:
+   - no Test access
+   - no Live access
 ========================================================= */
 
 export const merchantApiAuth =
   (
-    requiredScope?: MerchantApiScope
+    requiredScope?:
+      MerchantApiScope
   ) => {
     return async (
-      req: MerchantAuthRequest,
-      res: Response,
-      next: NextFunction
+      req:
+        MerchantAuthRequest,
+
+      res:
+        Response,
+
+      next:
+        NextFunction
     ): Promise<void> => {
       try {
         /* =================================================
@@ -218,9 +292,13 @@ export const merchantApiAuth =
         ================================================= */
 
         const apiKey =
-          readApiKey(req);
+          readApiKey(
+            req
+          );
 
-        if (!apiKey) {
+        if (
+          !apiKey
+        ) {
           unauthorized(
             res,
             "A valid Merchant API key is required."
@@ -230,7 +308,7 @@ export const merchantApiAuth =
         }
 
         /* =================================================
-           ENVIRONMENT
+           DETECT ENVIRONMENT
         ================================================= */
 
         const environment =
@@ -238,7 +316,9 @@ export const merchantApiAuth =
             apiKey
           );
 
-        if (!environment) {
+        if (
+          !environment
+        ) {
           unauthorized(
             res,
             "Invalid Merchant API key format."
@@ -253,8 +333,9 @@ export const merchantApiAuth =
           );
 
         /*
-         * The complete generated API key is hashed.
-         * The plaintext API key is never stored.
+         * Hash the complete presented secret.
+         *
+         * Plaintext API keys are never stored.
          */
         const secretHash =
           hashSecret(
@@ -264,18 +345,25 @@ export const merchantApiAuth =
         /* =================================================
            FIND EXACT API KEY
 
-           Important:
-           keyPrefix alone is not unique. Multiple keys can
-           use sk_test_ or sk_live_. Therefore secretHash
-           must be part of the query.
+           keyPrefix is not unique.
+
+           Therefore we lookup using:
+           - keyPrefix
+           - environment
+           - secretHash
+           - active status
         ================================================= */
 
         const merchantKey =
           await MerchantApiKey.findOne({
             keyPrefix,
+
             environment,
+
             secretHash,
-            status: "active",
+
+            status:
+              "active",
           })
             .select(
               [
@@ -288,11 +376,15 @@ export const merchantApiAuth =
                 "status",
                 "expiresAt",
                 "revokedAt",
-              ].join(" ")
+              ].join(
+                " "
+              )
             )
             .lean();
 
-        if (!merchantKey) {
+        if (
+          !merchantKey
+        ) {
           unauthorized(
             res,
             "Invalid or revoked Merchant API key."
@@ -386,11 +478,15 @@ export const merchantApiAuth =
                 "defaultCurrency",
                 "testEnabled",
                 "liveEnabled",
-              ].join(" ")
+              ].join(
+                " "
+              )
             )
             .lean();
 
-        if (!merchant) {
+        if (
+          !merchant
+        ) {
           unauthorized(
             res,
             "Merchant account not found."
@@ -400,72 +496,106 @@ export const merchantApiAuth =
         }
 
         /* =================================================
-           MERCHANT STATUS
-        ================================================= */
-
-        if (
-          merchant.status !==
-          "active"
-        ) {
-          forbidden(
-            res,
-            "Merchant account is not active."
-          );
-
-          return;
-        }
-
-        /* =================================================
            TEST MODE ACCESS
+
+           Pending merchants ARE allowed.
+
+           This lets developers integrate Coffer before
+           completing KYB / official business verification.
+
+           Allowed:
+           - pending
+           - active
+
+           Blocked:
+           - suspended
+           - disabled
+           - other restricted states
         ================================================= */
 
         if (
           environment ===
-            "test" &&
-          merchant.testEnabled !==
-            true
+          "test"
         ) {
-          forbidden(
-            res,
-            "Test mode is disabled for this merchant."
-          );
+          const allowedStatus =
+            merchant.status ===
+              "pending" ||
+            merchant.status ===
+              "active";
 
-          return;
+          if (
+            !allowedStatus
+          ) {
+            forbidden(
+              res,
+              "Merchant account is not available for test API access."
+            );
+
+            return;
+          }
+
+          if (
+            merchant.testEnabled !==
+            true
+          ) {
+            forbidden(
+              res,
+              "Test mode is disabled for this merchant."
+            );
+
+            return;
+          }
         }
 
         /* =================================================
            LIVE MODE ACCESS
+
+           Live money movement requires:
+
+           1. active merchant
+           2. verified merchant
+           3. live access enabled
         ================================================= */
 
         if (
           environment ===
-            "live" &&
-          merchant.liveEnabled !==
-            true
+          "live"
         ) {
-          forbidden(
-            res,
-            "Live API access is not enabled for this merchant."
-          );
+          if (
+            merchant.status !==
+            "active"
+          ) {
+            forbidden(
+              res,
+              "Merchant account must be active for live API access."
+            );
 
-          return;
-        }
+            return;
+          }
 
-        /*
-         * Additional live-mode protection.
-         */
-        if (
-          environment ===
-            "live" &&
-          merchant.verificationStatus !==
+          if (
+            merchant.verificationStatus !==
             "verified"
-        ) {
-          forbidden(
-            res,
-            "Merchant verification is required for live API access."
-          );
+          ) {
+            forbidden(
+              res,
+              "Merchant verification is required for live API access."
+            );
 
-          return;
+            return;
+          }
+
+          if (
+            merchant.liveEnabled !==
+            true
+          ) {
+            forbidden(
+              res,
+              "Live API access is not enabled for this merchant."
+            );
+
+            return;
+          }
         }
 
         /* =================================================
@@ -531,10 +661,9 @@ export const merchantApiAuth =
         };
 
         /* =================================================
-           UPDATE LAST USAGE
+           UPDATE LAST USED
 
-           Failure to update lastUsedAt must not interrupt
-           a valid payment/order request.
+           This must never make a valid API request fail.
         ================================================= */
 
         void MerchantApiKey.updateOne(
@@ -553,11 +682,13 @@ export const merchantApiAuth =
           }
         ).catch(
           (
-            error: unknown
+            error:
+              unknown
           ) => {
             console.error(
               "MERCHANT API KEY USAGE UPDATE ERROR:",
-              error instanceof Error
+              error instanceof
+                Error
                 ? error.message
                 : error
             );
@@ -566,11 +697,13 @@ export const merchantApiAuth =
 
         next();
       } catch (
-        error: unknown
+        error:
+          unknown
       ) {
         console.error(
           "MERCHANT API AUTH ERROR:",
-          error instanceof Error
+          error instanceof
+            Error
             ? error.message
             : error
         );
@@ -592,23 +725,31 @@ export const merchantApiAuth =
 /* =========================================================
    REQUIRE MERCHANT OWNER
 
-   Used by the logged-in Merchant Dashboard.
+   Used by logged-in Merchant Dashboard.
 
-   This middleware does not use a Merchant API key.
-   Authentication is provided by the user's session.
+   This middleware does NOT use Merchant API keys.
+
+   Authentication comes from normal Coffer session auth.
 ========================================================= */
 
 export const requireMerchantOwner =
   async (
-    req: MerchantAuthRequest,
-    res: Response,
-    next: NextFunction
+    req:
+      MerchantAuthRequest,
+
+    res:
+      Response,
+
+    next:
+      NextFunction
   ): Promise<void> => {
     try {
       const userId =
         req.user?._id;
 
-      if (!userId) {
+      if (
+        !userId
+      ) {
         unauthorized(
           res,
           "Authentication is required."
@@ -646,13 +787,21 @@ export const requireMerchantOwner =
               "defaultCurrency",
               "testEnabled",
               "liveEnabled",
-            ].join(" ")
+            ].join(
+              " "
+            )
           )
           .lean();
 
-      if (!merchant) {
-        res.status(404).json({
-          success: false,
+      if (
+        !merchant
+      ) {
+        res.status(
+          404
+        ).json({
+          success:
+            false,
+
           message:
             "Merchant account not found.",
         });
@@ -692,11 +841,13 @@ export const requireMerchantOwner =
 
       next();
     } catch (
-      error: unknown
+      error:
+        unknown
     ) {
       console.error(
         "MERCHANT OWNER AUTH ERROR:",
-        error instanceof Error
+        error instanceof
+          Error
           ? error.message
           : error
       );
@@ -707,8 +858,12 @@ export const requireMerchantOwner =
         return;
       }
 
-      res.status(500).json({
-        success: false,
+      res.status(
+        500
+      ).json({
+        success:
+          false,
+
         message:
           "Unable to verify merchant account.",
       });
