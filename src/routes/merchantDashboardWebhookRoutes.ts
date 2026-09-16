@@ -24,58 +24,190 @@ import {
   rotateMerchantDashboardWebhookSecretController,
 } from "../controllers/merchantDashboardWebhookController.js";
 
-const router = Router();
+/* =========================================================
+   ROUTER
+========================================================= */
+
+const router =
+  Router();
 
 /* =========================================================
-   SESSION-PROTECTED MERCHANT DASHBOARD ROUTES
+   MERCHANT DASHBOARD WEBHOOK ROUTES
+
+   Mounted in app.ts:
+
+   app.use(
+     "/api/merchants",
+     merchantDashboardWebhookRoutes
+   );
+
+   Final browser endpoints:
+
+   GET    /api/merchants/webhooks
+   POST   /api/merchants/webhooks
+   POST   /api/merchants/webhooks/:endpointId/rotate-secret
+   DELETE /api/merchants/webhooks/:endpointId
+
+   GET    /api/merchants/webhook-events
+   POST   /api/merchants/webhook-events/:eventId/retry
+
+   Authentication:
+   - Normal Coffer merchant session
+   - NOT Merchant API key authentication
+========================================================= */
+
+/* =========================================================
+   LIST WEBHOOK ENDPOINTS
+
+   GET:
+   /api/merchants/webhooks?environment=test
+
+   /api/merchants/webhooks?environment=live
 ========================================================= */
 
 router.get(
   "/webhooks",
+
   protect,
+
   requireMerchant,
+
   securityReadLimiter,
-  listMerchantDashboardWebhooksController
+
+  listMerchantDashboardWebhooksController,
 );
+
+/* =========================================================
+   CREATE WEBHOOK ENDPOINT
+
+   POST:
+   /api/merchants/webhooks
+
+   Body example:
+
+   {
+     "url": "https://merchant.example.com/api/coffer-webhook",
+     "environment": "test",
+     "events": [
+       "payment.completed",
+       "payment.failed"
+     ],
+     "description": "Test payment webhook"
+   }
+========================================================= */
 
 router.post(
   "/webhooks",
+
   protect,
+
   requireMerchant,
+
   securitySensitiveLimiter,
-  createMerchantDashboardWebhookController
+
+  createMerchantDashboardWebhookController,
 );
+
+/* =========================================================
+   ROTATE WEBHOOK SIGNING SECRET
+
+   POST:
+   /api/merchants/webhooks/:endpointId/rotate-secret
+
+   Body:
+
+   {
+     "environment": "test"
+   }
+========================================================= */
 
 router.post(
   "/webhooks/:endpointId/rotate-secret",
+
   protect,
+
   requireMerchant,
+
   securitySensitiveLimiter,
-  rotateMerchantDashboardWebhookSecretController
+
+  rotateMerchantDashboardWebhookSecretController,
 );
+
+/* =========================================================
+   DISABLE WEBHOOK ENDPOINT
+
+   DELETE:
+   /api/merchants/webhooks/:endpointId?environment=test
+
+   We intentionally disable the endpoint instead of
+   permanently deleting its historical delivery records.
+========================================================= */
 
 router.delete(
   "/webhooks/:endpointId",
+
   protect,
+
   requireMerchant,
+
   securitySensitiveLimiter,
-  disableMerchantDashboardWebhookController
+
+  disableMerchantDashboardWebhookController,
 );
+
+/* =========================================================
+   LIST WEBHOOK DELIVERY EVENTS
+
+   GET:
+   /api/merchants/webhook-events?environment=test
+
+   Optional filters:
+
+   ?environment=test
+   &status=failed
+   &page=1
+   &limit=20
+========================================================= */
 
 router.get(
   "/webhook-events",
+
   protect,
+
   requireMerchant,
+
   securityReadLimiter,
-  listMerchantDashboardWebhookEventsController
+
+  listMerchantDashboardWebhookEventsController,
 );
+
+/* =========================================================
+   RETRY WEBHOOK DELIVERY
+
+   POST:
+   /api/merchants/webhook-events/:eventId/retry
+
+   Body:
+
+   {
+     "environment": "test"
+   }
+========================================================= */
 
 router.post(
   "/webhook-events/:eventId/retry",
+
   protect,
+
   requireMerchant,
+
   securitySensitiveLimiter,
-  retryMerchantDashboardWebhookEventController
+
+  retryMerchantDashboardWebhookEventController,
 );
+
+/* =========================================================
+   EXPORT
+========================================================= */
 
 export default router;
