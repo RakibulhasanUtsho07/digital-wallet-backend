@@ -1,0 +1,30 @@
+uploads/
+.vercel
+.env# Dependencies
+node_modules/
+
+# Compiled output
+dist/
+build/
+*.tsbuildinfo
+
+# Test output
+coverage/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Runtime files
+uploads/
+logs/
+*.log
+
+# Deployment
+.vercel/
+
+# Editor and OS
+.vscode/
+.DS_Store
+Thumbs.db
