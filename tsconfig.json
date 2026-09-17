@@ -6,40 +6,31 @@
       "DOM",
       "DOM.Iterable"
     ],
-
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-
-    "rootDir": "./src",
+    "rootDir": ".",
     "outDir": "./dist",
-
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
-
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
-
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-
     "incremental": true,
     "tsBuildInfoFile": "./.tsbuildinfo",
-
     "sourceMap": false,
     "declaration": false,
     "noEmitOnError": true,
-
     "types": [
       "node"
     ]
   },
-
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "api/**/*.ts"
   ],
-
   "exclude": [
     "node_modules",
     "dist",
