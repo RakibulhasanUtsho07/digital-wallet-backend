@@ -4,9 +4,15 @@ import type {
   NextFunction,
 } from "express";
 
+import type {
+  Types,
+} from "mongoose";
+
 import {
   User,
   normalizeUserRole,
+  type AccountStatus,
+  type KYCStatus,
   type UserRole,
 } from "../models/User.js";
 
@@ -31,6 +37,17 @@ export interface AuthRequest
 
     role:
       UserRole;
+
+    /*
+     * These values are loaded from MongoDB by `protect`.
+     * They are optional at the interface boundary so existing tests and
+     * internal mocks that only provide `_id` and `role` do not break.
+     */
+    accountStatus?:
+      AccountStatus;
+
+    kycStatus?:
+      KYCStatus;
 
     sessionId?:
       string;
@@ -119,7 +136,7 @@ export const protect =
           decoded.id
         )
           .select(
-            "role authVersion accountStatus"
+            "role authVersion accountStatus kycStatus"
           )
           .lean();
 
@@ -260,7 +277,7 @@ export const protect =
       let activeSession:
         | {
             _id:
-              unknown;
+              Types.ObjectId;
 
             lastActiveAt?:
               Date;
@@ -382,6 +399,12 @@ export const protect =
 
         role:
           currentRole,
+
+        accountStatus:
+          foundUser.accountStatus,
+
+        kycStatus:
+          foundUser.kycStatus,
 
         sessionId:
           decoded.sid,
