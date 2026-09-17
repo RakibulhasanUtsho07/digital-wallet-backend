@@ -1,7 +1,14 @@
-import { Router } from "express";
+import {
+  Router,
+} from "express";
 
-import { protect } from "../middlewares/authMiddleware.js";
-import { requireAdmin } from "../middlewares/adminAuthorization.js";
+import {
+  protect,
+} from "../middlewares/authMiddleware.js";
+
+import {
+  requireAdmin,
+} from "../middlewares/adminAuthorization.js";
 
 import {
   analyticsExportLimiter,
@@ -23,27 +30,37 @@ const router = Router();
    ADMIN AUTHORIZATION
 ========================================================= */
 
-router.use(protect, requireAdmin);
+router.use(
+  protect,
+  requireAdmin
+);
 
 /* =========================================================
    PRIVATE ANALYTICS RESPONSES
 ========================================================= */
 
-router.use((_req, res, next) => {
-  res.setHeader(
-    "Cache-Control",
-    "private, no-store, max-age=0"
-  );
+router.use(
+  (
+    _req,
+    res,
+    next
+  ) => {
+    res.setHeader(
+      "Cache-Control",
+      "private, no-store, max-age=0"
+    );
 
-  res.setHeader("Pragma", "no-cache");
+    res.setHeader(
+      "Pragma",
+      "no-cache"
+    );
 
-  next();
-});
+    next();
+  }
+);
 
 /* =========================================================
    DASHBOARD
-
-   GET /api/admin/analytics/dashboard
 ========================================================= */
 
 router.get(
@@ -54,8 +71,6 @@ router.get(
 
 /* =========================================================
    EXPORT
-
-   GET /api/admin/analytics/export
 ========================================================= */
 
 router.get(
