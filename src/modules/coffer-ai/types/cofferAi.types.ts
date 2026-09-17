@@ -183,6 +183,18 @@ export interface OwnedPaymentReader {
   }): Promise<AiOwnedPaymentEvidence | null>;
 }
 
+export interface MerchantOwnedPaymentReader {
+  /**
+   * Production implementation MUST query by paymentId AND the trusted
+   * merchantId in the same database query. Client payload ownership fields
+   * must never be used.
+   */
+  findOwnedMerchantPaymentTimeline(input: {
+    paymentId: string;
+    merchantId: string;
+  }): Promise<AiOwnedPaymentEvidence | null>;
+}
+
 export interface AiDiagnosisCause {
   code: string;
   label: string;
@@ -221,6 +233,7 @@ export type AiConfidenceLevel =
 export interface AiSourceReference {
   type:
     | "payment_timeline"
+    | "merchant_payment_timeline"
     | "wallet_transaction_timeline"
     | "system_policy";
   label: string;

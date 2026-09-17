@@ -9,7 +9,10 @@ import { diagnosePayment } from "../diagnostics/paymentDiagnosticService.js";
 import { CofferAiError } from "../errors/cofferAiError.js";
 import { classifyAiIntent } from "../intents/aiIntentClassifier.js";
 import { evaluateAiPolicy } from "../policies/aiPolicyEngine.js";
-
+import {
+  transientAiConversationStore,
+  type AiConversationStore,
+} from "../persistence/aiConversationStore.js";
 import { sanitizeAiText } from "../privacy/aiPrivacySanitizer.js";
 import type { AiToolRegistry } from "../tools/aiToolRegistry.js";
 import type {
@@ -19,13 +22,14 @@ import type {
   AiChatRequestInput,
   AiChatResponseData,
   AiChatResult,
+  AiDiagnosis,
   AiExplanationProvider,
   AiIntent,
   AiOwnedPaymentEvidence,
+  AiToolId,
   AiTrustedRequestSource,
 } from "../types/cofferAi.types.js";
 import { verifyPaymentExplanation } from "../verification/aiClaimVerifier.js";
-import { AiConversationStore, transientAiConversationStore } from "../controllers/aiConversationStore.js";
 
 export interface AiChatService {
   chat(input: {
@@ -85,6 +89,77 @@ function verificationFor(diagnosis: ReturnType<typeof diagnosePayment>): {
   return {
     verification: "unknown",
     confidence: "low",
+  };
+}
+
+function toolForIntent(
+  intent: AiIntent,
+): AiToolId | null {
+  if (
+    intent ===
+    "payment_diagnosis"
+  ) {
+    return "user.payment.timeline";
+  }
+
+  if (
+    intent ===
+    "merchant_payment_diagnosis"
+  ) {
+    return "merchant.payment.timeline";
+  }
+
+  return null;
+}
+
+function diagnosisForActor(
+  evidence:
+    AiOwnedPaymentEvidence,
+  actor:
+    AiActorContext,
+): AiDiagnosis {
+  const diagnosis =
+    diagnosePayment(
+      evidence,
+    );
+
+  if (
+    actor.actorType !==
+    "merchant"
+  ) {
+    return diagnosis;
+  }
+
+  return {
+    ...diagnosis,
+    nextSteps:
+      diagnosis.nextSteps.map(
+        (action) => {
+          if (
+            action.href ===
+            "/dashboard/transactions"
+          ) {
+            return {
+              label:
+                "Review merchant payment details",
+              href:
+                "/dashboard/merchant/payments",
+            };
+          }
+
+          if (
+            action.href ===
+            "/dashboard/support"
+          ) {
+            return {
+              label:
+                "Contact support with this merchant payment reference",
+            };
+          }
+
+          return action;
+        },
+      ),
   };
 }
 
@@ -241,8 +316,13 @@ export function createAiChatService(dependencies: {
           });
         }
 
+        const toolId =
+          toolForIntent(
+            classification.intent,
+          );
+
         if (
-          classification.intent !== "payment_diagnosis" ||
+          !toolId ||
           !classification.resourceId
         ) {
           throw new CofferAiError({
@@ -254,7 +334,7 @@ export function createAiChatService(dependencies: {
         }
 
         const evidence = await toolRegistry.execute<AiOwnedPaymentEvidence>({
-          toolId: "user.payment.timeline",
+          toolId,
           actor,
           policy,
           payload: {
@@ -265,10 +345,14 @@ export function createAiChatService(dependencies: {
         await audit(actor, {
           eventType: "tool_called",
           intent: currentIntent,
-          toolId: "user.payment.timeline",
+          toolId,
         });
 
-        const diagnosis = diagnosePayment(evidence);
+        const diagnosis =
+          diagnosisForActor(
+            evidence,
+            actor,
+          );
         let draft = "";
         let providerDegraded = false;
 
@@ -313,12 +397,18 @@ export function createAiChatService(dependencies: {
           sources: [
             {
               type:
-                diagnosis.subjectType ===
+                toolId ===
+                "merchant.payment.timeline"
+                  ? "merchant_payment_timeline" as const
+                  : diagnosis.subjectType ===
                 "wallet_transaction"
                   ? "wallet_transaction_timeline" as const
                   : "payment_timeline" as const,
               label:
-                diagnosis.subjectType ===
+                toolId ===
+                "merchant.payment.timeline"
+                  ? "Owned merchant payment timeline"
+                  : diagnosis.subjectType ===
                 "wallet_transaction"
                   ? "Owned wallet transaction timeline"
                   : "Owned gateway payment timeline",
@@ -331,7 +421,7 @@ export function createAiChatService(dependencies: {
               label:
                 "Coffer payment diagnostic rules",
               reference:
-                "payment-diagnostic-v2",
+                "payment-diagnostic-v3",
             },
           ],
           diagnosis,

@@ -7,6 +7,7 @@ import mongoose, {
 export interface IAiMessageSource {
   type:
     | "payment_timeline"
+    | "merchant_payment_timeline"
     | "wallet_transaction_timeline"
     | "system_policy";
   label: string;
@@ -43,6 +44,7 @@ const sourceSchema =
         type: String,
         enum: [
           "payment_timeline",
+          "merchant_payment_timeline",
           "wallet_transaction_timeline",
           "system_policy",
         ],

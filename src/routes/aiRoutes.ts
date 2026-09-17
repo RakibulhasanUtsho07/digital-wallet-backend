@@ -15,6 +15,9 @@ import {
   cofferAiChatController,
   cofferAiListConversationsController,
 } from "../modules/coffer-ai/runtime/cofferAiRuntime.js";
+import { attachCofferAiMerchantContext } from "../modules/coffer-ai/index.js";
+
+
 
 const router =
   express.Router();
@@ -49,6 +52,7 @@ router.get(
 router.post(
   "/chat",
   protect,
+  attachCofferAiMerchantContext,
   cofferAiChatController,
 );
 

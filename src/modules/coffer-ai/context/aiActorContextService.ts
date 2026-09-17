@@ -107,6 +107,13 @@ function resolveMerchantVerificationState(
   const normalized = normalizeToken(value);
 
   if (
+    normalized === "approved" ||
+    normalized === "completed"
+  ) {
+    return "verified";
+  }
+
+  if (
     normalized === "not_started" ||
     normalized === "pending" ||
     normalized === "verified" ||

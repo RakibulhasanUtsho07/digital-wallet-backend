@@ -11,16 +11,21 @@ import {
 import {
   createAiChatController,
 } from "../controllers/aiChatController.js";
-import { createAiConversationController } from "../controllers/aiConversationController.js";
-import { mongoAiConversationStore } from "../controllers/aiConversationStore.js";
 
-
+import {
+  createAiConversationController,
+} from "../controllers/aiConversationController.js";
+import { cofferMerchantPaymentReader } from "../integrations/cofferMerchantPaymentReader.js";
 
 import {
   cofferOwnedPaymentReader,
 } from "../integrations/cofferOwnedPaymentReader.js";
 
 
+
+import {
+  mongoAiConversationStore,
+} from "../persistence/aiConversationStore.js";
 
 import {
   TemplateExplanationProvider,
@@ -33,10 +38,13 @@ import {
 import {
   AiToolRegistry,
 } from "../tools/aiToolRegistry.js";
+import { createGetOwnMerchantPaymentTimelineTool } from "../tools/merchant/getOwnMerchantPaymentTimelineTool.js";
 
 import {
   createGetOwnPaymentTimelineTool,
 } from "../tools/user/getOwnPaymentTimelineTool.js";
+
+
 
 /* =========================================================
    CONFIGURATION
@@ -55,6 +63,12 @@ const toolRegistry =
 toolRegistry.register(
   createGetOwnPaymentTimelineTool(
     cofferOwnedPaymentReader,
+  ),
+);
+
+toolRegistry.register(
+  createGetOwnMerchantPaymentTimelineTool(
+    cofferMerchantPaymentReader,
   ),
 );
 
