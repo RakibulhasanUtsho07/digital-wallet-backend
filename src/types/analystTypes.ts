@@ -43,29 +43,14 @@ export type AnalystInsightCategory =
 ========================================================= */
 
 export interface AnalystDateFilters {
-  range:
-    AnalystRange;
-
-  mode:
-    AnalystMode;
-
-  currency:
-    string;
-
-  bucket:
-    AnalystBucket;
-
-  from:
-    Date;
-
-  to:
-    Date;
-
-  previousFrom:
-    Date;
-
-  previousTo:
-    Date;
+  range: AnalystRange;
+  mode: AnalystMode;
+  currency: string;
+  bucket: AnalystBucket;
+  from: Date;
+  to: Date;
+  previousFrom: Date;
+  previousTo: Date;
 }
 
 /* =========================================================
@@ -73,14 +58,9 @@ export interface AnalystDateFilters {
 ========================================================= */
 
 export interface AnalystMetric {
-  value:
-    number;
-
-  previousValue:
-    number;
-
-  changePercent:
-    number | null;
+  value: number;
+  previousValue: number;
+  changePercent: number | null;
 }
 
 /* =========================================================
@@ -88,26 +68,13 @@ export interface AnalystMetric {
 ========================================================= */
 
 export interface AnalystTrendPoint {
-  bucket:
-    string;
-
-  paymentCount:
-    number;
-
-  completedCount:
-    number;
-
-  failedCount:
-    number;
-
-  volumeMinor:
-    number;
-
-  feeRevenueMinor:
-    number;
-
-  successRate:
-    number;
+  bucket: string;
+  paymentCount: number;
+  completedCount: number;
+  failedCount: number;
+  volumeMinor: number;
+  feeRevenueMinor: number;
+  successRate: number;
 }
 
 /* =========================================================
@@ -115,20 +82,11 @@ export interface AnalystTrendPoint {
 ========================================================= */
 
 export interface AnalystBreakdownItem {
-  key:
-    string;
-
-  label:
-    string;
-
-  count:
-    number;
-
-  percentage:
-    number;
-
-  volumeMinor?:
-    number;
+  key: string;
+  label: string;
+  count: number;
+  percentage: number;
+  volumeMinor?: number;
 }
 
 /* =========================================================
@@ -136,26 +94,13 @@ export interface AnalystBreakdownItem {
 ========================================================= */
 
 export interface AnalystInsight {
-  id:
-    string;
-
-  severity:
-    AnalystInsightSeverity;
-
-  category:
-    AnalystInsightCategory;
-
-  title:
-    string;
-
-  description:
-    string;
-
-  evidence:
-    string;
-
-  recommendedAction:
-    string;
+  id: string;
+  severity: AnalystInsightSeverity;
+  category: AnalystInsightCategory;
+  title: string;
+  description: string;
+  evidence: string;
+  recommendedAction: string;
 }
 
 /* =========================================================
@@ -163,53 +108,22 @@ export interface AnalystInsight {
 ========================================================= */
 
 export interface AnalystInsightInput {
-  paymentCount:
-    number;
-
-  failedPaymentCount:
-    number;
-
-  successRate:
-    number;
-
-  previousSuccessRate:
-    number;
-
-  paymentVolumeMinor:
-    number;
-
-  previousPaymentVolumeMinor:
-    number;
-
-  feeRevenueMinor:
-    number;
-
-  previousFeeRevenueMinor:
-    number;
-
-  refundAmountMinor:
-    number;
-
-  disputeExposureMinor:
-    number;
-
-  openDisputeCount:
-    number;
-
-  transactionCount:
-    number;
-
-  failedTransactionCount:
-    number;
-
-  highRiskTransactionCount:
-    number;
-
-  trend:
-    AnalystTrendPoint[];
-
-  revenueUnclassifiedEventCount:
-    number;
+  paymentCount: number;
+  failedPaymentCount: number;
+  successRate: number;
+  previousSuccessRate: number;
+  paymentVolumeMinor: number;
+  previousPaymentVolumeMinor: number;
+  feeRevenueMinor: number;
+  previousFeeRevenueMinor: number;
+  refundAmountMinor: number;
+  disputeExposureMinor: number;
+  openDisputeCount: number;
+  transactionCount: number;
+  failedTransactionCount: number;
+  highRiskTransactionCount: number;
+  trend: AnalystTrendPoint[];
+  revenueUnclassifiedEventCount: number;
 }
 
 /* =========================================================
@@ -217,154 +131,111 @@ export interface AnalystInsightInput {
 ========================================================= */
 
 export interface AnalystOverviewData {
-  generatedAt:
-    string;
+  generatedAt: string;
 
   intelligenceEngine: {
-    type:
-      "deterministic_rules";
-
-    paidProviderUsed:
-      false;
-
-    version:
-      string;
+    type: "deterministic_rules";
+    paidProviderUsed: false;
+    version: string;
   };
 
   filters: {
-    range:
-      AnalystRange;
-
-    mode:
-      AnalystMode;
-
-    currency:
-      string;
-
-    bucket:
-      AnalystBucket;
-
-    from:
-      string;
-
-    to:
-      string;
+    range: AnalystRange;
+    mode: AnalystMode;
+    currency: string;
+    bucket: AnalystBucket;
+    from: string;
+    to: string;
+    previousFrom: string;
+    previousTo: string;
   };
 
   freshness: {
-    liveCollectionsReadAt:
-      string;
-
-    latestDailyFactGeneratedAt:
-      string | null;
-
-    dailyFactDaysCovered:
-      number;
+    liveCollectionsReadAt: string;
+    latestDailyFactGeneratedAt: string | null;
+    dailyFactDaysCovered: number;
   };
 
-  status:
-    AnalystSystemStatus;
+  status: AnalystSystemStatus;
 
   metrics: {
-    paymentVolumeMinor:
-      AnalystMetric;
-
-    netPaymentVolumeMinor:
-      AnalystMetric;
-
-    paymentCount:
-      AnalystMetric;
-
-    completedPaymentCount:
-      AnalystMetric;
-
-    successRate:
-      AnalystMetric;
-
-    paymentFeeRevenueMinor:
-      AnalystMetric;
-
-    refundAmountMinor:
-      AnalystMetric;
-
-    openDisputeExposureMinor:
-      AnalystMetric;
-
-    walletTransactionCount:
-      AnalystMetric;
+    paymentVolumeMinor: AnalystMetric;
+    netPaymentVolumeMinor: AnalystMetric;
+    paymentCount: AnalystMetric;
+    completedPaymentCount: AnalystMetric;
+    successRate: AnalystMetric;
+    paymentFeeRevenueMinor: AnalystMetric;
+    refundAmountMinor: AnalystMetric;
+    openDisputeExposureMinor: AnalystMetric;
+    walletTransactionCount: AnalystMetric;
   };
 
   accounts: {
-    activeUsers:
-      number;
-
-    newUsers:
-      number;
-
-    kycVerifiedUsers:
-      number;
-
-    totalMerchants:
-      number;
-
-    activeMerchants:
-      number;
-
-    verifiedMerchants:
-      number;
-
-    liveEnabledMerchants:
-      number;
+    activeUsers: number;
+    newUsers: number;
+    kycVerifiedUsers: number;
+    totalMerchants: number;
+    activeMerchants: number;
+    verifiedMerchants: number;
+    liveEnabledMerchants: number;
   };
 
   operations: {
-    failedPaymentCount:
-      number;
+    failedPaymentCount: number;
+    pendingPaymentCount: number;
+    refundCount: number;
+    openDisputeCount: number;
+    failedTransactionCount: number;
+    highRiskTransactionCount: number;
+    walletTransactionVolumeMinor: number;
+  };
 
-    refundCount:
-      number;
+  executive: {
+    paymentFailureRate: number;
+    pendingPaymentCount: number;
+    refundRate: number;
+    disputeExposureRate: number;
+    highRiskTransactionRate: number;
+    walletTransactionFailureRate: number;
+    merchantActivationRate: number;
+    merchantVerificationRate: number;
+    merchantLiveReadinessRate: number;
+  };
 
-    openDisputeCount:
-      number;
+  merchantHealth: {
+    totalMerchants: number;
+    activeMerchants: number;
+    verifiedMerchants: number;
+    liveEnabledMerchants: number;
+    activationRate: number;
+    verificationRate: number;
+    liveReadinessRate: number;
+  };
 
-    failedTransactionCount:
-      number;
-
-    highRiskTransactionCount:
-      number;
-
-    walletTransactionVolumeMinor:
-      number;
+  riskSummary: {
+    highRiskTransactionCount: number;
+    highRiskTransactionRate: number;
+    failedPaymentCount: number;
+    paymentFailureRate: number;
+    refundAmountMinor: number;
+    refundRate: number;
+    openDisputeCount: number;
+    openDisputeExposureMinor: number;
+    disputeExposureRate: number;
   };
 
   revenueLedger: {
-    classifiedNetRevenueMinor:
-      number;
-
-    classifiedEventCount:
-      number;
-
-    unclassifiedEventCount:
-      number;
-
-    note:
-      string;
+    classifiedNetRevenueMinor: number;
+    classifiedEventCount: number;
+    unclassifiedEventCount: number;
+    note: string;
   };
 
-  trend:
-    AnalystTrendPoint[];
-
-  paymentStatus:
-    AnalystBreakdownItem[];
-
-  providers:
-    AnalystBreakdownItem[];
-
-  transactionRisk:
-    AnalystBreakdownItem[];
-
-  insights:
-    AnalystInsight[];
+  trend: AnalystTrendPoint[];
+  paymentStatus: AnalystBreakdownItem[];
+  providers: AnalystBreakdownItem[];
+  transactionRisk: AnalystBreakdownItem[];
+  insights: AnalystInsight[];
 }
 
 /* =========================================================
@@ -380,11 +251,8 @@ export type AnalystIntelligenceCategoryFilter =
   | AnalystInsightCategory;
 
 export interface AnalystIntelligenceFilters {
-  severity:
-    AnalystIntelligenceSeverityFilter;
-
-  category:
-    AnalystIntelligenceCategoryFilter;
+  severity: AnalystIntelligenceSeverityFilter;
+  category: AnalystIntelligenceCategoryFilter;
 }
 
 /* =========================================================
@@ -392,32 +260,15 @@ export interface AnalystIntelligenceFilters {
 ========================================================= */
 
 export interface AnalystIntelligenceTimelinePoint {
-  bucket:
-    string;
-
-  paymentCount:
-    number;
-
-  failedCount:
-    number;
-
-  volumeMinor:
-    number;
-
-  successRate:
-    number;
-
-  failureRate:
-    number;
-
-  volumeChangePercent:
-    number | null;
-
-  pressureScore:
-    number;
-
-  status:
-    AnalystSystemStatus;
+  bucket: string;
+  paymentCount: number;
+  failedCount: number;
+  volumeMinor: number;
+  successRate: number;
+  failureRate: number;
+  volumeChangePercent: number | null;
+  pressureScore: number;
+  status: AnalystSystemStatus;
 }
 
 /* =========================================================
@@ -425,17 +276,10 @@ export interface AnalystIntelligenceTimelinePoint {
 ========================================================= */
 
 export interface AnalystIntelligenceCategoryBreakdown {
-  category:
-    AnalystInsightCategory;
-
-  count:
-    number;
-
-  percentage:
-    number;
-
-  highestSeverity:
-    AnalystInsightSeverity | null;
+  category: AnalystInsightCategory;
+  count: number;
+  percentage: number;
+  highestSeverity: AnalystInsightSeverity | null;
 }
 
 /* =========================================================
@@ -443,119 +287,55 @@ export interface AnalystIntelligenceCategoryBreakdown {
 ========================================================= */
 
 export interface AnalystIntelligenceData {
-  generatedAt:
-    string;
-
-  source:
-    "analyst_overview_aggregation";
+  generatedAt: string;
+  source: "analyst_overview_aggregation";
 
   engine: {
-    type:
-      "deterministic_rules";
-
-    version:
-      string;
-
-    paidProviderUsed:
-      false;
-
-    localModelUsed:
-      false;
-
-    explanation:
-      string;
+    type: "deterministic_rules";
+    version: string;
+    paidProviderUsed: false;
+    localModelUsed: false;
+    explanation: string;
   };
 
   filters: {
-    range:
-      AnalystRange;
-
-    mode:
-      AnalystMode;
-
-    currency:
-      string;
-
-    bucket:
-      AnalystBucket;
-
-    from:
-      string;
-
-    to:
-      string;
-
-    severity:
-      AnalystIntelligenceSeverityFilter;
-
-    category:
-      AnalystIntelligenceCategoryFilter;
+    range: AnalystRange;
+    mode: AnalystMode;
+    currency: string;
+    bucket: AnalystBucket;
+    from: string;
+    to: string;
+    severity: AnalystIntelligenceSeverityFilter;
+    category: AnalystIntelligenceCategoryFilter;
   };
 
-  status:
-    AnalystSystemStatus;
+  status: AnalystSystemStatus;
 
   summary: {
-    factsEvaluated:
-      number;
-
-    totalSignals:
-      number;
-
-    matchedSignals:
-      number;
-
-    criticalSignals:
-      number;
-
-    attentionSignals:
-      number;
-
-    positiveSignals:
-      number;
-
-    dataQualitySignals:
-      number;
+    factsEvaluated: number;
+    totalSignals: number;
+    matchedSignals: number;
+    criticalSignals: number;
+    attentionSignals: number;
+    positiveSignals: number;
+    dataQualitySignals: number;
   };
 
   baseline: {
-    paymentCount:
-      number;
-
-    walletTransactionCount:
-      number;
-
-    paymentVolumeMinor:
-      number;
-
-    feeRevenueMinor:
-      number;
-
-    refundAmountMinor:
-      number;
-
-    openDisputeExposureMinor:
-      number;
-
-    highRiskTransactionCount:
-      number;
-
-    failedPaymentCount:
-      number;
-
-    successRate:
-      number;
+    paymentCount: number;
+    walletTransactionCount: number;
+    paymentVolumeMinor: number;
+    feeRevenueMinor: number;
+    refundAmountMinor: number;
+    openDisputeExposureMinor: number;
+    highRiskTransactionCount: number;
+    failedPaymentCount: number;
+    successRate: number;
   };
 
-  categories:
-    AnalystIntelligenceCategoryBreakdown[];
-
-  timeline:
-    AnalystIntelligenceTimelinePoint[];
-
-  insights:
-    AnalystInsight[];
-
-  anomalies:
-    AnalystInsight[];
+  categories: AnalystIntelligenceCategoryBreakdown[];
+  timeline: AnalystIntelligenceTimelinePoint[];
+  insights: AnalystInsight[];
+  anomalies: AnalystInsight[];
 }
+                  
