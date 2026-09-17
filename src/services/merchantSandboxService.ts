@@ -16,39 +16,76 @@ import {
 
 export interface CreateMerchantSandboxOrderInput {
   ownerId: string;
+
   idempotencyKey: string;
+
   amount: unknown;
+
   currency?: unknown;
+
   merchantReference?: unknown;
+
   description?: unknown;
+
   customer?: unknown;
+
   items?: unknown;
+
   metadata?: unknown;
+
   returnUrl?: unknown;
+
   cancelUrl?: unknown;
+
   expiresInMinutes?: unknown;
 }
 
 export interface ListMerchantSandboxOrdersInput {
   ownerId: string;
+
   page?: unknown;
+
   limit?: unknown;
+
   search?: unknown;
+
   status?: unknown;
+
   from?: unknown;
+
   to?: unknown;
 }
 
 /* =========================================================
    MERCHANT LOOKUP
+
+   TEST MODE RULE:
+
+   Allowed:
+   - pending
+   - active
+
+   Blocked:
+   - suspended
+   - disabled
+   - any other unavailable state
+
+   Merchant verification is NOT required for sandbox mode.
 ========================================================= */
 
 async function requireSandboxMerchant(
   ownerId: string,
 ) {
+  const normalizedOwnerId =
+    typeof ownerId ===
+    "string"
+      ? ownerId.trim()
+      : "";
+
   if (
+    !normalizedOwnerId ||
     !mongoose.isValidObjectId(
-      ownerId,
+      normalizedOwnerId,
     )
   ) {
     throw new Error(
@@ -60,7 +97,7 @@ async function requireSandboxMerchant(
     await Merchant.findOne({
       ownerId:
         new mongoose.Types.ObjectId(
-          ownerId,
+          normalizedOwnerId,
         ),
     })
       .select(
@@ -79,12 +116,28 @@ async function requireSandboxMerchant(
     );
   }
 
+  /* =======================================================
+     FIX #1
+
+     Previously only active merchants could access the
+     dashboard sandbox.
+
+     That contradicted merchantOrderService, where both
+     pending and active merchants may test their integration
+     before production verification.
+  ======================================================== */
+
+  const sandboxStatusAllowed =
+    merchant.status ===
+      "pending" ||
+    merchant.status ===
+      "active";
+
   if (
-    merchant.status !==
-    "active"
+    !sandboxStatusAllowed
   ) {
     throw new Error(
-      "Merchant account is not active.",
+      "Merchant account is not available for test mode.",
     );
   }
 
@@ -103,12 +156,16 @@ async function requireSandboxMerchant(
 /* =========================================================
    CREATE SANDBOX ORDER
 
-   The mode is intentionally hard-coded to test. A dashboard
-   request cannot turn this endpoint into a live transaction.
+   SECURITY:
+   Mode is intentionally hard-coded to "test".
+
+   A merchant dashboard request cannot turn this endpoint
+   into a live payment/order endpoint.
 ========================================================= */
 
 export async function createMerchantSandboxOrder(
-  input: CreateMerchantSandboxOrderInput,
+  input:
+    CreateMerchantSandboxOrderInput,
 ) {
   const merchant =
     await requireSandboxMerchant(
@@ -119,6 +176,9 @@ export async function createMerchantSandboxOrder(
     merchantId:
       merchant._id.toString(),
 
+    /*
+     * Never accept this value from the frontend.
+     */
     mode:
       "test",
 
@@ -148,7 +208,8 @@ export async function createMerchantSandboxOrder(
       ...(
         typeof input.metadata ===
           "object" &&
-        input.metadata !== null &&
+        input.metadata !==
+          null &&
         !Array.isArray(
           input.metadata,
         )
@@ -173,10 +234,13 @@ export async function createMerchantSandboxOrder(
 
 /* =========================================================
    LIST SANDBOX ORDERS
+
+   Only TEST orders can be returned.
 ========================================================= */
 
 export async function listMerchantSandboxOrders(
-  input: ListMerchantSandboxOrdersInput,
+  input:
+    ListMerchantSandboxOrdersInput,
 ) {
   await requireSandboxMerchant(
     input.ownerId,
@@ -198,6 +262,9 @@ export async function listMerchantSandboxOrders(
     status:
       input.status,
 
+    /*
+     * Never allow frontend to override this.
+     */
     mode:
       "test",
 
@@ -221,20 +288,37 @@ export async function getMerchantSandboxOrder(
     ownerId,
   );
 
+  const normalizedOrderId =
+    typeof orderId ===
+    "string"
+      ? orderId.trim()
+      : "";
+
+  if (
+    !normalizedOrderId
+  ) {
+    throw new Error(
+      "Order ID is required.",
+    );
+  }
+
   const result =
     await getMerchantDashboardOrder(
       ownerId,
-      orderId,
+      normalizedOrderId,
     );
+
+  /* =======================================================
+     LIVE ORDER ISOLATION
+
+     Even if somebody knows a live order ID, it must never
+     be exposed through this sandbox endpoint.
+  ======================================================== */
 
   if (
     result.order.mode !==
     "test"
   ) {
-    /*
-     * Do not reveal whether a live order exists through the
-     * sandbox endpoint.
-     */
     throw new Error(
       "Order not found.",
     );
@@ -242,6 +326,3 @@ export async function getMerchantSandboxOrder(
 
   return result;
 }
-
-
-

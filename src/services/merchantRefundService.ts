@@ -686,19 +686,18 @@ export const createMerchantRefund =
           /* ===============================================
              PROVIDER SUPPORT
           ================================================ */
-
-          if (
-            payment.sourceType !==
-              "wallet" ||
-            payment.provider !==
-              "damo_wallet"
-          ) {
-            throw new MerchantRefundError(
-              "This payment provider does not support the internal wallet refund flow.",
-              409,
-              "PAYMENT_NOT_REFUNDABLE"
-            );
-          }
+if (
+  payment.sourceType !==
+    "wallet" ||
+  payment.provider !==
+    "coffer_wallet"
+) {
+  throw new MerchantRefundError(
+    "This payment provider does not support the internal wallet refund flow.",
+    409,
+    "PAYMENT_NOT_REFUNDABLE"
+  );
+}
 
           if (
             !payment.customerId
