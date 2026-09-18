@@ -19,7 +19,6 @@ import type {
   ActiveLivenessEvidence,
   EKYCReasonCode,
   EKYCStatus,
-  FingerprintEvidence,
   PrivateMediaRefs,
 } from "../types.js";
 import {
@@ -145,13 +144,6 @@ function providerReason(error: ECProviderError): EKYCReasonCode {
   return "PROVIDER_UNAVAILABLE";
 }
 
-function requiresProviderFingerprint(): boolean {
-  const configured = process.env.EKYC_REQUIRE_PROVIDER_FINGERPRINT?.trim();
-  if (configured === "true") return true;
-  if (configured === "false") return false;
-  return process.env.NODE_ENV === "production";
-}
-
 export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> {
   const worker = new Worker<EKYCJobData>(
     EKYC_QUEUE_NAME,
@@ -159,7 +151,7 @@ export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> 
       const verification = await EKYCVerification.findById(job.data.verificationId)
         .select(
           "+nidEncrypted +dateOfBirthEncrypted +claimedNameEncrypted +mediaRefsEncrypted " +
-          "+livenessEvidenceEncrypted +fingerprintEvidenceEncrypted +nidLookupHash"
+          "+livenessEvidenceEncrypted +nidLookupHash"
         );
 
       if (!verification || verification.attemptId !== job.data.attemptId) return;
@@ -187,11 +179,6 @@ export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> 
       const livenessEvidence = JSON.parse(
         decryptField(verification.livenessEvidenceEncrypted)
       ) as ActiveLivenessEvidence;
-      const fingerprintEvidence = verification.fingerprintEvidenceEncrypted
-        ? JSON.parse(
-            decryptField(verification.fingerprintEvidenceEncrypted)
-          ) as FingerprintEvidence
-        : undefined;
       deps.mediaStore.assertOwnedBy(refs, verification.userId.toString());
       const media = await deps.mediaStore.createReadUrls(refs, 60);
       const request = {
@@ -200,7 +187,6 @@ export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> 
         claimedName,
         media,
         liveness: livenessEvidence,
-        fingerprint: fingerprintEvidence,
         correlationId: verification.correlationId,
       };
 
@@ -250,32 +236,11 @@ export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> 
       if (!liveness.conclusive || !liveness.passed) {
         await finalize(
           verification,
-          liveness.conclusive ? "REJECTED" : "PENDING_MANUAL_REVIEW",
+          "PENDING_MANUAL_REVIEW",
           [liveness.conclusive ? "LIVENESS_FAILED" : "LIVENESS_INCONCLUSIVE"],
           deps,
           { livenessPassed: false },
           { livenessPolicyReasons: livenessPolicy.reasons }
-        );
-        return;
-      }
-
-      let fingerprint;
-      if (fingerprintEvidence) {
-        try {
-          fingerprint = await provider.verifyFingerprint(request);
-        } catch (error) {
-          if (error instanceof ECProviderError) {
-            await finalize(verification, "PENDING_MANUAL_REVIEW", [providerReason(error)], deps);
-            return;
-          }
-          throw error;
-        }
-      } else if (requiresProviderFingerprint()) {
-        await finalize(
-          verification,
-          "PENDING_MANUAL_REVIEW",
-          ["FINGERPRINT_INCONCLUSIVE"],
-          deps
         );
         return;
       }
@@ -315,7 +280,6 @@ export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> 
           identity,
           ocr,
           liveness,
-          fingerprint,
           claimedName,
           possibleBiometricDuplicate: Boolean(duplicate),
         },
@@ -323,7 +287,7 @@ export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> 
       );
 
       let screeningReference: string | undefined;
-      if (decision.status === "VERIFIED") {
+      if (decision.reasons.includes("AUTOMATED_CHECKS_COMPLETED")) {
         if (!identity.faceEmbedding) {
           decision = {
             ...decision,
@@ -359,47 +323,20 @@ export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> 
         }
       }
 
-      let vectorSaved = false;
-      if (decision.status === "VERIFIED" && identity.faceEmbedding) {
-        try {
-          await deps.vectorStore.saveVerifiedTemplate(
-            verification.userId.toString(),
-            verificationId,
-            identity.faceEmbedding
-          );
-          vectorSaved = true;
-        } catch {
-          decision = {
-            ...decision,
-            status: "PENDING_MANUAL_REVIEW",
-            reasons: ["VECTOR_STORE_UNAVAILABLE"],
-          };
-        }
-      }
+      const manualReviewReasons: EKYCReasonCode[] = decision.reasons;
 
-      try {
-        await finalize(
-          verification,
-          decision.status,
-          decision.reasons,
-          deps,
-          {
+      await finalize(
+        verification,
+        "PENDING_MANUAL_REVIEW",
+        manualReviewReasons,
+        deps,
+        {
             providerName: provider.name,
             providerReferenceEncrypted: encryptField(identity.providerReference),
-            ...(fingerprint
-              ? {
-                  fingerprintProviderReferenceEncrypted: encryptField(
-                    fingerprint.providerReference
-                  ),
-                  fingerprintMatched: fingerprint.matched,
-                  fingerprintConclusive: fingerprint.conclusive,
-                  fingerprintScore: fingerprint.score,
-                }
-              : {}),
             ...(screeningReference
               ? { screeningReferenceEncrypted: encryptField(screeningReference) }
               : {}),
-            ...(decision.status === "PENDING_MANUAL_REVIEW" && identity.faceEmbedding
+            ...(identity.faceEmbedding
               ? { faceEmbeddingEncrypted: encryptField(JSON.stringify(identity.faceEmbedding)) }
               : {}),
             faceScore: decision.faceScore,
@@ -413,8 +350,8 @@ export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> 
             livenessPassed: true,
             possibleDuplicateVectorId: duplicate?.pointId,
             possibleDuplicateScore: duplicate?.score,
-          },
-          {
+        },
+        {
             faceScore: decision.faceScore,
             faceQualityScore: decision.faceQualityScore,
             faceSharpnessScore: identity.faceQuality.sharpnessScore,
@@ -424,34 +361,8 @@ export function createEKYCWorker(deps: WorkerDependencies): Worker<EKYCJobData> 
             faceOcclusionDetected: identity.faceQuality.occlusionDetected,
             nameScore: decision.nameScore,
             duplicateScore: duplicate?.score ?? null,
-            fingerprintScore: fingerprint?.score ?? null,
-            fingerprintMatched: fingerprint?.matched ?? null,
-            fingerprintConclusive: fingerprint?.conclusive ?? null,
-          }
-        );
-      } catch (error) {
-        if (error instanceof mongoose.mongo.MongoServerError && error.code === 11000) {
-          if (vectorSaved) {
-            await deps.vectorStore.removeVerifiedTemplate(verificationId).catch(() => undefined);
-          }
-          await finalize(verification, "REJECTED", ["NID_ALREADY_VERIFIED"], deps, {
-            providerName: provider.name,
-            faceScore: decision.faceScore,
-            faceQualityScore: decision.faceQualityScore,
-            nameScore: decision.nameScore,
-            livenessPassed: true,
-            ...(fingerprint
-              ? {
-                  fingerprintMatched: fingerprint.matched,
-                  fingerprintConclusive: fingerprint.conclusive,
-                  fingerprintScore: fingerprint.score,
-                }
-              : {}),
-          });
-          return;
         }
-        throw error;
-      }
+      );
     },
     { connection: deps.redis, concurrency: 8, lockDuration: 30_000 }
   );

@@ -75,11 +75,8 @@ function safeVerification(value: any) {
     faceScore: typeof value.faceScore === "number" ? value.faceScore : null,
     nameScore: typeof value.nameScore === "number" ? value.nameScore : null,
     livenessPassed: typeof value.livenessPassed === "boolean" ? value.livenessPassed : null,
-    fingerprintMatched:
-      typeof value.fingerprintMatched === "boolean" ? value.fingerprintMatched : null,
-    fingerprintConclusive:
-      typeof value.fingerprintConclusive === "boolean" ? value.fingerprintConclusive : null,
-    fingerprintScore: typeof value.fingerprintScore === "number" ? value.fingerprintScore : null,
+    phoneVerifiedAt: value.phoneVerifiedAt,
+    deviceBiometricVerified: Boolean(value.deviceBiometricVerified),
     possibleDuplicateVectorId: value.possibleDuplicateVectorId,
     possibleDuplicateScore:
       typeof value.possibleDuplicateScore === "number" ? value.possibleDuplicateScore : null,
@@ -89,6 +86,15 @@ function safeVerification(value: any) {
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     hasReviewBiometricTemplate: Boolean(value.faceEmbeddingEncrypted),
+  };
+}
+
+function sensitiveIdentity(value: any) {
+  return {
+    claimedName: decryptField(value.claimedNameEncrypted),
+    nid: decryptField(value.nidEncrypted),
+    dateOfBirth: decryptField(value.dateOfBirthEncrypted),
+    verifiedPhone: decryptField(value.verifiedPhoneEncrypted),
   };
 }
 
@@ -221,7 +227,10 @@ export function createAdminEKYCRouter(): express.Router {
     try {
       const id = requireObjectId(String(request.params.id));
       const verification = await EKYCVerification.findById(id)
-        .select("+faceEmbeddingEncrypted")
+        .select(
+          "+faceEmbeddingEncrypted +claimedNameEncrypted +nidEncrypted " +
+          "+dateOfBirthEncrypted +verifiedPhoneEncrypted"
+        )
         .populate("userId", "name role kycStatus")
         .lean();
       if (!verification) {
@@ -233,9 +242,20 @@ export function createAdminEKYCRouter(): express.Router {
         .select("sequence eventType actorType createdAt")
         .sort({ sequence: 1 })
         .lean();
+      await appendAuditEvent({
+        verificationId: id,
+        eventType: "SENSITIVE_IDENTITY_VIEWED",
+        actorType: "ADMIN",
+        actorIdHash: keyedLookupHash(adminId(request), "vector-user"),
+        correlationId: verification.correlationId,
+        metadata: { fields: ["claimedName", "nid", "dateOfBirth", "verifiedPhone"] },
+      });
       response.status(200).json({
         success: true,
-        verification: safeVerification(verification),
+        verification: {
+          ...safeVerification(verification),
+          identity: sensitiveIdentity(verification),
+        },
         audit,
       });
     } catch (error) {

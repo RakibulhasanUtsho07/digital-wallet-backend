@@ -2,11 +2,15 @@ import { randomUUID } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
+import type { RegistrationResponseJSON } from "@simplewebauthn/server";
 import type { AuthRequest } from "../../../middlewares/authMiddleware.js";
 import { User } from "../../../models/User.js";
 import { ActiveLivenessSessionError } from "../biometrics/activeLivenessService.js";
 import { getOrIssueEKYCDeviceId } from "../middleware/deviceIdentity.js";
-import { ekycEvidenceUpload } from "../middleware/ekycUpload.js";
+import {
+  ekycDocumentPreflightUpload,
+  ekycEvidenceUpload,
+} from "../middleware/ekycUpload.js";
 import {
   EKYCMediaValidationError,
   type EKYCEvidenceFiles,
@@ -19,11 +23,23 @@ import {
   EKYCAlreadyVerifiedError,
   EKYCSubmissionRecoveryError,
 } from "../services/EKYCOrchestrator.js";
+import { DeviceBiometricError } from "../biometrics/deviceBiometricService.js";
+import {
+  NIDDocumentValidationError,
+  type NIDPreflightFiles,
+} from "../services/nidDocumentValidationService.js";
+import {
+  assertVerifiedPhoneChallenge,
+  consumeVerifiedPhoneChallenge,
+  getUserKycPhone,
+  PhoneOtpError,
+  requestPhoneOtp,
+  verifyPhoneOtp,
+} from "../services/phoneOtpService.js";
 import type {
   ActiveLivenessAction,
   EKYCReasonCode,
   EKYCStatus,
-  FingerprintEvidence,
   PrivateMediaRefs,
 } from "../types.js";
 import { InputValidationError } from "../validation.js";
@@ -38,14 +54,9 @@ const submissionSchema = z.object({
   livenessChallenges: z.string().trim().min(2).max(200),
   livenessStartedAt: z.string().datetime(),
   livenessCompletedAt: z.string().datetime(),
-  fingerprintProviderCaptureReference: z
-    .string()
-    .trim()
-    .min(8)
-    .max(300)
-    .regex(/^[A-Za-z0-9._:-]+$/, "Invalid provider fingerprint capture reference.")
-    .optional(),
-  fingerprintCapturedAt: z.string().datetime().optional(),
+  phoneChallengeId: z.string().uuid(),
+  documentValidationId: z.string().uuid(),
+  biometricSessionId: z.string().uuid().optional(),
 }).superRefine((value, context) => {
   if (!value.nid && !value.documentNumber) {
     context.addIssue({ code: "custom", message: "NID number is required." });
@@ -54,13 +65,6 @@ const submissionSchema = z.object({
     context.addIssue({ code: "custom", message: "Advanced e-KYC currently supports Bangladesh NID only." });
   }
 });
-
-function requiresProviderFingerprint(): boolean {
-  const configured = process.env.EKYC_REQUIRE_PROVIDER_FINGERPRINT?.trim();
-  if (configured === "true") return true;
-  if (configured === "false") return false;
-  return process.env.NODE_ENV === "production";
-}
 
 function parseLivenessChallenges(value: string): ActiveLivenessAction[] {
   try {
@@ -140,6 +144,19 @@ function getFiles(request: Request): EKYCEvidenceFiles {
   return { nidFront, nidBack, selfie, livenessVideo };
 }
 
+function getDocumentFiles(request: Request): NIDPreflightFiles {
+  const files = request.files as Record<string, Express.Multer.File[]> | undefined;
+  const front = files?.frontImage?.[0];
+  const back = files?.backImage?.[0];
+  if (!front || !back) {
+    throw new InputValidationError(
+      "NID front and back images are required.",
+      "DOCUMENT_IMAGES_REQUIRED"
+    );
+  }
+  return { front, back };
+}
+
 function handleSubmissionError(error: unknown, response: Response, next: NextFunction): void {
   if (error instanceof multer.MulterError) {
     response.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({
@@ -154,11 +171,26 @@ function handleSubmissionError(error: unknown, response: Response, next: NextFun
     error instanceof z.ZodError ||
     error instanceof InputValidationError ||
     error instanceof EKYCMediaValidationError ||
-    error instanceof ActiveLivenessSessionError
+    error instanceof ActiveLivenessSessionError ||
+    error instanceof DeviceBiometricError ||
+    error instanceof NIDDocumentValidationError ||
+    error instanceof PhoneOtpError
   ) {
-    response.status(400).json({
+    const statusCode =
+      error instanceof DeviceBiometricError ||
+      error instanceof NIDDocumentValidationError ||
+      error instanceof PhoneOtpError
+        ? error.statusCode
+        : 400;
+    response.status(statusCode).json({
       success: false,
-      code: error instanceof InputValidationError ? error.code : "VALIDATION_ERROR",
+      code:
+        error instanceof InputValidationError ||
+        error instanceof DeviceBiometricError ||
+        error instanceof NIDDocumentValidationError ||
+        error instanceof PhoneOtpError
+          ? error.code
+          : "VALIDATION_ERROR",
       message: error instanceof z.ZodError
         ? error.issues[0]?.message || "Invalid e-KYC request."
         : error.message,
@@ -192,6 +224,110 @@ function handleSubmissionError(error: unknown, response: Response, next: NextFun
 
 export function createEKYCRouter(): express.Router {
   const router = express.Router();
+
+  router.get("/phone", async (request, response, next) => {
+    try {
+      const phone = await getUserKycPhone(getUserId(request));
+      response.setHeader("Cache-Control", "no-store");
+      response.status(200).json({ success: true, phone });
+    } catch (error) {
+      handleSubmissionError(error, response, next);
+    }
+  });
+
+  router.post("/phone/otp/request", async (request, response, next) => {
+    try {
+      const body = z.object({ phone: z.string().trim().min(10).max(20) }).strict().parse(request.body);
+      const challenge = await requestPhoneOtp(getUserId(request), body.phone);
+      response.setHeader("Cache-Control", "no-store");
+      response.status(201).json({ success: true, challenge });
+    } catch (error) {
+      handleSubmissionError(error, response, next);
+    }
+  });
+
+  router.post("/phone/otp/verify", async (request, response, next) => {
+    try {
+      const body = z.object({
+        challengeId: z.string().trim().min(1),
+        otp: z.string().trim().regex(/^\d{6}$/),
+      }).strict().parse(request.body);
+      const verification = await verifyPhoneOtp({
+        userId: getUserId(request),
+        challengeId: body.challengeId,
+        otp: body.otp,
+      });
+      response.setHeader("Cache-Control", "no-store");
+      response.status(200).json({ success: true, verification });
+    } catch (error) {
+      handleSubmissionError(error, response, next);
+    }
+  });
+
+  router.post("/documents/preflight", (request, response, next) => {
+    ekycDocumentPreflightUpload(request, response, (uploadError) => {
+      if (uploadError) {
+        handleSubmissionError(uploadError, response, next);
+        return;
+      }
+      void (async () => {
+        try {
+          const userId = getUserId(request);
+          const challengeId = String(request.body?.phoneChallengeId || "");
+          await assertVerifiedPhoneChallenge(userId, challengeId);
+          const runtime = await getEKYCRuntime();
+          const validation = await runtime.documentValidator.validateAndIssue(
+            userId,
+            getDocumentFiles(request)
+          );
+          response.setHeader("Cache-Control", "no-store");
+          response.status(200).json({ success: true, validation });
+        } catch (error) {
+          handleSubmissionError(error, response, next);
+        }
+      })();
+    });
+  });
+
+  router.post("/biometrics/options", async (request, response, next) => {
+    try {
+      const userId = getUserId(request);
+      const user = await User.findById(userId).select("name accountStatus").lean();
+      if (!user || user.accountStatus === "deleted") {
+        response.status(404).json({ success: false, message: "User account was not found." });
+        return;
+      }
+      const runtime = await getEKYCRuntime();
+      const start = await runtime.deviceBiometric.create(userId, user.name);
+      response.setHeader("Cache-Control", "no-store");
+      response.status(200).json({ success: true, ...start });
+    } catch (error) {
+      handleSubmissionError(error, response, next);
+    }
+  });
+
+  router.post("/biometrics/verify", async (request, response, next) => {
+    try {
+      const sessionId = String(request.body?.sessionId || "");
+      const credential = request.body?.response;
+      if (!credential || typeof credential !== "object") {
+        throw new DeviceBiometricError(
+          "Invalid biometric credential response.",
+          "BIOMETRIC_RESPONSE_INVALID"
+        );
+      }
+      const runtime = await getEKYCRuntime();
+      const evidence = await runtime.deviceBiometric.verify({
+        userId: getUserId(request),
+        sessionId,
+        response: credential as RegistrationResponseJSON,
+      });
+      response.setHeader("Cache-Control", "no-store");
+      response.status(200).json({ success: true, sessionId, evidence });
+    } catch (error) {
+      handleSubmissionError(error, response, next);
+    }
+  });
 
   router.post("/liveness/challenges", async (request, response, next) => {
     try {
@@ -267,6 +403,19 @@ export function createEKYCRouter(): express.Router {
           const nid = body.nid || body.documentNumber || "";
           const files = getFiles(request);
           const runtime = await getEKYCRuntime();
+          const phoneVerification = await assertVerifiedPhoneChallenge(
+            userId,
+            body.phoneChallengeId
+          );
+          await runtime.documentValidator.consume(
+            body.documentValidationId,
+            userId,
+            { front: files.nidFront, back: files.nidBack }
+          );
+          const deviceBiometric = await runtime.deviceBiometric.consume(
+            userId,
+            body.biometricSessionId
+          );
           const deviceId = getOrIssueEKYCDeviceId(request, response);
           const liveness = await runtime.activeLiveness.consume({
             sessionId: body.livenessSessionId,
@@ -277,23 +426,6 @@ export function createEKYCRouter(): express.Router {
             completedAt: body.livenessCompletedAt,
           });
 
-          let fingerprint: FingerprintEvidence | undefined;
-
-          if (body.fingerprintProviderCaptureReference && body.fingerprintCapturedAt) {
-            fingerprint = {
-              captureId: randomUUID(),
-              mode: "PROVIDER",
-              providerCaptureReference: body.fingerprintProviderCaptureReference,
-              qualityScore: 100,
-              capturedAt: body.fingerprintCapturedAt,
-            };
-          } else if (requiresProviderFingerprint()) {
-            throw new InputValidationError(
-              "A provider-issued fingerprint capture reference is required.",
-              "FINGERPRINT_PROVIDER_CAPTURE_REQUIRED"
-            );
-          }
-
           uploadedRefs = await runtime.mediaStore.uploadAttempt(userId, files);
           runtime.mediaStore.assertOwnedBy(uploadedRefs, userId);
 
@@ -302,13 +434,17 @@ export function createEKYCRouter(): express.Router {
             nid,
             dateOfBirth: body.dateOfBirth,
             claimedName,
+            verifiedPhone: phoneVerification.phone,
+            phoneChallengeId: body.phoneChallengeId,
             media: uploadedRefs,
             liveness,
-            fingerprint,
+            deviceBiometric,
             ipAddress: request.ip || request.socket.remoteAddress || "unavailable",
             deviceId,
             correlationId: String(request.get("x-correlation-id") || randomUUID()).slice(0, 120),
           });
+
+          await consumeVerifiedPhoneChallenge(userId, body.phoneChallengeId);
 
           uploadedRefs = undefined;
           response.setHeader("Cache-Control", "no-store");
