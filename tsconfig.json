@@ -10,7 +10,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
 
-    "rootDir": "./src",
+    "rootDir": ".",
     "outDir": "./dist",
 
     "strict": true,
@@ -24,9 +24,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
 
-    "incremental": true,
-    "tsBuildInfoFile": "./.tsbuildinfo",
-
     "sourceMap": false,
     "declaration": false,
     "noEmitOnError": true,
@@ -37,7 +34,8 @@
   },
 
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "api/**/*.ts"
   ],
 
   "exclude": [
