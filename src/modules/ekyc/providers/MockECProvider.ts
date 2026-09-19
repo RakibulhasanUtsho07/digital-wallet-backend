@@ -7,27 +7,42 @@ import type {
   OCRResult,
   ProviderVerificationRequest,
 } from "../types.js";
+import {
+  parseBangladeshNIDFromUrls,
+} from "../services/localNidOCRService.js";
+import { ECProviderError } from "./ECProviderError.js";
 
-const pause = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const pause = (milliseconds: number) =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 export class MockECProvider implements IEKYCProvider {
   readonly name = "MOCK_EC" as const;
 
-  constructor(private readonly latencyMs = Number(process.env.MOCK_EC_LATENCY_MS || 650)) {}
+  constructor(
+    private readonly latencyMs = Number(
+      process.env.MOCK_EC_LATENCY_MS || 650
+    )
+  ) {}
 
   private async simulateLatency(): Promise<void> {
     await pause(this.latencyMs);
   }
 
-  async verifyIdentity(request: ProviderVerificationRequest): Promise<IdentityVerificationResult> {
+  async verifyIdentity(
+    request: ProviderVerificationRequest
+  ): Promise<IdentityVerificationResult> {
     await this.simulateLatency();
+
     const hash = createHash("sha256").update(request.nid).digest();
-    const scenario = process.env.MOCK_EKYC_FACE_SCENARIO?.trim().toUpperCase() || "PASS";
+    const scenario =
+      process.env.MOCK_EKYC_FACE_SCENARIO?.trim().toUpperCase() || "PASS";
+
     const noFace = scenario === "NO_FACE";
     const multipleFaces = scenario === "MULTIPLE_FACES";
     const lowQuality = scenario === "LOW_QUALITY";
     const invalidPose = scenario === "INVALID_POSE";
     const occluded = scenario === "OCCLUDED";
+
     return {
       nidMatched: !request.nid.endsWith("0000"),
       dateOfBirthMatched: true,
@@ -44,28 +59,58 @@ export class MockECProvider implements IEKYCProvider {
         occlusionDetected: occluded,
       },
       ...(!noFace && !multipleFaces
-        ? { faceEmbedding: Array.from({ length: 32 }, (_, index) => hash[index]! / 255) }
+        ? {
+            faceEmbedding: Array.from(
+              { length: 32 },
+              (_, index) => hash[index]! / 255
+            ),
+          }
         : {}),
       providerReference: `MOCK-${randomUUID()}`,
     };
   }
 
-  async parseOCR(request: ProviderVerificationRequest): Promise<OCRResult> {
+  /**
+   * Development provider, but OCR is intentionally REAL/local.
+   *
+   * IMPORTANT:
+   * Do not return request.nid/request.dateOfBirth/request.claimedName here.
+   * Doing that makes a wrong typed identity look like a successful OCR match.
+   */
+  async parseOCR(
+    request: ProviderVerificationRequest
+  ): Promise<OCRResult> {
     await this.simulateLatency();
-    return {
-      nid: request.nid,
-      dateOfBirth: request.dateOfBirth,
-      nameEnglish: request.claimedName,
-      confidence: request.media.nidFrontUrl.includes("low-quality") ? 58 : 97,
-    };
+
+    try {
+      return await parseBangladeshNIDFromUrls(
+        request.media.nidFrontUrl,
+        request.media.nidBackUrl
+      );
+    } catch (error: unknown) {
+      console.error("MOCK PROVIDER LOCAL OCR FAILED:", {
+        correlationId: request.correlationId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+
+      throw new ECProviderError(
+        "Local OCR provider is unavailable.",
+        "UNAVAILABLE",
+        true
+      );
+    }
   }
 
-  async checkLiveness(request: ProviderVerificationRequest): Promise<LivenessResult> {
+  async checkLiveness(
+    request: ProviderVerificationRequest
+  ): Promise<LivenessResult> {
     await this.simulateLatency();
+
     const spoof = /(?:screen|print|spoof)/i.test(
       `${request.media.selfieUrl} ${request.media.livenessVideoUrl}`
     );
     const challengeComplete = request.liveness.challenges.length === 3;
+
     return {
       passed: !spoof && challengeComplete,
       conclusive: challengeComplete,
@@ -82,8 +127,11 @@ export class MockECProvider implements IEKYCProvider {
     request: ProviderVerificationRequest
   ): Promise<FingerprintVerificationResult> {
     await this.simulateLatency();
+
     if (process.env.NODE_ENV === "production") {
-      throw new Error("Mock fingerprint verification is prohibited in production.");
+      throw new Error(
+        "Mock fingerprint verification is prohibited in production."
+      );
     }
 
     const evidence = request.fingerprint;
@@ -93,8 +141,11 @@ export class MockECProvider implements IEKYCProvider {
 
     const template = evidence.templateBase64;
     let templateBytes = 0;
+
     try {
-      templateBytes = template ? Buffer.from(template, "base64").length : 0;
+      templateBytes = template
+        ? Buffer.from(template, "base64").length
+        : 0;
     } catch {
       templateBytes = 0;
     }
