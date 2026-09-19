@@ -229,6 +229,91 @@ This link expires after 15 minutes.
   };
 
 /* =========================================================
+   PASSWORD RESET OTP
+
+   Kept separate from registration email verification so a
+   password-reset code can never verify a new account.
+========================================================= */
+
+export const sendPasswordResetOtpEmail =
+  async ({
+    email,
+    otp,
+  }: {
+    email: string;
+    otp: string;
+  }): Promise<void> => {
+    const from =
+      process.env.SMTP_USER;
+
+    if (!from) {
+      throw new Error(
+        "SMTP_USER is not configured."
+      );
+    }
+
+    const info =
+      await transporter.sendMail({
+        from:
+          `"Coffer Digital Wallet" <${from}>`,
+
+        to: email,
+
+        subject:
+          "Your Coffer password reset code",
+
+        text:
+          `Your Coffer password reset code is ${otp}. It expires in 10 minutes. Never share this code.`,
+
+        html: `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Coffer password reset code</title>
+</head>
+<body style="margin:0;padding:0;background:#080617;font-family:Arial,Helvetica,sans-serif;">
+  <div style="padding:40px 16px;">
+    <div style="max-width:620px;margin:0 auto;overflow:hidden;border:1px solid #30255e;border-radius:26px;background:#100b24;box-shadow:0 22px 70px rgba(0,0,0,.28);">
+      <div style="padding:34px;background:linear-gradient(135deg,#120b2c 0%,#29105e 58%,#4d1d91 100%);color:#fff;">
+        <div style="font-size:21px;font-weight:800;letter-spacing:-.02em;">Coffer</div>
+        <h1 style="margin:22px 0 8px;font-size:28px;line-height:1.2;">Verify your password reset</h1>
+        <p style="margin:0;color:#c9bee8;font-size:14px;line-height:1.7;">Use the one-time code below to continue securely.</p>
+      </div>
+
+      <div style="padding:34px;color:#c8c1dc;">
+        <p style="margin:0 0 18px;font-size:14px;line-height:1.7;">Your verification code is:</p>
+
+        <div style="display:inline-block;padding:16px 24px;border:1px solid #7047c8;border-radius:15px;background:#1b1138;color:#ffffff;font-size:31px;font-weight:800;letter-spacing:9px;">
+          ${otp}
+        </div>
+
+        <p style="margin:22px 0 0;color:#8f88a8;font-size:12px;line-height:1.7;">
+          This code expires in 10 minutes. If you did not request a password reset, you can safely ignore this email.
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`,
+      });
+
+    console.log(
+      "PASSWORD RESET OTP EMAIL SENT:",
+      {
+        to: email,
+        messageId:
+          info.messageId,
+        accepted:
+          info.accepted,
+        rejected:
+          info.rejected,
+      }
+    );
+  };
+
+/* =========================================================
    EMAIL VERIFICATION OTP
 ========================================================= */
 
