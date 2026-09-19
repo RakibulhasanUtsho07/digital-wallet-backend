@@ -148,6 +148,7 @@ export type KYCStatus =
 export type ThemeMode =
   | "light"
   | "dark"
+  | "system"
   | "eye-care"
   | "ocean"
   | "forest";
@@ -304,6 +305,7 @@ const userPreferencesSchema =
         enum: [
           "light",
           "dark",
+          "system",
           "eye-care",
           "ocean",
           "forest",
