@@ -44,19 +44,42 @@ import type {
 } from "../types.js";
 import { InputValidationError } from "../validation.js";
 
+const mongoObjectIdSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^[0-9a-fA-F]{24}$/,
+    "Invalid phone challenge ID."
+  );
+
+const livenessSessionIdSchema = z
+  .string()
+  .trim()
+  .uuid("Invalid liveness session ID.");
+
+const documentValidationIdSchema = z
+  .string()
+  .trim()
+  .uuid("Invalid document validation ID.");
+
+const biometricSessionIdSchema = z
+  .string()
+  .trim()
+  .uuid("Invalid biometric session ID.");
+
 const submissionSchema = z.object({
   claimedName: z.string().trim().min(2).max(160).optional(),
   dateOfBirth: z.string().trim().length(10),
   nid: z.string().trim().min(10).max(24).optional(),
   documentNumber: z.string().trim().min(10).max(24).optional(),
   documentType: z.string().trim().toLowerCase().optional(),
-  livenessSessionId: z.string().uuid(),
+  livenessSessionId: livenessSessionIdSchema,
   livenessChallenges: z.string().trim().min(2).max(200),
   livenessStartedAt: z.string().datetime(),
   livenessCompletedAt: z.string().datetime(),
-  phoneChallengeId: z.string().uuid(),
-  documentValidationId: z.string().uuid(),
-  biometricSessionId: z.string().uuid().optional(),
+  phoneChallengeId: mongoObjectIdSchema,
+  documentValidationId: documentValidationIdSchema,
+  biometricSessionId: biometricSessionIdSchema.optional(),
 }).superRefine((value, context) => {
   if (!value.nid && !value.documentNumber) {
     context.addIssue({ code: "custom", message: "NID number is required." });
@@ -249,7 +272,7 @@ export function createEKYCRouter(): express.Router {
   router.post("/phone/otp/verify", async (request, response, next) => {
     try {
       const body = z.object({
-        challengeId: z.string().trim().min(1),
+        challengeId: mongoObjectIdSchema,
         otp: z.string().trim().regex(/^\d{6}$/),
       }).strict().parse(request.body);
       const verification = await verifyPhoneOtp({
@@ -273,7 +296,9 @@ export function createEKYCRouter(): express.Router {
       void (async () => {
         try {
           const userId = getUserId(request);
-          const challengeId = String(request.body?.phoneChallengeId || "");
+          const challengeId = mongoObjectIdSchema.parse(
+            String(request.body?.phoneChallengeId || "")
+          );
           await assertVerifiedPhoneChallenge(userId, challengeId);
           const runtime = await getEKYCRuntime();
           const validation = await runtime.documentValidator.validateAndIssue(
@@ -407,7 +432,7 @@ export function createEKYCRouter(): express.Router {
             userId,
             body.phoneChallengeId
           );
-          await runtime.documentValidator.consume(
+          await runtime.documentValidator.assertValid(
             body.documentValidationId,
             userId,
             { front: files.nidFront, back: files.nidBack }
@@ -444,7 +469,14 @@ export function createEKYCRouter(): express.Router {
             correlationId: String(request.get("x-correlation-id") || randomUUID()).slice(0, 120),
           });
 
-          await consumeVerifiedPhoneChallenge(userId, body.phoneChallengeId);
+          await runtime.documentValidator.invalidate(
+            body.documentValidationId
+          );
+
+          await consumeVerifiedPhoneChallenge(
+            userId,
+            body.phoneChallengeId
+          );
 
           uploadedRefs = undefined;
           response.setHeader("Cache-Control", "no-store");
