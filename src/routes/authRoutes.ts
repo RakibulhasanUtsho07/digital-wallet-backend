@@ -12,6 +12,7 @@ import {
   resendEmailOtp,
   logoutUser,
   forgotPassword,
+  verifyPasswordResetOtp,
   resetPassword,
 
   /* Active sessions */
@@ -257,7 +258,19 @@ router.post(
 
 router.post(
   "/forgot-password",
+  loginLimiter,
   forgotPassword
+);
+
+/* =========================================================
+   VERIFY PASSWORD RESET OTP
+   POST /api/auth/verify-password-reset-otp
+========================================================= */
+
+router.post(
+  "/verify-password-reset-otp",
+  twoFactorVerifyLimiter,
+  verifyPasswordResetOtp
 );
 
 /* =========================================================
@@ -272,6 +285,7 @@ router.post(
 
 router.post(
   "/reset-password",
+  twoFactorVerifyLimiter,
   resetPassword
 );
 
