@@ -49,6 +49,7 @@ import merchantWebhookRoutes from "./routes/merchantWebhookRoutes.js";
 import merchantDashboardWebhookRoutes from "./routes/merchantDashboardWebhookRoutes.js";
 import adminMerchantVerificationRoutes from "./routes/adminMerchantVerificationRoutes.js";
 import merchantSettingsRoutes from "./routes/merchantSettingsRoutes.js";
+import adminSecurityRoutes from "./routes/adminSecurityRoutes.js";
 
 /* =========================================================
    ANALYST
@@ -727,6 +728,15 @@ app.use(
 app.use(
   "/api/admin/audit-logs",
   auditRoutes
+);
+
+/* =========================================================
+   ADMIN SECURITY CENTER
+========================================================= */
+
+app.use(
+  "/api/admin/security",
+  adminSecurityRoutes
 );
 
 /* =========================================================

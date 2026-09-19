@@ -1,6 +1,8 @@
 import { Types } from "mongoose";
 
 import { getSupportTicketDetail } from "./supportTicketService.js";
+import { getSupportPaymentDetail } from "./supportPaymentService.js";
+import { getSupportTransactionDetail } from "./supportTransactionService.js";
 
 /* =========================================================
    AI TYPES
@@ -68,6 +70,15 @@ export interface SupportAiAnalysis {
 
   suggestedReply: string;
 
+  verification: {
+    status:
+      | "verified"
+      | "partially_verified"
+      | "unverified";
+    label: string;
+    evidence: string[];
+  };
+
   safety: {
     humanApprovalRequired: true;
     canExecuteFinancialActions: false;
@@ -102,6 +113,170 @@ const includesAny = (
   terms.some((term) =>
     text.includes(term)
   );
+
+type EvidenceResult = {
+  status:
+    | "verified"
+    | "partially_verified"
+    | "unverified";
+  label: string;
+  evidence: string[];
+  rootCause?: string;
+};
+
+/* =========================================================
+   VERIFIED BACKEND EVIDENCE
+---------------------------------------------------------
+The ticket text is a customer claim, not proof. A result is
+marked verified only when the related backend record exists
+and belongs to the customer who opened the ticket.
+========================================================= */
+
+const loadVerifiedEvidence =
+  async (ticket: {
+    category: string;
+    relatedReference: string;
+    customer: {
+      userId: string;
+      kycStatus: string;
+      walletLinked: boolean;
+    };
+  }): Promise<EvidenceResult> => {
+    const reference =
+      ticket.relatedReference.trim();
+
+    if (
+      ticket.category === "Payment" &&
+      reference
+    ) {
+      const payment =
+        await getSupportPaymentDetail(
+          reference
+        );
+
+      if (!payment) {
+        return {
+          status: "unverified",
+          label: "Payment reference not found",
+          evidence: [],
+        };
+      }
+
+      if (
+        payment.customerId !==
+        ticket.customer.userId
+      ) {
+        return {
+          status: "unverified",
+          label: "Reference ownership mismatch",
+          evidence: [],
+        };
+      }
+
+      const evidence = [
+        `Payment ${payment.paymentId} is recorded as ${payment.status}.`,
+        `Provider: ${payment.provider}; mode: ${payment.mode}.`,
+      ];
+
+      if (payment.failure?.code) {
+        evidence.push(
+          `Recorded failure code: ${payment.failure.code}.`
+        );
+      }
+
+      if (payment.failure?.message) {
+        evidence.push(
+          `Recorded provider reason: ${payment.failure.message}.`
+        );
+      }
+
+      return {
+        status: "verified",
+        label: "Matched customer payment record",
+        evidence,
+        rootCause:
+          payment.failure?.message
+            ? `Verified provider record: ${payment.failure.message}`
+            : `The verified payment record is currently ${payment.status}.`,
+      };
+    }
+
+    if (
+      [
+        "Transfer",
+        "Withdrawal",
+        "Deposit",
+      ].includes(ticket.category) &&
+      reference
+    ) {
+      const transaction =
+        await getSupportTransactionDetail(
+          reference
+        );
+
+      if (!transaction) {
+        return {
+          status: "unverified",
+          label: "Transaction reference not found",
+          evidence: [],
+        };
+      }
+
+      const belongsToCustomer =
+        transaction.sender?.id ===
+          ticket.customer.userId ||
+        transaction.receiver?.id ===
+          ticket.customer.userId;
+
+      if (!belongsToCustomer) {
+        return {
+          status: "unverified",
+          label: "Reference ownership mismatch",
+          evidence: [],
+        };
+      }
+
+      return {
+        status: "verified",
+        label: "Matched customer transaction record",
+        evidence: [
+          `Transaction ${transaction.id} is recorded as ${transaction.status}.`,
+          `Transaction type: ${transaction.type}; currency: ${transaction.currency}.`,
+        ],
+        rootCause:
+          `The verified transaction record is currently ${transaction.status}.`,
+      };
+    }
+
+    if (
+      ticket.category === "KYC"
+    ) {
+      return {
+        status: "verified",
+        label: "Matched customer account record",
+        evidence: [
+          `Backend KYC status: ${ticket.customer.kycStatus}.`,
+          `Wallet linked: ${ticket.customer.walletLinked ? "yes" : "no"}.`,
+        ],
+        rootCause:
+          `The verified account KYC status is ${ticket.customer.kycStatus}.`,
+      };
+    }
+
+    return {
+      status: reference
+        ? "partially_verified"
+        : "unverified",
+      label: reference
+        ? "Ticket reference recorded; live evidence unavailable"
+        : "No related reference supplied",
+      evidence: reference
+        ? [
+            "The ticket contains a related reference, but this category has no live verification adapter yet.",
+          ]
+        : [],
+    };
+  };
 
 /* =========================================================
    INTENT DETECTION
@@ -543,7 +718,25 @@ export const analyzeSupportTicket =
         fullText
       );
 
+    const verification =
+      await loadVerifiedEvidence({
+        category:
+          ticket.category,
+        relatedReference:
+          ticket.relatedReference ??
+          "",
+        customer: {
+          userId:
+            ticket.customer.userId,
+          kycStatus:
+            ticket.customer.kycStatus,
+          walletLinked:
+            ticket.customer.walletLinked,
+        },
+      });
+
     const possibleRootCause =
+      verification.rootCause ??
       inferRootCause(
         intent,
         fullText
@@ -554,25 +747,36 @@ export const analyzeSupportTicket =
         intent
       );
 
-    const confidence =
-      Math.min(
-        98,
-        Math.round(
-          68 +
-            (ticket.relatedReference
-              ? 8
-              : 0) +
-            (ticket.messages.length > 0
-              ? 8
-              : 0) +
-            (ticket.category !== "Other"
-              ? 7
-              : 0) +
-            (ticket.priority !== "Normal"
-              ? 4
-              : 0)
-        )
+    const baseConfidence =
+      Math.round(
+        58 +
+          (ticket.relatedReference
+            ? 7
+            : 0) +
+          (ticket.messages.length > 0
+            ? 6
+            : 0) +
+          (ticket.category !== "Other"
+            ? 5
+            : 0)
       );
+
+    const confidence =
+      verification.status === "verified"
+        ? Math.min(
+            98,
+            baseConfidence + 18
+          )
+        : verification.status ===
+            "partially_verified"
+          ? Math.min(
+              78,
+              baseConfidence
+            )
+          : Math.min(
+              62,
+              baseConfidence
+            );
 
     return {
       ticketId:
@@ -609,6 +813,15 @@ export const analyzeSupportTicket =
           intent,
           ticket.customer.name
         ),
+
+      verification: {
+        status:
+          verification.status,
+        label:
+          verification.label,
+        evidence:
+          verification.evidence,
+      },
 
       safety: {
         humanApprovalRequired: true,
