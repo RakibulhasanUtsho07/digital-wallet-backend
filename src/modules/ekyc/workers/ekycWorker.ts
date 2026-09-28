@@ -38,6 +38,7 @@ import type {
   FaceDuplicateMatch,
   IFaceVectorStore,
 } from "../vector/QdrantFaceVectorStore.js";
+import { qdrantFailureCode } from "../vector/QdrantFaceVectorStore.js";
 
 interface WorkerDependencies {
   redis: Redis;
@@ -591,7 +592,14 @@ export function createEKYCWorker(
                 config.thresholds
                   .biometricDuplicate
               );
-          } catch {
+          } catch (error: unknown) {
+            // Keep the case in manual review and report only a safe error code.
+            // Raw network errors may include a private cluster URL.
+            console.error("EKYC VECTOR STORE CHECK FAILED:", {
+              verificationId,
+              attemptId: verification.attemptId,
+              failure: qdrantFailureCode(error),
+            });
             await finalize(
               verification,
               "PENDING_MANUAL_REVIEW",

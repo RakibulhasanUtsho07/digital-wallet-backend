@@ -1,269 +1,105 @@
-import {
-  CofferAiError,
-} from "../../errors/cofferAiError.js";
-
-import type {
-  AiOwnedPaymentEvidence,
-  MerchantOwnedPaymentReader,
-} from "../../types/cofferAi.types.js";
-
-import type {
-  AiToolDefinition,
-} from "../aiToolRegistry.js";
-
-const SAFE_CODE_PATTERN =
-  /^[a-zA-Z0-9_.:-]{1,100}$/;
-
-function safeTextCode(
-  value: unknown,
-): string | null {
-  if (
-    typeof value !==
-    "string"
-  ) {
-    return null;
-  }
-
-  const normalized =
-    value.trim();
-
-  return SAFE_CODE_PATTERN.test(
-    normalized,
-  )
-    ? normalized
-    : null;
-}
-
-function safeIsoDate(
-  value: unknown,
-): string | null {
-  if (
-    typeof value !==
-    "string"
-  ) {
-    return null;
-  }
-
-  const date =
-    new Date(value);
-
-  return Number.isNaN(
-    date.getTime(),
-  )
-    ? null
-    : date.toISOString();
-}
-
-function normalizeEvidence(
-  evidence:
-    AiOwnedPaymentEvidence,
-  expectedPaymentId:
-    string,
-): AiOwnedPaymentEvidence {
-  if (
-    evidence.paymentId !==
-    expectedPaymentId
-  ) {
-    throw new CofferAiError({
-      code:
-        "AI_DEPENDENCY_RESPONSE_INVALID",
-      message:
-        "The merchant payment evidence could not be verified.",
-      statusCode:
-        502,
-    });
-  }
-
-  if (
-    evidence.subjectType !==
-    "gateway_payment"
-  ) {
-    throw new CofferAiError({
-      code:
-        "AI_DEPENDENCY_RESPONSE_INVALID",
-      message:
-        "The merchant payment resource type could not be verified.",
-      statusCode:
-        502,
-    });
-  }
-
-  const state =
-    safeTextCode(
-      evidence.state,
-    );
-
-  if (!state) {
-    throw new CofferAiError({
-      code:
-        "AI_DEPENDENCY_RESPONSE_INVALID",
-      message:
-        "The merchant payment state could not be verified.",
-      statusCode:
-        502,
-    });
-  }
-
-  const currency =
-    typeof evidence.currency ===
-      "string" &&
-    /^[A-Za-z]{3}$/.test(
-      evidence.currency,
-    )
-      ? evidence.currency.toUpperCase()
-      : null;
-
-  return {
-    subjectType:
-      "gateway_payment",
-    paymentId:
-      expectedPaymentId,
-    state,
-    amountMinor:
-      typeof evidence.amountMinor ===
-        "number" &&
-      Number.isSafeInteger(
-        evidence.amountMinor,
-      ) &&
-      evidence.amountMinor >=
-        0
-        ? evidence.amountMinor
-        : null,
-    currency,
-    createdAt:
-      safeIsoDate(
-        evidence.createdAt,
-      ),
-    updatedAt:
-      safeIsoDate(
-        evidence.updatedAt,
-      ),
-    failureCode:
-      safeTextCode(
-        evidence.failureCode,
-      ),
-    failureCategory:
-      safeTextCode(
-        evidence.failureCategory,
-      ),
-    providerStatusCode:
-      safeTextCode(
-        evidence.providerStatusCode,
-      ),
-    events:
-      evidence.events
-        .slice(0, 50)
-        .flatMap(
-          (event) => {
-            const code =
-              safeTextCode(
-                event.code,
-              );
-            const status =
-              safeTextCode(
-                event.status,
-              );
-            const at =
-              safeIsoDate(
-                event.at,
-              );
-
-            return code &&
-              status &&
-              at
-              ? [
-                  {
-                    code,
-                    status,
-                    at,
-                  },
-                ]
-              : [];
-          },
-        ),
-  };
-}
+import { CofferAiError } from "../../errors/cofferAiError.js";
+import { diagnosePayment } from "../../diagnostics/paymentDiagnosticService.js";
+import { buildCanonicalPaymentExplanation } from "../../providers/aiExplanationProvider.js";
+import type { MerchantOwnedPaymentReader } from "../../types/cofferAi.types.js";
+import type { AiToolDefinition } from "../aiToolRegistry.js";
 
 export function createGetOwnMerchantPaymentTimelineTool(
-  reader:
-    MerchantOwnedPaymentReader,
+  reader: MerchantOwnedPaymentReader,
 ): AiToolDefinition {
   return {
-    id:
-      "merchant.payment.timeline",
+    id: "merchant.payment.timeline",
 
-    async execute({
-      actor,
-      payload,
-    }) {
-      if (
-        actor.actorType !==
-          "merchant" ||
-        !actor.merchantId
-      ) {
+    async execute({ actor, payload }) {
+      if (actor.actorType !== "merchant" || !actor.merchantId) {
         throw new CofferAiError({
-          code:
-            "AI_MERCHANT_CONTEXT_REQUIRED",
-          message:
-            "A verified merchant context is required.",
-          statusCode:
-            403,
+          code: "AI_MERCHANT_SCOPE_REQUIRED",
+          message: "A merchant account context is required.",
+          statusCode: 403,
         });
       }
 
       const paymentId =
-        typeof payload.paymentId ===
-        "string"
+        typeof payload.paymentId === "string"
           ? payload.paymentId.trim()
-          : "";
+          : typeof payload.resourceId === "string"
+            ? payload.resourceId.trim()
+            : "";
 
-      if (
-        paymentId.length <
-          6 ||
-        paymentId.length >
-          128 ||
-        !/^[a-zA-Z0-9_-]+$/.test(
-          paymentId,
-        )
-      ) {
+      if (!paymentId) {
         throw new CofferAiError({
-          code:
-            "AI_PAYMENT_ID_INVALID",
-          message:
-            "A valid merchant payment reference is required.",
-          statusCode:
-            400,
+          code: "AI_PAYMENT_REFERENCE_REQUIRED",
+          message: "A merchant payment reference is required.",
+          statusCode: 400,
         });
       }
 
-      /*
-       * merchantId always comes from the trusted actor populated by server
-       * middleware. Payload merchantId/ownerId values cannot override it.
-       */
-      const evidence =
-        await reader.findOwnedMerchantPaymentTimeline({
-          paymentId,
-          merchantId:
-            actor.merchantId,
-        });
+      const evidence = await reader.findOwnedMerchantPaymentTimeline({
+        paymentId,
+        merchantId: actor.merchantId,
+      });
 
       if (!evidence) {
         throw new CofferAiError({
-          code:
-            "AI_MERCHANT_PAYMENT_NOT_FOUND",
-          message:
-            "The payment was not found for this merchant account.",
-          statusCode:
-            404,
+          code: "AI_PAYMENT_NOT_FOUND",
+          message: "The payment was not found in this merchant account.",
+          statusCode: 404,
         });
       }
 
-      return normalizeEvidence(
-        evidence,
-        paymentId,
-      );
+      const diagnosis = diagnosePayment(evidence);
+      const suggestedActions = [
+        {
+          label: "Open payment details",
+          href: `/dashboard/merchant/payments/${encodeURIComponent(
+            evidence.paymentId,
+          )}`,
+        },
+        ...diagnosis.nextSteps.map((action) =>
+          action.href === "/dashboard/transactions"
+            ? { ...action, href: "/dashboard/merchant/payments" }
+            : action,
+        ),
+      ];
+
+      return {
+        toolId: "merchant.payment.timeline" as const,
+        title: "Merchant payment diagnosis",
+        summary: buildCanonicalPaymentExplanation(diagnosis),
+        verification: diagnosis.verified
+          ? ("verified" as const)
+          : diagnosis.possibleCauses.length
+            ? ("partial" as const)
+            : ("unknown" as const),
+        confidence: diagnosis.verified
+          ? ("high" as const)
+          : (diagnosis.possibleCauses[0]?.confidence ?? ("low" as const)),
+        facts: [
+          { label: "Reference", value: evidence.paymentId },
+          { label: "State", value: evidence.state },
+          { label: "Failure code", value: evidence.failureCode },
+          { label: "Failure category", value: evidence.failureCategory },
+          { label: "Currency", value: evidence.currency },
+          { label: "Created", value: evidence.createdAt },
+          { label: "Updated", value: evidence.updatedAt },
+        ],
+        sources: [
+          {
+            type: "merchant_payment_timeline",
+            label: "Owned merchant payment timeline",
+            reference: evidence.paymentId,
+          },
+        ],
+        suggestedActions,
+        diagnosis: {
+          ...diagnosis,
+          nextSteps: suggestedActions,
+        },
+        data: {
+          kind: "merchant_payment_diagnosis",
+          evidence,
+        },
+      };
     },
   };
 }
-
-

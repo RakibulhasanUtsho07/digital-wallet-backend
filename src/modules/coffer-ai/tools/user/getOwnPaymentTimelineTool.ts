@@ -1,99 +1,8 @@
 import { CofferAiError } from "../../errors/cofferAiError.js";
-import type {
-  AiOwnedPaymentEvidence,
-  OwnedPaymentReader,
-} from "../../types/cofferAi.types.js";
+import { diagnosePayment } from "../../diagnostics/paymentDiagnosticService.js";
+import { buildCanonicalPaymentExplanation } from "../../providers/aiExplanationProvider.js";
+import type { OwnedPaymentReader } from "../../types/cofferAi.types.js";
 import type { AiToolDefinition } from "../aiToolRegistry.js";
-
-const SAFE_CODE_PATTERN = /^[a-zA-Z0-9_.:-]{1,100}$/;
-
-function safeTextCode(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.trim();
-  return SAFE_CODE_PATTERN.test(normalized) ? normalized : null;
-}
-
-function safeIsoDate(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function normalizeEvidence(
-  evidence: AiOwnedPaymentEvidence,
-  expectedPaymentId: string,
-): AiOwnedPaymentEvidence {
-  if (evidence.paymentId !== expectedPaymentId) {
-    throw new CofferAiError({
-      code: "AI_DEPENDENCY_RESPONSE_INVALID",
-      message: "The payment evidence could not be verified.",
-      statusCode: 502,
-    });
-  }
-
-  const state = safeTextCode(evidence.state);
-
-  if (!state) {
-    throw new CofferAiError({
-      code: "AI_DEPENDENCY_RESPONSE_INVALID",
-      message: "The payment state could not be verified.",
-      statusCode: 502,
-    });
-  }
-
-  const currency =
-    typeof evidence.currency === "string" &&
-    /^[A-Za-z]{3}$/.test(evidence.currency)
-      ? evidence.currency.toUpperCase()
-      : null;
-
-  const subjectType =
-    evidence.subjectType ===
-      "gateway_payment" ||
-    evidence.subjectType ===
-      "wallet_transaction"
-      ? evidence.subjectType
-      : null;
-
-  if (!subjectType) {
-    throw new CofferAiError({
-      code: "AI_DEPENDENCY_RESPONSE_INVALID",
-      message: "The payment resource type could not be verified.",
-      statusCode: 502,
-    });
-  }
-
-  return {
-    subjectType,
-    paymentId: expectedPaymentId,
-    state,
-    amountMinor:
-      typeof evidence.amountMinor === "number" &&
-      Number.isSafeInteger(evidence.amountMinor) &&
-      evidence.amountMinor >= 0
-        ? evidence.amountMinor
-        : null,
-    currency,
-    createdAt: safeIsoDate(evidence.createdAt),
-    updatedAt: safeIsoDate(evidence.updatedAt),
-    failureCode: safeTextCode(evidence.failureCode),
-    failureCategory: safeTextCode(evidence.failureCategory),
-    providerStatusCode: safeTextCode(evidence.providerStatusCode),
-    events: evidence.events.slice(0, 50).flatMap((event) => {
-      const code = safeTextCode(event.code);
-      const status = safeTextCode(event.status);
-      const at = safeIsoDate(event.at);
-
-      return code && status && at ? [{ code, status, at }] : [];
-    }),
-  };
-}
 
 export function createGetOwnPaymentTimelineTool(
   reader: OwnedPaymentReader,
@@ -103,7 +12,7 @@ export function createGetOwnPaymentTimelineTool(
     async execute({ actor, payload }) {
       if (actor.actorType !== "user" || !actor.userId) {
         throw new CofferAiError({
-          code: "AI_USER_CONTEXT_REQUIRED",
+          code: "AI_USER_SCOPE_REQUIRED",
           message: "A personal account context is required.",
           statusCode: 403,
         });
@@ -112,22 +21,18 @@ export function createGetOwnPaymentTimelineTool(
       const paymentId =
         typeof payload.paymentId === "string"
           ? payload.paymentId.trim()
-          : "";
+          : typeof payload.resourceId === "string"
+            ? payload.resourceId.trim()
+            : "";
 
-      if (
-        paymentId.length < 6 ||
-        paymentId.length > 128 ||
-        !/^[a-zA-Z0-9_-]+$/.test(paymentId)
-      ) {
+      if (!paymentId) {
         throw new CofferAiError({
-          code: "AI_PAYMENT_ID_INVALID",
-          message: "A valid payment reference is required.",
+          code: "AI_PAYMENT_REFERENCE_REQUIRED",
+          message: "A payment or transaction reference is required.",
           statusCode: 400,
         });
       }
 
-      // userId always comes from the trusted actor. The payload cannot
-      // override it, even if a client sends userId/ownerId fields.
       const evidence = await reader.findOwnedPaymentTimeline({
         paymentId,
         userId: actor.userId,
@@ -141,7 +46,39 @@ export function createGetOwnPaymentTimelineTool(
         });
       }
 
-      return normalizeEvidence(evidence, paymentId);
+      const diagnosis = diagnosePayment(evidence);
+
+      return {
+        toolId: "user.payment.timeline" as const,
+        title: "Payment diagnosis",
+        summary: buildCanonicalPaymentExplanation(diagnosis),
+        verification: diagnosis.verified
+          ? "verified" as const
+          : diagnosis.possibleCauses.length
+            ? "partial" as const
+            : "unknown" as const,
+        confidence: diagnosis.verified
+          ? "high" as const
+          : diagnosis.possibleCauses[0]?.confidence ?? "low" as const,
+        facts: [
+          { label: "Reference", value: evidence.paymentId },
+          { label: "State", value: evidence.state },
+          { label: "Currency", value: evidence.currency },
+          { label: "Failure code", value: evidence.failureCode },
+        ],
+        sources: [
+          {
+            type: evidence.subjectType === "wallet_transaction"
+              ? "wallet_transaction_timeline"
+              : "payment_timeline",
+            label: "Owned payment timeline",
+            reference: evidence.paymentId,
+          },
+        ],
+        suggestedActions: diagnosis.nextSteps,
+        diagnosis,
+        data: { evidence },
+      };
     },
   };
 }

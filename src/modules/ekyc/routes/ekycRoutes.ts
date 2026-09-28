@@ -260,8 +260,20 @@ export function createEKYCRouter(): express.Router {
 
   router.post("/phone/otp/request", async (request, response, next) => {
     try {
-      const body = z.object({ phone: z.string().trim().min(10).max(20) }).strict().parse(request.body);
-      const challenge = await requestPhoneOtp(getUserId(request), body.phone);
+      const body = z
+        .object({
+          phone: z.string().trim().min(10).max(20),
+          channel: z.enum(["sms", "whatsapp"]).default("sms"),
+        })
+        .strict()
+        .parse(request.body);
+
+      const challenge = await requestPhoneOtp(
+        getUserId(request),
+        body.phone,
+        body.channel
+      );
+
       response.setHeader("Cache-Control", "no-store");
       response.status(201).json({ success: true, challenge });
     } catch (error) {

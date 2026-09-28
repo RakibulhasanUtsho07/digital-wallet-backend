@@ -24,6 +24,7 @@ import {
   decodeSessionToken,
   readTokenFromRequest,
 } from "../services/authSessionService.js";
+import { currentEKYCStatus } from "../services/identityVerificationService.js";
 
 /* =========================================================
    AUTH REQUEST
@@ -136,7 +137,7 @@ export const protect =
           decoded.id
         )
           .select(
-            "role authVersion accountStatus kycStatus"
+            "role authVersion accountStatus deletedAt status kycStatus"
           )
           .lean();
 
@@ -161,8 +162,10 @@ export const protect =
       ==================================================== */
 
       if (
-        foundUser.accountStatus ===
-        "deleted"
+        foundUser.accountStatus === "deleted" ||
+        foundUser.accountStatus === "suspended" ||
+        foundUser.status === "suspended" ||
+        Boolean(foundUser.deletedAt)
       ) {
         res.status(
           401
@@ -393,6 +396,15 @@ export const protect =
          JWT role for authorization.
       ==================================================== */
 
+      const identityStatus = await currentEKYCStatus(foundUser._id.toString());
+      const projectedStatus: KYCStatus = identityStatus === "under_review" ? "pending" : identityStatus;
+      if (foundUser.kycStatus !== projectedStatus) {
+        await User.updateOne(
+          { _id: foundUser._id, kycStatus: { $ne: projectedStatus } },
+          { $set: { kycStatus: projectedStatus } },
+        );
+      }
+
       req.user = {
         _id:
           foundUser._id.toString(),
@@ -404,7 +416,7 @@ export const protect =
           foundUser.accountStatus,
 
         kycStatus:
-          foundUser.kycStatus,
+          projectedStatus,
 
         sessionId:
           decoded.sid,

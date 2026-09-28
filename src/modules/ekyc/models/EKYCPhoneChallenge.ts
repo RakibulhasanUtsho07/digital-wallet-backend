@@ -1,55 +1,55 @@
 import mongoose, {
   Schema,
-  type Document,
+  type Model,
+  type Types,
 } from "mongoose";
 
-import type {
-  IEncryptedData,
-} from "../../../models/User.js";
+export type EKYCPhoneChallengeStatus =
+  | "PENDING"
+  | "VERIFIED"
+  | "LOCKED"
+  | "DELIVERY_FAILED"
+  | "CONSUMED";
 
-export type EKYCPhoneOtpProvider =
-  | "descope"
-  | "development";
+export type EKYCPhoneChallengeChannel =
+  | "sms"
+  | "whatsapp";
 
-export interface IEKYCPhoneChallenge extends Document {
-  userId: mongoose.Types.ObjectId;
-  phoneEncrypted: IEncryptedData;
-  phoneLookup: string;
-  provider: EKYCPhoneOtpProvider;
+export interface EKYCPhoneChallengeRecord {
+  _id: Types.ObjectId;
+  userId: Types.ObjectId;
+
+  phoneCiphertext: string;
+  phoneIv: string;
+  phoneAuthTag: string;
+  phoneLookupHash: string;
+
   otpHash?: string;
+
+  channel: EKYCPhoneChallengeChannel;
+  status: EKYCPhoneChallengeStatus;
+
   attempts: number;
   maxAttempts: number;
-  expiresAt: Date;
+
+  otpExpiresAt: Date;
+  resendAvailableAt: Date;
+
   verifiedAt?: Date;
+  verifiedUntil?: Date;
   consumedAt?: Date;
-  lastSentAt: Date;
+
+  provider: string;
+  providerRequestId?: string;
+
+  deleteAt: Date;
+
   createdAt: Date;
   updatedAt: Date;
 }
 
-const encryptedSchema =
-  new Schema<IEncryptedData>(
-    {
-      encrypted: {
-        type: String,
-        required: true,
-      },
-      iv: {
-        type: String,
-        required: true,
-      },
-      authTag: {
-        type: String,
-        required: true,
-      },
-    },
-    {
-      _id: false,
-    }
-  );
-
-const phoneChallengeSchema =
-  new Schema<IEKYCPhoneChallenge>(
+const ekycPhoneChallengeSchema =
+  new Schema<EKYCPhoneChallengeRecord>(
     {
       userId: {
         type: Schema.Types.ObjectId,
@@ -58,26 +58,29 @@ const phoneChallengeSchema =
         index: true,
       },
 
-      phoneEncrypted: {
-        type: encryptedSchema,
-        required: true,
-        select: false,
-      },
-
-      phoneLookup: {
+      phoneCiphertext: {
         type: String,
         required: true,
         select: false,
       },
 
-      provider: {
+      phoneIv: {
         type: String,
-        enum: [
-          "descope",
-          "development",
-        ],
         required: true,
-        default: "descope",
+        select: false,
+      },
+
+      phoneAuthTag: {
+        type: String,
+        required: true,
+        select: false,
+      },
+
+      phoneLookupHash: {
+        type: String,
+        required: true,
+        index: true,
+        select: false,
       },
 
       otpHash: {
@@ -86,79 +89,119 @@ const phoneChallengeSchema =
         select: false,
       },
 
+      channel: {
+        type: String,
+        enum: ["sms", "whatsapp"],
+        default: "sms",
+        required: true,
+        index: true,
+      },
+
+      status: {
+        type: String,
+        enum: [
+          "PENDING",
+          "VERIFIED",
+          "LOCKED",
+          "DELIVERY_FAILED",
+          "CONSUMED",
+        ],
+        default: "PENDING",
+        required: true,
+        index: true,
+      },
+
       attempts: {
         type: Number,
-        required: true,
         default: 0,
         min: 0,
+        required: true,
       },
 
       maxAttempts: {
         type: Number,
-        required: true,
         default: 5,
         min: 1,
-        max: 10,
+        required: true,
       },
 
-      expiresAt: {
+      otpExpiresAt: {
         type: Date,
         required: true,
         index: true,
       },
 
+      resendAvailableAt: {
+        type: Date,
+        required: true,
+      },
+
       verifiedAt: {
         type: Date,
+        required: false,
+      },
+
+      verifiedUntil: {
+        type: Date,
+        required: false,
+        index: true,
       },
 
       consumedAt: {
         type: Date,
+        required: false,
       },
 
-      lastSentAt: {
+      provider: {
+        type: String,
+        required: true,
+        trim: true,
+      },
+
+      providerRequestId: {
+        type: String,
+        required: false,
+        trim: true,
+      },
+
+      deleteAt: {
         type: Date,
         required: true,
-        default: Date.now,
       },
     },
     {
       timestamps: true,
       versionKey: false,
-      strict: "throw",
+      collection: "ekyc_phone_challenges",
     }
   );
 
-phoneChallengeSchema.index(
-  {
-    expiresAt: 1,
-  },
-  {
-    expireAfterSeconds:
-      24 * 60 * 60,
-  }
-);
-
-phoneChallengeSchema.index({
+ekycPhoneChallengeSchema.index({
   userId: 1,
   createdAt: -1,
 });
 
-const EKYCPhoneChallengeModel =
+ekycPhoneChallengeSchema.index({
+  userId: 1,
+  phoneLookupHash: 1,
+  createdAt: -1,
+});
+
+ekycPhoneChallengeSchema.index(
+  {
+    deleteAt: 1,
+  },
+  {
+    expireAfterSeconds: 0,
+  }
+);
+
+export const EKYCPhoneChallenge =
   (mongoose.models
-    .EKYCPhoneChallenge as
-    | mongoose.Model<IEKYCPhoneChallenge>
-    | undefined) ??
-  mongoose.model<IEKYCPhoneChallenge>(
+    .EKYCPhoneChallenge as Model<EKYCPhoneChallengeRecord> | undefined) ??
+  mongoose.model<EKYCPhoneChallengeRecord>(
     "EKYCPhoneChallenge",
-    phoneChallengeSchema
+    ekycPhoneChallengeSchema
   );
 
-/*
- * Both named and default exports are provided so existing
- * imports remain compatible.
- */
-export {
-  EKYCPhoneChallengeModel as EKYCPhoneChallenge,
-};
-
-export default EKYCPhoneChallengeModel;
+export default EKYCPhoneChallenge;

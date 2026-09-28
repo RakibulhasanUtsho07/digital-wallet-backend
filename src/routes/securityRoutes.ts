@@ -11,15 +11,18 @@ import {
   runSecurityCheck,
   getAlertPreferences,
   updateAlertPreferences,
+  changePassword,
+  freezeWallet,
+  unfreezeWallet,
+} from "../controllers/securityController.js";
+
+import {
   startTwoFactorSetup,
   verifyTwoFactorSetup,
   disableTwoFactor,
   updateTwoFactorMethod,
   regenerateBackupCodes,
-  changePassword,
-  freezeWallet,
-  unfreezeWallet,
-} from "../controllers/securityController.js";
+} from "../controllers/twoFactorSecurityController.js";
 
 import {
   protect,

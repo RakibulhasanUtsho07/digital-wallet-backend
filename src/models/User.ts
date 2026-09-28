@@ -133,6 +133,7 @@ export const isCanonicalUserRole = (
 
 export type AccountStatus =
   | "active"
+  | "suspended"
   | "deleted";
 
 export type KYCStatus =
@@ -203,6 +204,12 @@ export interface IUser
 
   accountStatus:
     AccountStatus;
+
+  status?: "active" | "suspended" | "restricted" | "pending";
+
+  riskLevel?: "low" | "medium" | "high";
+
+  riskScore?: number;
 
   deletedAt?:
     Date;
@@ -515,6 +522,7 @@ const userSchema =
 
         enum: [
           "active",
+          "suspended",
           "deleted",
         ],
 
@@ -534,6 +542,26 @@ const userSchema =
 
         default:
           undefined,
+      },
+
+      status: {
+        type: String,
+        enum: ["active", "suspended", "restricted", "pending"],
+        default: "active",
+        index: true,
+      },
+
+      riskLevel: {
+        type: String,
+        enum: ["low", "medium", "high"],
+        default: "low",
+      },
+
+      riskScore: {
+        type: Number,
+        min: 0,
+        max: 100,
+        default: 0,
       },
 
       /* =====================================================

@@ -22,7 +22,8 @@ import type {
   TrustedMerchantPrincipal,
   TrustedUserPrincipal,
 } from "../types/cofferAi.types.js";
-import { AiConversationStore } from "./aiConversationStore.js";
+import type { AiConversationStore } from "../persistence/aiConversationStore.js";
+import type { AiFeedbackReason } from "../learning/aiResponseLearningService.js";
 
 type AuthenticatedRequest = Request & {
   user?: TrustedUserPrincipal | null;
@@ -47,9 +48,9 @@ function requestId(
     : randomUUID();
 }
 
-function ownerId(
+function authorizedActor(
   request: AuthenticatedRequest,
-): string {
+) {
   const actor =
     resolveAiActorContext(
       {
@@ -64,8 +65,7 @@ function ownerId(
   if (
     !actor.isAuthenticated ||
     !actor.userId ||
-    (actor.actorType !== "user" &&
-      actor.actorType !== "merchant")
+    actor.actorType === "guest"
   ) {
     throw new CofferAiError({
       code: "AI_AUTH_REQUIRED",
@@ -74,7 +74,7 @@ function ownerId(
     });
   }
 
-  return actor.userId;
+  return { ownerId: actor.userId, actorType: actor.actorType };
 }
 
 function safeId(
@@ -167,10 +167,10 @@ export function createAiConversationController(
       try {
         const authenticated =
           request as AuthenticatedRequest;
+        const actor = authorizedActor(authenticated);
         const conversations =
           await dependencies.conversationStore.listConversations({
-            ownerId:
-              ownerId(authenticated),
+            ...actor,
             limit:
               limit(
                 request.query.limit,
@@ -210,10 +210,10 @@ export function createAiConversationController(
       try {
         const authenticated =
           request as AuthenticatedRequest;
+        const actor = authorizedActor(authenticated);
         const messages =
           await dependencies.conversationStore.listMessages({
-            ownerId:
-              ownerId(authenticated),
+            ...actor,
             conversationId:
               safeId(
                 request.params.conversationId,
@@ -260,6 +260,7 @@ export function createAiConversationController(
       try {
         const authenticated =
           request as AuthenticatedRequest;
+        const actor = authorizedActor(authenticated);
         const body =
           request.body;
 
@@ -291,6 +292,20 @@ export function createAiConversationController(
           });
         }
 
+        const allowedReasons: AiFeedbackReason[] = [
+          "too_long", "too_short", "unclear", "incorrect", "irrelevant", "other",
+        ];
+        const reason = record.reason;
+        if (reason !== undefined && reason !== null &&
+          (rating !== "not_helpful" || typeof reason !== "string" ||
+            !allowedReasons.includes(reason as AiFeedbackReason))) {
+          throw new CofferAiError({
+            code: "AI_FEEDBACK_INVALID",
+            message: "reason is invalid for this rating.",
+            statusCode: 400,
+          });
+        }
+
         let comment:
           string |
           undefined;
@@ -316,8 +331,7 @@ export function createAiConversationController(
         }
 
         await dependencies.conversationStore.saveFeedback({
-          ownerId:
-            ownerId(authenticated),
+          ...actor,
           conversationId:
             safeId(
               request.params.conversationId,
@@ -332,6 +346,7 @@ export function createAiConversationController(
               "messageId",
             ),
           rating,
+          reason: typeof reason === "string" ? reason as AiFeedbackReason : undefined,
           comment,
         });
 

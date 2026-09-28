@@ -27,10 +27,7 @@ function asIdentifier(value: unknown): string | null {
   ) {
     const normalized = value.toString().trim();
 
-    if (
-      normalized.length > 0 &&
-      normalized !== "[object Object]"
-    ) {
+    if (normalized && normalized !== "[object Object]") {
       return normalized;
     }
   }
@@ -48,20 +45,19 @@ function resolveActorType(role: unknown): AiActorType {
   const normalized = normalizeToken(role);
 
   if (
+    normalized === "user" ||
     normalized === "merchant" ||
-    normalized === "merchant_owner" ||
-    normalized === "business"
+    normalized === "support" ||
+    normalized === "analyst" ||
+    normalized === "admin" ||
+    normalized === "super_admin"
   ) {
-    return "merchant";
+    return normalized;
   }
 
-  if (normalized === "user" || normalized === "customer") {
-    return "user";
-  }
-
-  if (normalized === "admin" || normalized === "super_admin") {
-    return "admin";
-  }
+  if (normalized === "customer") return "user";
+  if (normalized === "support_agent") return "support";
+  if (normalized === "superadmin") return "super_admin";
 
   return "guest";
 }
@@ -69,9 +65,7 @@ function resolveActorType(role: unknown): AiActorType {
 function resolveAccountState(value: unknown): AiAccountState {
   const normalized = normalizeToken(value);
 
-  if (normalized === "deleted") {
-    return "disabled";
-  }
+  if (normalized === "deleted") return "disabled";
 
   if (
     normalized === "active" ||
@@ -92,6 +86,7 @@ function resolveKycState(value: unknown): AiKycState {
   if (
     normalized === "not_started" ||
     normalized === "pending" ||
+    normalized === "under_review" ||
     normalized === "verified" ||
     normalized === "rejected"
   ) {
@@ -106,10 +101,7 @@ function resolveMerchantVerificationState(
 ): AiMerchantVerificationState {
   const normalized = normalizeToken(value);
 
-  if (
-    normalized === "approved" ||
-    normalized === "completed"
-  ) {
+  if (normalized === "approved" || normalized === "completed") {
     return "verified";
   }
 
@@ -128,13 +120,8 @@ function resolveMerchantVerificationState(
 function resolveEnvironmentMode(value: unknown): AiEnvironmentMode {
   const normalized = normalizeToken(value);
 
-  if (normalized === "test" || normalized === "sandbox") {
-    return "test";
-  }
-
-  if (normalized === "live" || normalized === "production") {
-    return "live";
-  }
+  if (normalized === "test" || normalized === "sandbox") return "test";
+  if (normalized === "live" || normalized === "production") return "live";
 
   return "unknown";
 }
@@ -143,30 +130,60 @@ function capabilitiesFor(
   actorType: AiActorType,
   merchantId: string | null,
 ): ReadonlyArray<AiCapability> {
-  if (actorType === "user") {
-    return [
-      "profile:read:self",
-      "kyc:read:self",
-      "wallet:read:self",
-      "payment:read:self",
-    ];
-  }
+  switch (actorType) {
+    case "user":
+      return [
+        "profile:read:self",
+        "kyc:read:self",
+        "wallet:read:self",
+        "payment:read:self",
+        "transaction:read:self",
+        "receipt:read:self",
+        "security:read:self",
+      ];
 
-  if (actorType === "merchant" && merchantId) {
-    return [
-      "merchant:profile:read:self",
-      "merchant:payment:read:self",
-      "merchant:webhook:read:self",
-      "merchant:payout:read:self",
-    ];
-  }
+    case "merchant":
+      return merchantId
+        ? [
+            "merchant:profile:read:self",
+            "merchant:payment:read:self",
+            "merchant:refund:read:self",
+            "merchant:payout:read:self",
+            "merchant:settlement:read:self",
+            "merchant:webhook:read:self",
+            "merchant:api_key:read:self",
+            "merchant:analytics:read:self",
+          ]
+        : [];
 
-  return [];
+    case "support":
+      return [
+        "support:operations:read",
+        "support:customer:search",
+        "support:payment:read",
+        "support:transaction:read",
+      ];
+
+    case "analyst":
+      return [
+        "analyst:wallet:read",
+        "analyst:payment:read",
+        "analyst:risk:read",
+        "analyst:revenue:read",
+      ];
+
+    case "admin":
+    case "super_admin":
+      return ["admin:platform:read"];
+
+    default:
+      return [];
+  }
 }
 
 /**
- * Resolves identity only from server-attached principals. It intentionally has
- * no access to request.body, request.query, or page context.
+ * Resolves identity only from server-attached principals.
+ * request.body/query must never be copied into this identity context.
  */
 export function resolveAiActorContext(
   source: AiTrustedRequestSource,

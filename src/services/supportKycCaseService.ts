@@ -5,6 +5,7 @@ import {
 import {
   User,
 } from "../models/User.js";
+import { currentEKYCStatuses } from "./identityVerificationService.js";
 
 import {
   decryptData,
@@ -52,422 +53,70 @@ const escapeRegex = (
 Support tickets categorized as KYC.
 ========================================================= */
 
-export const listSupportKycCases =
-  async ({
-    search,
-    status,
-    priority,
-    kycStatus,
-    page = 1,
-    limit = 20,
-  }: {
-    search?: string;
-    status?: string;
-    priority?: string;
-    kycStatus?: string;
-    page?: number;
-    limit?: number;
-  }) => {
-    const safePage =
-      Math.max(
-        1,
-        Math.floor(page)
-      );
+export const listSupportKycCases = async ({
+  search, status, priority, kycStatus, page = 1, limit = 20,
+}: {
+  search?: string;
+  status?: string;
+  priority?: string;
+  kycStatus?: string;
+  page?: number;
+  limit?: number;
+}) => {
+  const safePage = Math.max(1, Math.floor(page));
+  const safeLimit = Math.min(50, Math.max(1, Math.floor(limit)));
+  const query: Record<string, unknown> = { category: "KYC" };
+  if (status && ["Open", "Waiting for Customer", "In Progress", "Escalated", "Resolved"].includes(status)) {
+    query.status = status;
+  }
+  if (priority && ["Low", "Normal", "High", "Urgent"].includes(priority)) {
+    query.priority = priority;
+  }
+  const cleanSearch = search?.trim().slice(0, 120);
+  if (cleanSearch) {
+    const expression = { $regex: escapeRegex(cleanSearch), $options: "i" };
+    query.$or = [
+      { ticketNumber: expression },
+      { subject: expression },
+      { relatedReference: expression },
+    ];
+  }
 
-    const safeLimit =
-      Math.min(
-        50,
-        Math.max(
-          1,
-          Math.floor(limit)
-        )
-      );
+  // Filter by current e-KYC before pagination so total and page counts remain correct.
+  if (kycStatus && ["not_started", "pending", "under_review", "verified", "rejected"].includes(kycStatus)) {
+    const ids = await SupportTicket.distinct("customerUserId", query);
+    const statuses = await currentEKYCStatuses(ids);
+    query.customerUserId = { $in: ids.filter((id) =>
+      (statuses.get(String(id)) ?? "not_started") === kycStatus
+    ) };
+  }
 
-    const skip =
-      (safePage - 1) *
-      safeLimit;
-
-    const query:
-      Record<string, unknown> = {
-      category:
-        "KYC",
-    };
-
-    /* =====================================================
-       STATUS
-    ====================================================== */
-
-    if (
-      status &&
-      [
-        "Open",
-        "Waiting for Customer",
-        "In Progress",
-        "Escalated",
-        "Resolved",
-      ].includes(status)
-    ) {
-      query.status =
-        status;
-    }
-
-    /* =====================================================
-       PRIORITY
-    ====================================================== */
-
-    if (
-      priority &&
-      [
-        "Low",
-        "Normal",
-        "High",
-        "Urgent",
-      ].includes(priority)
-    ) {
-      query.priority =
-        priority;
-    }
-
-    /* =====================================================
-       SEARCH
-    ====================================================== */
-
-    const cleanSearch =
-      search
-        ?.trim()
-        .slice(
-          0,
-          120
-        );
-
-    if (
-      cleanSearch
-    ) {
-      query.$or = [
-        {
-          ticketNumber: {
-            $regex:
-              escapeRegex(
-                cleanSearch
-              ),
-            $options:
-              "i",
-          },
-        },
-        {
-          subject: {
-            $regex:
-              escapeRegex(
-                cleanSearch
-              ),
-            $options:
-              "i",
-          },
-        },
-        {
-          relatedReference: {
-            $regex:
-              escapeRegex(
-                cleanSearch
-              ),
-            $options:
-              "i",
-          },
-        },
-      ];
-    }
-
-    const [
-      tickets,
-      total,
-    ] =
-      await Promise.all([
-        SupportTicket.find(
-          query
-        )
-          .sort({
-            lastActivityAt:
-              -1,
-          })
-          .skip(
-            skip
-          )
-          .limit(
-            safeLimit
-          )
-          .lean(),
-
-        SupportTicket.countDocuments(
-          query
-        ),
-      ]);
-
-    if (
-      !tickets.length
-    ) {
-      return {
-        cases: [],
-        total,
-        page:
-          safePage,
-        limit:
-          safeLimit,
-        totalPages:
-          Math.ceil(
-            total /
-              safeLimit
-          ),
-      };
-    }
-
-    /* =====================================================
-       CUSTOMERS
-    ====================================================== */
-
-    const customerIds =
-      Array.from(
-        new Set(
-          tickets.map(
-            (
-              ticket
-            ) =>
-              ticket.customerUserId.toString()
-          )
-        )
-      );
-
-    const customers =
-      await User.find({
-        _id: {
-          $in:
-            customerIds,
-        },
-      })
-        .select(
-          "name emailEncrypted phoneEncrypted role kycStatus walletId emailVerified emailVerifiedAt"
-        )
-        .lean();
-
-    const customerMap =
-      new Map(
-        customers.map(
-          (
-            customer
-          ) => [
-            customer._id.toString(),
-            customer,
-          ]
-        )
-      );
-
-    /* =====================================================
-       KYC STATUS FILTER
-    ====================================================== */
-
-    const filteredTickets =
-      kycStatus &&
-      [
-        "not_started",
-        "pending",
-        "verified",
-        "rejected",
-      ].includes(
-        kycStatus
-      )
-        ? tickets.filter(
-            (
-              ticket
-            ) => {
-              const customer =
-                customerMap.get(
-                  ticket.customerUserId.toString()
-                );
-
-              return (
-                customer?.kycStatus ===
-                kycStatus
-              );
-            }
-          )
-        : tickets;
-
-    /*
-     * When filtering by KYC status we already paginated the
-     * ticket query before filtering, so do not pretend that
-     * the returned total is the complete filtered total.
-     *
-     * To keep pagination semantics correct, use a second
-     * customer-ID filter only when kycStatus is supplied.
-     */
-    if (
-      kycStatus &&
-      [
-        "not_started",
-        "pending",
-        "verified",
-        "rejected",
-      ].includes(
-        kycStatus
-      )
-    ) {
-      const matchingCustomerIds =
-        customers
-          .filter(
-            (
-              customer
-            ) =>
-              customer.kycStatus ===
-              kycStatus
-          )
-          .map(
-            (
-              customer
-            ) =>
-              customer._id
-          );
-
-      const filteredQuery: Record<
-        string,
-        unknown
-      > = {
-        ...query,
-        customerUserId: {
-          $in:
-            matchingCustomerIds,
-        },
-      };
-
-      const [
-        filteredTickets,
-        filteredTotal,
-      ] =
-        await Promise.all([
-          SupportTicket.find(
-            filteredQuery
-          )
-            .sort({
-              lastActivityAt:
-                -1,
-            })
-            .skip(
-              skip
-            )
-            .limit(
-              safeLimit
-            )
-            .lean(),
-
-          SupportTicket.countDocuments(
-            filteredQuery
-          ),
-        ]);
-
-      const filteredCustomerIds =
-        Array.from(
-          new Set(
-            filteredTickets.map(
-              (
-                ticket
-              ) =>
-                ticket.customerUserId.toString()
-            )
-          )
-        );
-
-      const filteredCustomers =
-        customers.filter(
-          (
-            customer
-          ) =>
-            filteredCustomerIds.includes(
-              customer._id.toString()
-            )
-        );
-
-      const filteredCustomerMap =
-        new Map(
-          filteredCustomers.map(
-            (
-              customer
-            ) => [
-              customer._id.toString(),
-              customer,
-            ]
-          )
-        );
-
-      return {
-        cases:
-          filteredTickets.map(
-            (
-              ticket
-            ) => {
-              const customer =
-                filteredCustomerMap.get(
-                  ticket.customerUserId.toString()
-                ) as
-                  | any
-                  | undefined;
-
-              return mapKycCase(
-                ticket,
-                customer
-              );
-            }
-          ),
-
-        total:
-          filteredTotal,
-
-        page:
-          safePage,
-
-        limit:
-          safeLimit,
-
-        totalPages:
-          Math.ceil(
-            filteredTotal /
-              safeLimit
-          ),
-      };
-    }
-
-    return {
-      cases:
-        filteredTickets.map(
-          (
-            ticket
-          ) => {
-            const customer =
-              customerMap.get(
-                ticket.customerUserId.toString()
-              ) as
-                | any
-                | undefined;
-
-            return mapKycCase(
-              ticket,
-              customer
-            );
-          }
-        ),
-
-      total,
-
-      page:
-        safePage,
-
-      limit:
-        safeLimit,
-
-      totalPages:
-        Math.ceil(
-          total /
-            safeLimit
-        ),
-    };
+  const [tickets, total] = await Promise.all([
+    SupportTicket.find(query).sort({ lastActivityAt: -1 })
+      .skip((safePage - 1) * safeLimit).limit(safeLimit).lean(),
+    SupportTicket.countDocuments(query),
+  ]);
+  const customerIds = [...new Set(tickets.map((ticket) => ticket.customerUserId.toString()))];
+  const [customers, statuses] = await Promise.all([
+    User.find({ _id: { $in: customerIds } })
+      .select("name emailEncrypted phoneEncrypted role walletId emailVerified emailVerifiedAt").lean(),
+    currentEKYCStatuses(customerIds),
+  ]);
+  const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
+  return {
+    cases: tickets.map((ticket) => {
+      const id = ticket.customerUserId.toString();
+      const customer = customerMap.get(id);
+      return mapKycCase(ticket, customer
+        ? { ...customer, kycStatus: statuses.get(id) ?? "not_started" }
+        : { kycStatus: statuses.get(id) ?? "not_started" });
+    }),
+    total,
+    page: safePage,
+    limit: safeLimit,
+    totalPages: Math.ceil(total / safeLimit),
   };
+};
 
 /* =========================================================
    MAP KYC CASE

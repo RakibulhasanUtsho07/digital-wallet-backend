@@ -18,9 +18,11 @@ export type AuthenticatedRequest = Request & {
 
 export type UserRole =
   | "user"
+  | "merchant"
   | "support"
   | "analyst"
-  | "admin";
+  | "admin"
+  | "super_admin";
 
 export type UserStatus =
   | "active"

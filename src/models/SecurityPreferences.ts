@@ -4,9 +4,12 @@ import mongoose, {
 } from "mongoose";
 
 export type TwoFactorMethod =
-  | "app"
   | "email"
-  | "sms";
+  | "sms"
+  | "app";
+
+export type OtpTwoFactorMethod =
+  Exclude<TwoFactorMethod, "app">;
 
 export interface IEncryptedSecurityValue {
   encrypted: string;
@@ -17,25 +20,22 @@ export interface IEncryptedSecurityValue {
 export interface ISecurityPreferences
   extends Document {
   userId: mongoose.Types.ObjectId;
-
   twoFactor: {
     enabled: boolean;
     method: TwoFactorMethod;
+    /* Legacy fields are retained so existing documents remain readable. */
     secretEncrypted?: IEncryptedSecurityValue;
     pendingSecretEncrypted?: IEncryptedSecurityValue;
     backupCodeHashes: string[];
     enabledAt?: Date;
   };
-
   alerts: {
     newDevice: boolean;
     suspiciousActivity: boolean;
     failedLogin: boolean;
   };
-
   lastSecurityCheckAt?: Date;
   securityCheckCount: number;
-
   createdAt: Date;
   updatedAt: Date;
 }
@@ -71,7 +71,6 @@ const securityPreferencesSchema =
         unique: true,
         index: true,
       },
-
       twoFactor: {
         enabled: {
           type: Boolean,
@@ -79,12 +78,9 @@ const securityPreferencesSchema =
         },
         method: {
           type: String,
-          enum: [
-            "app",
-            "email",
-            "sms",
-          ],
-          default: "app",
+          /* "app" is accepted only to migrate old stored documents. */
+          enum: ["email", "sms", "app"],
+          default: "email",
         },
         secretEncrypted: {
           type: encryptedValueSchema,
@@ -101,7 +97,6 @@ const securityPreferencesSchema =
           type: Date,
         },
       },
-
       alerts: {
         newDevice: {
           type: Boolean,
@@ -116,11 +111,9 @@ const securityPreferencesSchema =
           default: true,
         },
       },
-
       lastSecurityCheckAt: {
         type: Date,
       },
-
       securityCheckCount: {
         type: Number,
         default: 0,
@@ -133,8 +126,11 @@ const securityPreferencesSchema =
     }
   );
 
-export const SecurityPreferences =
-  mongoose.models.SecurityPreferences ||
+export const SecurityPreferences:
+  mongoose.Model<ISecurityPreferences> =
+  (mongoose.models.SecurityPreferences as
+    | mongoose.Model<ISecurityPreferences>
+    | undefined) ??
   mongoose.model<ISecurityPreferences>(
     "SecurityPreferences",
     securityPreferencesSchema

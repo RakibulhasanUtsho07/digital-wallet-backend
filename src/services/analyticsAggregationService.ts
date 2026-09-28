@@ -42,6 +42,8 @@ import {
   setCachedAnalytics,
 } from "./analyticsCacheService.js";
 
+import { countVerifiedPersonalUsers } from "./identityVerificationService.js";
+
 /* =========================================================
    INTERNAL TYPES
 ========================================================= */
@@ -872,20 +874,12 @@ const getKycMetrics =
     ] =
       await Promise.all([
         User.countDocuments({
-          role:
-            "user",
-          accountStatus:
-            "active",
+          role: "user",
+          accountStatus: { $ne: "deleted" },
+          deletedAt: null,
         }),
 
-        User.countDocuments({
-          role:
-            "user",
-          accountStatus:
-            "active",
-          kycStatus:
-            "verified",
-        }),
+        countVerifiedPersonalUsers(),
       ]);
 
     return {

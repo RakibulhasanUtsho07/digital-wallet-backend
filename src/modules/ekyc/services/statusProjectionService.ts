@@ -1,5 +1,6 @@
 import { User } from "../../../models/User.js";
 import type { EKYCStatus } from "../types.js";
+import { syncWalletWithEKYC } from "../../../services/identityVerificationService.js";
 
 type UserKYCStatus = "not_started" | "pending" | "verified" | "rejected";
 
@@ -17,6 +18,7 @@ export async function projectEKYCStatusToUser(userId: string, status: EKYCStatus
   if (result.matchedCount !== 1) {
     throw new Error("Unable to synchronize the e-KYC status to the user account.");
   }
+  await syncWalletWithEKYC(userId, toUserKYCStatus(status));
 }
 
 export type EKYCStatusProjector = typeof projectEKYCStatusToUser;

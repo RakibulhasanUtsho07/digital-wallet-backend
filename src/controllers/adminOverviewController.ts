@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import {
+  AdminOverviewIntegrityError,
   getAdminOverview,
   overviewToCsv,
   recordOverviewExport,
@@ -54,6 +55,10 @@ function getActorId(req: AuthenticatedRequest): string | undefined {
 }
 
 function handleError(error: unknown, res: Response, next: NextFunction): void {
+  if (error instanceof AdminOverviewIntegrityError) {
+    res.status(error.statusCode).json({ success: false, code: error.code, message: error.message });
+    return;
+  }
   if (error instanceof z.ZodError) {
     res.status(400).json({
       success: false,

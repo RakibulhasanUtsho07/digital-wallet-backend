@@ -37,7 +37,6 @@ export const updateAdminUserSchema = z.object({
   phone: z.string().trim().min(8).max(20).optional(),
   role: role.optional(),
   status: status.optional(),
-  kycStatus: kycStatus.optional(),
   walletStatus: walletStatus.optional(),
   riskLevel: riskLevel.optional(),
   riskScore: z.number().int().min(0).max(100).optional(),
@@ -56,5 +55,4 @@ export const suspendUserSchema = z.object({
 }).strict();
 
 export const roleUpdateSchema = z.object({ role, reason: z.string().trim().min(3).max(500).optional() }).strict();
-export const kycUpdateSchema = z.object({ kycStatus, reason: z.string().trim().min(3).max(500).optional() }).strict();
 export const walletUpdateSchema = z.object({ walletStatus, reason: z.string().trim().min(3).max(500).optional() }).strict();

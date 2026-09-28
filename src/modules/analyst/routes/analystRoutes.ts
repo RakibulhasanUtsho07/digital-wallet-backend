@@ -14,6 +14,10 @@ import {
   securityReadLimiter,
 } from "../../../middlewares/securityRateLimiters.js";
 
+/* =========================================================
+   COMMAND CENTER
+========================================================= */
+
 import {
   getAnalystOverviewController,
 } from "../../../controllers/analystOverviewController.js";
@@ -23,52 +27,64 @@ import {
 } from "../../../controllers/analystLivePulseController.js";
 
 import {
-  getAnalystPaymentAnalyticsController,
-} from "../../../controllers/analystPaymentController.js";
-
-import {
   getAnalystIntelligenceController,
 } from "../../../controllers/analystIntelligenceController.js";
+
+/* =========================================================
+   PERFORMANCE
+========================================================= */
+
+import {
+  getAnalystPaymentAnalyticsController,
+} from "../../../controllers/analystPaymentController.js";
 
 import {
   getAnalystConversionAnalyticsController,
 } from "../../../controllers/analystConversionController.js";
 
 import {
-  getAnalystDisputeAnalyticsController,
-} from "../../../controllers/analystDisputeController.js";
+  getAnalystRevenueAnalyticsController,
+} from "../../../controllers/analystRevenueController.js";
+
+import {
+  getAnalystTransactionAnalyticsController,
+} from "../../../controllers/analystTransactionController.js";
+
+/* =========================================================
+   BUSINESS & PLATFORM
+========================================================= */
 
 import {
   getAnalystMerchantAnalyticsController,
 } from "../../../controllers/analystMerchantController.js";
 
 import {
-  getAnalystRefundAnalyticsController,
-} from "../../../controllers/analystRefundController.js";
-
-import {
-  getAnalystRiskAnalyticsController,
-} from "../../../controllers/analystRiskController.js";
-
+  getAnalystUserAnalyticsController,
+} from "../../../controllers/analystUserController.js";
 
 import {
   getAnalystWalletAnalyticsController,
 } from "../../../controllers/analystWalletController.js";
 
-
-import {
-  getAnalystRevenueAnalyticsController,
-} from "../../../controllers/analystRevenueController.js";
-
-
 import {
   getAnalystProviderAnalyticsController,
 } from "../../../controllers/analystProviderController.js";
 
+/* =========================================================
+   RISK & OPERATIONS
+========================================================= */
 
 import {
-  getAnalystTransactionAnalyticsController,
-} from "../../../controllers/analystTransactionController.js";
+  getAnalystRiskAnalyticsController,
+} from "../../../controllers/analystRiskController.js";
+
+import {
+  getAnalystRefundAnalyticsController,
+} from "../../../controllers/analystRefundController.js";
+
+import {
+  getAnalystDisputeAnalyticsController,
+} from "../../../controllers/analystDisputeController.js";
 
 import {
   getAnalystSettlementAnalyticsController,
@@ -81,14 +97,6 @@ import {
 import {
   getAnalystComplianceController,
 } from "../../../controllers/analystComplianceController.js";
-
-/* =========================================================
-   USER ANALYTICS
-========================================================= */
-
-import {
-  getAnalystUserAnalyticsController,
-} from "../../../controllers/analystUserController.js";
 
 /* =========================================================
    REPORTS
@@ -114,6 +122,17 @@ import {
 } from "../../../controllers/analystSavedViewController.js";
 
 /* =========================================================
+   ANALYST SETTINGS
+========================================================= */
+
+import {
+  getAnalystSettingsAuditController,
+  getAnalystSettingsController,
+  getAnalystSettingsLiveController,
+  updateAnalystSettingsSectionController,
+} from "../../../controllers/analystSettingsController.js";
+
+/* =========================================================
    ROUTER
 ========================================================= */
 
@@ -122,6 +141,11 @@ const router =
 
 /* =========================================================
    SECURITY
+
+   Applies to ALL Analyst routes below:
+   - authentication
+   - analyst/admin/super-admin access
+   - read/security rate limiter
 ========================================================= */
 
 router.use(
@@ -129,6 +153,10 @@ router.use(
   requireAnalyticsAccess,
   securityReadLimiter
 );
+
+/* =========================================================
+   PRIVATE / NO CACHE
+========================================================= */
 
 router.use(
   (
@@ -144,6 +172,11 @@ router.use(
     res.setHeader(
       "Pragma",
       "no-cache"
+    );
+
+    res.setHeader(
+      "Expires",
+      "0"
     );
 
     next();
@@ -207,17 +240,6 @@ router.get(
   getAnalystUserAnalyticsController
 );
 
-
-router.get(
-  "/merchants",
-  getAnalystMerchantAnalyticsController
-);
-
-router.get(
-  "/users",
-  getAnalystUserAnalyticsController
-);
-
 router.get(
   "/wallets",
   getAnalystWalletAnalyticsController
@@ -227,6 +249,7 @@ router.get(
   "/providers",
   getAnalystProviderAnalyticsController
 );
+
 /* =========================================================
    RISK & OPERATIONS
 ========================================================= */
@@ -259,6 +282,30 @@ router.get(
 router.get(
   "/compliance",
   getAnalystComplianceController
+);
+
+/* =========================================================
+   ANALYST SETTINGS
+========================================================= */
+
+router.get(
+  "/settings",
+  getAnalystSettingsController
+);
+
+router.get(
+  "/settings/live",
+  getAnalystSettingsLiveController
+);
+
+router.get(
+  "/settings/audit",
+  getAnalystSettingsAuditController
+);
+
+router.patch(
+  "/settings/:section",
+  updateAnalystSettingsSectionController
 );
 
 /* =========================================================
@@ -313,5 +360,9 @@ router.delete(
   "/saved-views/:id",
   deleteAnalystSavedViewController
 );
+
+/* =========================================================
+   EXPORT
+========================================================= */
 
 export default router;

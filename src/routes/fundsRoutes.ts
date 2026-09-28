@@ -12,6 +12,9 @@ import {
 import {
   requireVerifiedKYC,
 } from "../middlewares/kycMiddleware.js";
+import {
+  requireWalletNotFrozen,
+} from "../middlewares/walletSecurityMiddleware.js";
 
 const router = express.Router();
 
@@ -20,12 +23,14 @@ const router = express.Router();
    POST /api/funds/deposit
 
    Authentication required.
-   KYC is not required for deposit for now.
+   Verified e-KYC is required before the wallet can be credited.
 ========================================================= */
 
 router.post(
   "/deposit",
   protect,
+  requireVerifiedKYC,
+  requireWalletNotFrozen,
   depositFunds
 );
 
@@ -40,6 +45,7 @@ router.post(
   "/withdraw",
   protect,
   requireVerifiedKYC,
+  requireWalletNotFrozen,
   withdrawFunds
 );
 

@@ -7,7 +7,7 @@ import mongoose, {
 export interface IAiConversation extends Document {
   conversationId: string;
   ownerId: mongoose.Types.ObjectId;
-  actorType: "user" | "merchant";
+  actorType: "user" | "merchant" | "support" | "analyst" | "admin" | "super_admin";
   title: string;
   lastIntent: string;
   lastMessageAt: Date;
@@ -35,7 +35,7 @@ const aiConversationSchema =
       },
       actorType: {
         type: String,
-        enum: ["user", "merchant"],
+        enum: ["user", "merchant", "support", "analyst", "admin", "super_admin"],
         required: true,
       },
       title: {

@@ -5,11 +5,7 @@ import mongoose, {
 } from "mongoose";
 
 export interface IAiMessageSource {
-  type:
-    | "payment_timeline"
-    | "merchant_payment_timeline"
-    | "wallet_transaction_timeline"
-    | "system_policy";
+  type: string;
   label: string;
   reference: string;
 }
@@ -42,13 +38,9 @@ const sourceSchema =
     {
       type: {
         type: String,
-        enum: [
-          "payment_timeline",
-          "merchant_payment_timeline",
-          "wallet_transaction_timeline",
-          "system_policy",
-        ],
         required: true,
+        trim: true,
+        maxlength: 100,
       },
       label: {
         type: String,

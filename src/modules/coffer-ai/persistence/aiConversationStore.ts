@@ -25,6 +25,7 @@ import type {
   AiChatResponseData,
   AiIntent,
 } from "../types/cofferAi.types.js";
+import type { AiFeedbackReason } from "../learning/aiResponseLearningService.js";
 
 export interface AiConversationSummary {
   conversationId: string;
@@ -75,20 +76,31 @@ export interface AiConversationStore {
 
   listConversations(input: {
     ownerId: string;
+    actorType: AiActorType;
     limit: number;
   }): Promise<ReadonlyArray<AiConversationSummary>>;
 
   listMessages(input: {
     ownerId: string;
+    actorType: AiActorType;
+    conversationId: string;
+    limit: number;
+  }): Promise<ReadonlyArray<AiConversationMessage>>;
+
+  listRecentMessages(input: {
+    ownerId: string;
+    actorType: AiActorType;
     conversationId: string;
     limit: number;
   }): Promise<ReadonlyArray<AiConversationMessage>>;
 
   saveFeedback(input: {
     ownerId: string;
+    actorType: AiActorType;
     conversationId: string;
     messageId: string;
     rating: "helpful" | "not_helpful";
+    reason?: AiFeedbackReason;
     comment?: string;
   }): Promise<void>;
 }
@@ -105,6 +117,17 @@ function ownerObjectId(
   }
 
   return new mongoose.Types.ObjectId(ownerId);
+}
+
+function storedActorType(actorType: AiActorType): Exclude<AiActorType, "guest"> {
+  if (actorType === "guest") {
+    throw new CofferAiError({
+      code: "AI_AUTH_REQUIRED",
+      message: "Please sign in to access AI conversations.",
+      statusCode: 401,
+    });
+  }
+  return actorType;
 }
 
 function safeDate(
@@ -168,6 +191,7 @@ export const mongoAiConversationStore:
           await AiConversation.exists({
             conversationId,
             ownerId,
+            actorType: storedActorType(input.actorType),
             archived: false,
           });
 
@@ -182,10 +206,7 @@ export const mongoAiConversationStore:
         await AiConversation.create({
           conversationId,
           ownerId,
-          actorType:
-            input.actorType === "merchant"
-              ? "merchant"
-              : "user",
+          actorType: storedActorType(input.actorType),
           title:
             userMessage.slice(0, 120),
           lastIntent:
@@ -268,6 +289,7 @@ export const mongoAiConversationStore:
           {
             conversationId,
             ownerId,
+            actorType: storedActorType(input.actorType),
             archived: false,
           },
           {
@@ -305,6 +327,7 @@ export const mongoAiConversationStore:
       const rows =
         await AiConversation.find({
           ownerId,
+          actorType: storedActorType(input.actorType),
           archived: false,
         })
           .sort({
@@ -348,6 +371,7 @@ export const mongoAiConversationStore:
           conversationId:
             input.conversationId,
           ownerId,
+          actorType: storedActorType(input.actorType),
           archived: false,
         });
 
@@ -425,12 +449,114 @@ export const mongoAiConversationStore:
     }
   },
 
+  async listRecentMessages(input) {
+    try {
+      const ownerId =
+        ownerObjectId(input.ownerId);
+      const ownedConversation =
+        await AiConversation.exists({
+          conversationId:
+            input.conversationId,
+          ownerId,
+          actorType: storedActorType(input.actorType),
+          archived: false,
+        });
+
+      if (!ownedConversation) {
+        throw new CofferAiError({
+          code: "AI_CONVERSATION_NOT_FOUND",
+          message: "Conversation not found.",
+          statusCode: 404,
+        });
+      }
+
+      const rows =
+        await AiMessage.find({
+          conversationId:
+            input.conversationId,
+          ownerId,
+        })
+          .sort({
+            createdAt: -1,
+          })
+          .limit(input.limit)
+          .select(
+            "messageId conversationId role content requestId intent verification confidence subjectType resourceId sources suggestedActions createdAt",
+          )
+          .lean();
+
+      return rows
+        .reverse()
+        .map(
+          (row) => ({
+            messageId:
+              String(row.messageId),
+            conversationId:
+              String(row.conversationId),
+            role:
+              row.role,
+            content:
+              String(row.content),
+            requestId:
+              String(row.requestId),
+            intent:
+              String(row.intent),
+            verification:
+              row.verification,
+            confidence:
+              row.confidence,
+            subjectType:
+              row.subjectType,
+            resourceId:
+              row.resourceId,
+            sources:
+              row.sources.map(
+                (source) => ({
+                  type:
+                    source.type,
+                  label:
+                    source.label,
+                  reference:
+                    source.reference,
+                }),
+              ),
+            suggestedActions:
+              row.suggestedActions.map(
+                (action) => ({
+                  label:
+                    action.label,
+                  href:
+                    action.href,
+                }),
+              ),
+            createdAt:
+              safeDate(row.createdAt),
+          }),
+        );
+    } catch (error) {
+      throw persistenceError(error);
+    }
+  },
+
   async saveFeedback(input) {
     try {
       const ownerId =
         ownerObjectId(input.ownerId);
+      const ownedConversation = await AiConversation.exists({
+        conversationId: input.conversationId,
+        ownerId,
+        actorType: storedActorType(input.actorType),
+        archived: false,
+      });
+      if (!ownedConversation) {
+        throw new CofferAiError({
+          code: "AI_CONVERSATION_NOT_FOUND",
+          message: "Conversation not found.",
+          statusCode: 404,
+        });
+      }
       const assistantMessage =
-        await AiMessage.exists({
+        await AiMessage.findOne({
           messageId:
             input.messageId,
           conversationId:
@@ -438,7 +564,7 @@ export const mongoAiConversationStore:
           ownerId,
           role:
             "assistant",
-        });
+        }).select("intent").lean();
 
       if (!assistantMessage) {
         throw new CofferAiError({
@@ -467,6 +593,9 @@ export const mongoAiConversationStore:
               input.conversationId,
             rating:
               input.rating,
+            actorType: storedActorType(input.actorType),
+            intent: assistantMessage.intent,
+            reason: input.rating === "not_helpful" ? input.reason ?? null : null,
             comment,
           },
           $setOnInsert: {
@@ -503,6 +632,9 @@ export const transientAiConversationStore:
     return [];
   },
   async listMessages() {
+    return [];
+  },
+  async listRecentMessages() {
     return [];
   },
   async saveFeedback() {

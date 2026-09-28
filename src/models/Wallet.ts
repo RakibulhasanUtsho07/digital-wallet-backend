@@ -15,6 +15,7 @@ export interface IWallet
 
   status:
     | "ACTIVE"
+    | "PENDING_KYC"
     | "FROZEN"
     | "BLOCKED";
 
@@ -78,11 +79,12 @@ const walletSchema =
 
         enum: [
           "ACTIVE",
+          "PENDING_KYC",
           "FROZEN",
           "BLOCKED",
         ],
 
-        default: "ACTIVE",
+        default: "PENDING_KYC",
 
         required: true,
 

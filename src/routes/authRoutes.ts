@@ -7,7 +7,6 @@ import express from "express";
 import {
   registerUser,
   loginUser,
-  verifyLoginTwoFactor,
   verifyEmailOtp,
   resendEmailOtp,
   logoutUser,
@@ -20,6 +19,10 @@ import {
   logoutSession,
   logoutOtherSessions,
 } from "../controllers/authController.js";
+
+import {
+  verifyLoginTwoFactor,
+} from "../controllers/loginTwoFactorController.js";
 
 /* =========================================================
    AUTH MIDDLEWARE

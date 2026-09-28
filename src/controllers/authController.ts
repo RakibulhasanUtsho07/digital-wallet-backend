@@ -84,6 +84,10 @@ import {
 } from "../services/totpService.js";
 
 import {
+  requestTwoFactorOtp,
+} from "../services/twoFactorOtpService.js";
+
+import {
   dispatchSecurityAlert,
 } from "../services/securityAlertService.js";
 
@@ -1014,6 +1018,9 @@ export const verifyEmailOtp =
 
             balance:
               0,
+
+            status:
+              "PENDING_KYC",
           });
 
         createdWallet =
@@ -1372,8 +1379,10 @@ export const loginUser =
 
       if (
         !user ||
-        user.accountStatus ===
-          "deleted"
+        user.accountStatus === "deleted" ||
+        user.accountStatus === "suspended" ||
+        user.status === "suspended" ||
+        Boolean(user.deletedAt)
       ) {
         res.status(401).json({
           success: false,
@@ -1463,8 +1472,11 @@ export const loginUser =
       if (
         preferences?.twoFactor?.enabled
       ) {
+        /* Legacy authenticator users are migrated to email OTP. */
         const method =
-          preferences.twoFactor.method;
+          preferences.twoFactor.method === "sms"
+            ? "sms"
+            : "email";
 
         const availability =
           getTwoFactorDeliveryAvailability();
@@ -1514,9 +1526,12 @@ export const loginUser =
           );
 
         const challenge =
-          await createLoginChallenge({
+          await requestTwoFactorOtp({
             userId:
               user._id.toString(),
+
+            purpose:
+              "login",
 
             method,
 
@@ -1543,9 +1558,7 @@ export const loginUser =
             300,
 
           message:
-            method === "app"
-              ? "Enter the code from your authenticator app."
-              : "Enter the verification code that was sent to you.",
+            "Enter the verification code that was sent to you.",
         });
 
         return;
@@ -2263,9 +2276,10 @@ export const forgotPassword =
           emailLookup,
 
           accountStatus: {
-            $ne:
-              "deleted",
+            $eq: "active",
           },
+          deletedAt: null,
+          status: { $ne: "suspended" },
         }).select("_id");
 
       if (!user) {
@@ -2446,9 +2460,10 @@ export const verifyPasswordResetOtp =
           emailLookup,
 
           accountStatus: {
-            $ne:
-              "deleted",
+            $eq: "active",
           },
+          deletedAt: null,
+          status: { $ne: "suspended" },
         }).select("_id");
 
       if (!user) {
@@ -2696,9 +2711,10 @@ export const resetPassword =
                 challenge.userId,
 
               accountStatus: {
-                $ne:
-                  "deleted",
+                $eq: "active",
               },
+              deletedAt: null,
+              status: { $ne: "suspended" },
             }).select(
               "+password +resetPasswordTokenHash +resetPasswordExpires"
             );
@@ -2724,9 +2740,10 @@ export const resetPassword =
             },
 
             accountStatus: {
-              $ne:
-                "deleted",
+              $eq: "active",
             },
+            deletedAt: null,
+            status: { $ne: "suspended" },
           }).select(
             "+password +resetPasswordTokenHash +resetPasswordExpires"
           );
@@ -2801,6 +2818,14 @@ export const resetPassword =
         await hashPassword(
           normalizedPassword
         );
+
+      // An administrator-created pending account proves email ownership
+      // through this verified OTP before it can be activated.
+      if (challengeId && user.status === "pending" && !user.emailVerified) {
+        user.emailVerified = true;
+        user.emailVerifiedAt = new Date();
+        user.status = "active";
+      }
 
       user.passwordPolicyVersion =
         isStrongSecurityPassword(

@@ -9,6 +9,7 @@ import type {
 import {
   Wallet,
 } from "../models/Wallet.js";
+import { syncWalletWithEKYC } from "../services/identityVerificationService.js";
 
 import {
   AddMoneyTransaction,
@@ -83,6 +84,7 @@ export const getMyWallet =
         return;
       }
 
+      await syncWalletWithEKYC(String(userId));
       const wallet =
         await Wallet.findOne({
           userId,

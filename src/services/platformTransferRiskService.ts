@@ -6,9 +6,7 @@ import {
   Transaction,
 } from "../models/Transaction.js";
 
-import {
-  User,
-} from "../models/User.js";
+import { currentEKYCStatus } from "./identityVerificationService.js";
 
 import {
   decryptData,
@@ -339,27 +337,7 @@ export const evaluateTransferPolicy =
       settings.risk
         .requireKycForHighValue
     ) {
-      const userQuery =
-        User.findById(
-          senderId
-        ).select(
-          "kycStatus"
-        );
-
-      if (session) {
-        userQuery.session(
-          session
-        );
-      }
-
-      const user =
-        await userQuery;
-
-      if (
-        !user ||
-        user.kycStatus !==
-          "verified"
-      ) {
+      if (await currentEKYCStatus(senderId) !== "verified") {
         return {
           allowed:
             false,

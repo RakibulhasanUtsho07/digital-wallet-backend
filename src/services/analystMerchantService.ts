@@ -10,6 +10,8 @@ import {
   Payment,
 } from "../models/Payment.js";
 
+import { countVerifiedBusinesses } from "./identityVerificationService.js";
+
 import type {
   AnalystDateFilters,
   AnalystMetric,
@@ -598,10 +600,7 @@ async function loadPopulation() {
           "disabled",
       }),
 
-      Merchant.countDocuments({
-        verificationStatus:
-          "verified",
-      }),
+      countVerifiedBusinesses(),
 
       Merchant.countDocuments({
         status:
@@ -1881,6 +1880,22 @@ export async function getAnalystMerchantAnalytics(
       ),
     ]);
 
+  // A business approval alone is insufficient for the combined verified count.
+  const rawVerified = verification.find((row) => row.key === "verified")?.count ?? 0;
+  const needsOwnerEkyc = Math.max(0, rawVerified - population.verifiedMerchants);
+  const consistentVerification = verification
+    .filter((row) => row.key !== "verified")
+    .map((row) => ({ ...row, count: row.count }));
+  consistentVerification.push({
+    key: "verified", count: population.verifiedMerchants, percentage: 0,
+  });
+  if (needsOwnerEkyc) {
+    consistentVerification.push({ key: "owner_ekyc_required", count: needsOwnerEkyc, percentage: 0 });
+  }
+  for (const row of consistentVerification) {
+    row.percentage = percentage(row.count, population.totalMerchants);
+  }
+
   const currentSuccessRate =
     percentage(
       currentActivity
@@ -2164,7 +2179,7 @@ export async function getAnalystMerchantAnalytics(
       ),
 
     verification:
-      verification.map(
+      consistentVerification.map(
         (
           item
         ) => ({

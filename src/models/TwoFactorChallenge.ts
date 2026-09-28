@@ -4,15 +4,21 @@ import mongoose, {
 } from "mongoose";
 
 import type {
-  TwoFactorMethod,
+  OtpTwoFactorMethod as TwoFactorMethod,
 } from "./SecurityPreferences.js";
 
 export interface ITwoFactorChallenge
   extends Document {
   challengeId: string;
   userId: mongoose.Types.ObjectId;
-  purpose: "login";
+  purpose:
+    | "login"
+    | "setup"
+    | "method_change";
   method: TwoFactorMethod;
+  deliveryProvider:
+    | "local"
+    | "descope";
   codeHash?: string;
   attempts: number;
   maxAttempts: number;
@@ -41,7 +47,11 @@ const twoFactorChallengeSchema =
 
       purpose: {
         type: String,
-        enum: ["login"],
+        enum: [
+          "login",
+          "setup",
+          "method_change",
+        ],
         default: "login",
         required: true,
       },
@@ -49,10 +59,19 @@ const twoFactorChallengeSchema =
       method: {
         type: String,
         enum: [
-          "app",
           "email",
           "sms",
         ],
+        required: true,
+      },
+
+      deliveryProvider: {
+        type: String,
+        enum: [
+          "local",
+          "descope",
+        ],
+        default: "local",
         required: true,
       },
 

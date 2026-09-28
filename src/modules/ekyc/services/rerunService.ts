@@ -53,23 +53,26 @@ export async function rerunEKYCVerification(
       $unset: {
         decidedAt: 1,
         processingStartedAt: 1,
+        providerName: 1,
         providerReferenceEncrypted: 1,
-        fingerprintProviderReferenceEncrypted: 1,
         screeningReferenceEncrypted: 1,
         faceEmbeddingEncrypted: 1,
         faceScore: 1,
+        faceQualityScore: 1,
+        faceSharpnessScore: 1,
+        faceBrightnessScore: 1,
+        faceCoverage: 1,
+        facePoseValid: 1,
+        faceOcclusionDetected: 1,
         nameScore: 1,
         livenessPassed: 1,
-        fingerprintMatched: 1,
-        fingerprintConclusive: 1,
-        fingerprintScore: 1,
         possibleDuplicateVectorId: 1,
         possibleDuplicateScore: 1,
         manualReviewLock: 1,
         manualReviewLockExpiresAt: 1,
       },
     },
-    { new: true, runValidators: true }
+    { returnDocument: "after", runValidators: true }
   );
   if (!verification) throw new EKYCRerunConflictError();
 

@@ -13,6 +13,13 @@ export type DescopeOtpFailureReason =
   | "configuration"
   | "provider_unavailable";
 
+type DescopeErrorPayload = {
+  errorCode?: string;
+  errorDescription?: string;
+  errorMessage?: string;
+  message?: string;
+};
+
 /* =========================================================
    PROVIDER ERROR
 ========================================================= */
@@ -26,6 +33,11 @@ export class DescopeOtpProviderError extends Error {
     super(message);
 
     this.name = "DescopeOtpProviderError";
+
+    Object.setPrototypeOf(
+      this,
+      new.target.prototype
+    );
   }
 }
 
@@ -37,8 +49,18 @@ let cachedClient:
   | ReturnType<typeof DescopeClient>
   | undefined;
 
+let cachedProjectId = "";
+
+function isDescopeSmsEnabled(): boolean {
+  return (
+    process.env.DESCOPE_SMS_ENABLED
+      ?.trim()
+      .toLowerCase() === "true"
+  );
+}
+
 function getDescopeClient(): ReturnType<typeof DescopeClient> {
-  if (process.env.DESCOPE_SMS_ENABLED !== "true") {
+  if (!isDescopeSmsEnabled()) {
     throw new DescopeOtpProviderError(
       "Descope SMS verification is disabled.",
       "configuration",
@@ -57,12 +79,20 @@ function getDescopeClient(): ReturnType<typeof DescopeClient> {
     );
   }
 
-  if (!cachedClient) {
+  if (
+    !cachedClient ||
+    cachedProjectId !== projectId
+  ) {
     try {
       cachedClient = DescopeClient({
         projectId,
       });
+
+      cachedProjectId = projectId;
     } catch {
+      cachedClient = undefined;
+      cachedProjectId = "";
+
       throw new DescopeOtpProviderError(
         "Descope client initialization failed.",
         "configuration",
@@ -109,28 +139,34 @@ function mapProviderError(
 }
 
 function createProviderResponseError(
-  error:
-    | {
-        errorCode?: string;
-        errorDescription?: string;
-        errorMessage?: string;
-      }
-    | undefined
+  error: DescopeErrorPayload | undefined
 ): DescopeOtpProviderError {
   const providerCode =
     error?.errorCode ??
     "DESCOPE_UNKNOWN_ERROR";
 
-  const reason =
-    mapProviderError(providerCode);
-
   return new DescopeOtpProviderError(
     error?.errorDescription ??
       error?.errorMessage ??
+      error?.message ??
       "Descope OTP operation failed.",
-    reason,
+    mapProviderError(providerCode),
     providerCode
   );
+}
+
+function validatePhone(phone: string): string {
+  const normalized = phone.trim();
+
+  if (!/^\+[1-9]\d{7,14}$/.test(normalized)) {
+    throw new DescopeOtpProviderError(
+      "The phone number must use E.164 format.",
+      "invalid_phone",
+      "PHONE_FORMAT_INVALID"
+    );
+  }
+
+  return normalized;
 }
 
 /* =========================================================
@@ -143,10 +179,13 @@ export async function requestDescopeSmsOtp(
   const client =
     getDescopeClient();
 
+  const normalizedPhone =
+    validatePhone(phone);
+
   try {
     const response =
       await client.otp.signUpOrIn["sms"](
-        phone,
+        normalizedPhone,
         {}
       );
 
@@ -155,7 +194,7 @@ export async function requestDescopeSmsOtp(
         response.error
       );
     }
-  } catch (error) {
+  } catch (error: unknown) {
     if (
       error instanceof
       DescopeOtpProviderError
@@ -182,11 +221,25 @@ export async function verifyDescopeSmsOtp(
   const client =
     getDescopeClient();
 
+  const normalizedPhone =
+    validatePhone(phone);
+
+  const normalizedOtp =
+    otp.trim();
+
+  if (!/^\d{6}$/.test(normalizedOtp)) {
+    throw new DescopeOtpProviderError(
+      "Enter the 6-digit verification code.",
+      "invalid_code",
+      "OTP_FORMAT_INVALID"
+    );
+  }
+
   try {
     const response =
       await client.otp.verify["sms"](
-        phone,
-        otp
+        normalizedPhone,
+        normalizedOtp
       );
 
     if (!response.ok) {
@@ -196,12 +249,12 @@ export async function verifyDescopeSmsOtp(
     }
 
     /*
-     * Descope returns session tokens after successful
-     * verification. Coffer already has its own authenticated
-     * session, so those tokens are intentionally not returned
+     * Descope returns its own session tokens after successful
+     * verification. The wallet already has an authenticated
+     * session, so these tokens are intentionally not returned
      * or logged.
      */
-  } catch (error) {
+  } catch (error: unknown) {
     if (
       error instanceof
       DescopeOtpProviderError

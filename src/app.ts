@@ -37,7 +37,6 @@ import merchantRoutes from "./routes/merchantRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import revenueRoutes from "./routes/revenueRoutes.js";
 import supportRoutes from "./routes/supportRoutes.js";
-import kycIntelligenceRoutes from "./routes/kycIntelligenceRoutes.js";
 import supportTicketRoutes from "./routes/supportTicketRoutes.js";
 import paypalPaymentRoutes from "./routes/paypalPaymentRoutes.js";
 import merchantPaymentRoutes from "./routes/merchantPaymentRoutes.js";
@@ -50,7 +49,7 @@ import merchantDashboardWebhookRoutes from "./routes/merchantDashboardWebhookRou
 import adminMerchantVerificationRoutes from "./routes/adminMerchantVerificationRoutes.js";
 import merchantSettingsRoutes from "./routes/merchantSettingsRoutes.js";
 import adminSecurityRoutes from "./routes/adminSecurityRoutes.js";
-
+import supportSettingsRoutes from "./routes/supportSettingsRoutes.js";
 /* =========================================================
    ANALYST
 ========================================================= */
@@ -772,7 +771,12 @@ app.use(
 
 app.use(
   "/api/admin/kyc",
-  kycIntelligenceRoutes
+  protect,
+  requireAdmin,
+  (_req, res) => res.status(410).json({
+    success: false,
+    message: "The old KYC review system is retired. Use /api/admin/ekyc.",
+  })
 );
 
 /* =========================================================
@@ -803,7 +807,10 @@ app.use(
   "/api/admin",
   adminRoutes
 );
-
+app.use(
+  "/api/support/settings",
+  supportSettingsRoutes
+);
 /* =========================================================
    404
 ========================================================= */

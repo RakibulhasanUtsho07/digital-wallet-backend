@@ -13,6 +13,29 @@ export interface IFaceVectorStore {
   removeVerifiedTemplate(verificationId: string): Promise<void>;
 }
 
+export class QdrantHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Vector store request failed with HTTP ${status}.`);
+    this.name = "QdrantHttpError";
+  }
+}
+
+// Log only this classification: raw fetch errors can contain private URLs.
+export function qdrantFailureCode(error: unknown): string {
+  if (error instanceof QdrantHttpError) return `HTTP_${error.status}`;
+  if (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)) {
+    return "TIMEOUT";
+  }
+  if (error instanceof TypeError) return "NETWORK_ERROR";
+  if (error instanceof Error && error.message.startsWith("Face vector")) {
+    return "INVALID_VECTOR";
+  }
+  if (error instanceof Error && error.message.startsWith("Qdrant score threshold")) {
+    return "INVALID_THRESHOLD";
+  }
+  return "UNKNOWN_ERROR";
+}
+
 interface QdrantQueryResponse {
   result?: {
     points?: Array<{
@@ -35,9 +58,9 @@ export class QdrantFaceVectorStore implements IFaceVectorStore {
   private readonly baseUrl: string;
 
   constructor(
-    baseUrl = process.env.QDRANT_URL || "",
-    private readonly apiKey = process.env.QDRANT_API_KEY || "",
-    private readonly collection = process.env.QDRANT_COLLECTION || "ekyc_face_templates_v1",
+    baseUrl = process.env.QDRANT_URL?.trim() || "",
+    private readonly apiKey = process.env.QDRANT_API_KEY?.trim() || "",
+    private readonly collection = process.env.QDRANT_COLLECTION?.trim() || "ekyc_face_templates_v1",
     private readonly expectedDimensions = Number(process.env.QDRANT_VECTOR_SIZE || 32)
   ) {
     if (!baseUrl) throw new Error("QDRANT_URL is required.");
@@ -87,12 +110,12 @@ export class QdrantFaceVectorStore implements IFaceVectorStore {
         ...(this.apiKey ? { "api-key": this.apiKey } : {}),
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(3_000),
+      signal: AbortSignal.timeout(10_000),
       redirect: "error",
     });
 
     if (!response.ok) {
-      throw new Error(`Vector store request failed with status ${response.status}.`);
+      throw new QdrantHttpError(response.status);
     }
     return response.status === 204 ? {} : response.json();
   }
