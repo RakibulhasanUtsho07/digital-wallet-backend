@@ -2,7 +2,10 @@ export type AiActorType =
   | "guest"
   | "user"
   | "merchant"
-  | "admin";
+  | "support"
+  | "analyst"
+  | "admin"
+  | "super_admin";
 
 export type AiAccountState =
   | "active"
@@ -15,6 +18,7 @@ export type AiAccountState =
 export type AiKycState =
   | "not_started"
   | "pending"
+  | "under_review"
   | "verified"
   | "rejected"
   | "unknown";
@@ -36,15 +40,33 @@ export type AiCapability =
   | "kyc:read:self"
   | "wallet:read:self"
   | "payment:read:self"
+  | "transaction:read:self"
+  | "receipt:read:self"
+  | "security:read:self"
   | "merchant:profile:read:self"
   | "merchant:payment:read:self"
+  | "merchant:refund:read:self"
+  | "merchant:payout:read:self"
+  | "merchant:settlement:read:self"
   | "merchant:webhook:read:self"
-  | "merchant:payout:read:self";
+  | "merchant:api_key:read:self"
+  | "merchant:analytics:read:self"
+  | "support:operations:read"
+  | "support:customer:search"
+  | "support:payment:read"
+  | "support:transaction:read"
+  | "analyst:wallet:read"
+  | "analyst:payment:read"
+  | "analyst:risk:read"
+  | "analyst:revenue:read"
+  | "admin:platform:read";
 
 export type AiDataClass =
   | "public"
   | "account_private"
   | "merchant_private"
+  | "support_private"
+  | "aggregate_private"
   | "restricted"
   | "secret"
   | "auth_secret";
@@ -70,10 +92,6 @@ export interface TrustedMerchantPrincipal {
   environment?: unknown;
 }
 
-/**
- * Only properties attached by trusted server middleware belong here.
- * Request body/query data must never be copied into this object.
- */
 export interface AiTrustedRequestSource {
   user?: TrustedUserPrincipal | null;
   merchant?: TrustedMerchantPrincipal | null;
@@ -98,6 +116,31 @@ export type AiIntent =
   | "merchant_payment_diagnosis"
   | "wallet_summary"
   | "kyc_status"
+  | "transaction_lookup"
+  | "transfer_diagnosis"
+  | "receipt_lookup"
+  | "security_summary"
+  | "merchant_overview"
+  | "merchant_refund_summary"
+  | "merchant_payout_summary"
+  | "merchant_settlement_summary"
+  | "merchant_webhook_summary"
+  | "merchant_api_key_summary"
+  | "merchant_analytics_summary"
+  | "merchant_refund_diagnosis"
+  | "merchant_payout_diagnosis"
+  | "merchant_settlement_diagnosis"
+  | "merchant_webhook_diagnosis"
+  | "merchant_api_key_diagnosis"
+  | "support_investigation"
+  | "support_operations_summary"
+  | "analyst_wallet_snapshot"
+  | "analyst_payment_snapshot"
+  | "analyst_risk_snapshot"
+  | "analyst_revenue_snapshot"
+  | "admin_platform_overview"
+  | "admin_risk_snapshot"
+  | "admin_finance_snapshot"
   | "public_product_help"
   | "secret_request"
   | "unknown";
@@ -119,7 +162,31 @@ export type AiToolId =
   | "user.payment.timeline"
   | "user.wallet.summary"
   | "user.kyc.status"
-  | "merchant.payment.timeline";
+  | "user.transaction.detail"
+  | "user.receipt.detail"
+  | "user.security.summary"
+  | "merchant.payment.timeline"
+  | "merchant.overview"
+  | "merchant.refunds.summary"
+  | "merchant.payouts.summary"
+  | "merchant.settlements.summary"
+  | "merchant.webhooks.summary"
+  | "merchant.api_keys.summary"
+  | "merchant.analytics.summary"
+  | "merchant.refund.diagnosis"
+  | "merchant.payout.diagnosis"
+  | "merchant.settlement.diagnosis"
+  | "merchant.webhook.diagnosis"
+  | "merchant.api_key.diagnosis"
+  | "support.investigate"
+  | "support.operations.summary"
+  | "analyst.wallet.snapshot"
+  | "analyst.payment.snapshot"
+  | "analyst.risk.snapshot"
+  | "analyst.revenue.snapshot"
+  | "admin.platform.overview"
+  | "admin.risk.snapshot"
+  | "admin.finance.snapshot";
 
 export type AiPolicyReasonCode =
   | "ALLOW"
@@ -173,10 +240,6 @@ export interface AiOwnedPaymentEvidence {
 }
 
 export interface OwnedPaymentReader {
-  /**
-   * Production implementation MUST query by paymentId AND authenticated userId.
-   * Never load by paymentId first and check ownership later.
-   */
   findOwnedPaymentTimeline(input: {
     paymentId: string;
     userId: string;
@@ -184,11 +247,6 @@ export interface OwnedPaymentReader {
 }
 
 export interface MerchantOwnedPaymentReader {
-  /**
-   * Production implementation MUST query by paymentId AND the trusted
-   * merchantId in the same database query. Client payload ownership fields
-   * must never be used.
-   */
   findOwnedMerchantPaymentTimeline(input: {
     paymentId: string;
     merchantId: string;
@@ -210,8 +268,16 @@ export interface AiSuggestedAction {
   href?: string;
 }
 
+export type AiDiagnosisSubjectType =
+  | AiPaymentSubjectType
+  | "refund"
+  | "payout"
+  | "settlement"
+  | "webhook"
+  | "api";
+
 export interface AiDiagnosis {
-  subjectType: AiPaymentSubjectType;
+  subjectType: AiDiagnosisSubjectType;
   subjectId: string;
   state: string;
   exactCause?: AiDiagnosisCause;
@@ -231,13 +297,27 @@ export type AiConfidenceLevel =
   | "low";
 
 export interface AiSourceReference {
-  type:
-    | "payment_timeline"
-    | "merchant_payment_timeline"
-    | "wallet_transaction_timeline"
-    | "system_policy";
+  type: string;
   label: string;
   reference: string;
+}
+
+export interface AiFact {
+  label: string;
+  value: string | number | boolean | null;
+}
+
+export interface AiToolResult {
+  toolId: AiToolId;
+  title: string;
+  summary: string;
+  verification: AiVerificationLevel;
+  confidence: AiConfidenceLevel;
+  facts: ReadonlyArray<AiFact>;
+  sources: ReadonlyArray<AiSourceReference>;
+  suggestedActions: ReadonlyArray<AiSuggestedAction>;
+  diagnosis?: AiDiagnosis | null;
+  data?: Record<string, unknown>;
 }
 
 export interface AiChatRequestInput {
@@ -255,6 +335,9 @@ export interface AiChatResponseData {
   sources: ReadonlyArray<AiSourceReference>;
   diagnosis: AiDiagnosis | null;
   suggestedActions: ReadonlyArray<AiSuggestedAction>;
+  toolIds: ReadonlyArray<AiToolId>;
+  facts: ReadonlyArray<AiFact>;
+  data?: Record<string, unknown>;
 }
 
 export interface AiChatResult {
@@ -263,7 +346,16 @@ export interface AiChatResult {
   meta: {
     requestId: string;
     intent: AiIntent;
+    role: AiActorType;
+    readOnly: true;
     degraded: boolean;
+    modelUsed?: boolean;
+    model?: string | null;
+    modelTier?: "none" | "fast" | "reasoning";
+    modelProvider?: string;
+    grounded?: boolean;
+    knowledgeCount?: number;
+    responseStyle?: "balanced" | "concise" | "detailed";
   };
 }
 
@@ -273,6 +365,10 @@ export interface AiAuditEvent {
     | "policy_denied"
     | "tool_called"
     | "diagnosis_completed"
+    | "knowledge_retrieved"
+    | "model_called"
+    | "model_fallback"
+    | "response_completed"
     | "request_failed";
   requestId: string;
   actorType: AiActorType;

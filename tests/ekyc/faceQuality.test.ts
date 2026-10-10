@@ -72,11 +72,11 @@ function input(): DecisionInput {
 } 
 
 describe("professional face gates", () => {
-  it("auto approves a complete high-quality result", () => {
-    expect(decideEKYC(input(), config).status).toBe("VERIFIED");
+  it("routes a complete high-quality result to mandatory admin review", () => {
+    expect(decideEKYC(input(), config).status).toBe("PENDING_MANUAL_REVIEW");
   });
 
-  it("rejects multiple faces", () => {
+  it("flags multiple faces for admin review", () => {
     const value = input();
     const result = decideEKYC({
       ...value,
@@ -85,7 +85,7 @@ describe("professional face gates", () => {
         faceQuality: { ...value.identity.faceQuality, singleFaceDetected: false },
       },
     }, config);
-    expect(result).toMatchObject({ status: "REJECTED", reasons: ["MULTIPLE_FACES"] });
+    expect(result).toMatchObject({ status: "PENDING_MANUAL_REVIEW", reasons: ["MULTIPLE_FACES"] });
   });
 
   it("routes low-quality images to manual review", () => {

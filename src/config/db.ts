@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { reconcileLegacyActiveWallets } from "../services/identityVerificationService.js";
 
 type GlobalWithMongoose = typeof globalThis & {
   mongoose?: {
@@ -36,7 +37,8 @@ const connectDB = async () => {
       .connect(mongoURI, {
         bufferCommands: false,
       })
-      .then((connection) => {
+      .then(async (connection) => {
+        await reconcileLegacyActiveWallets();
         console.log(
           `MongoDB Connected Successfully: ${connection.connection.host}`
         );

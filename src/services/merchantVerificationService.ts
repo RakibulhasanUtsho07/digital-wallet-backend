@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import {
   EKYCVerification,
 } from "../modules/ekyc/models/EKYCVerification.js";
+import { currentEKYCStatus } from "./identityVerificationService.js";
 
 import {
   Merchant,
@@ -47,6 +48,7 @@ export type MerchantVerificationErrorCode =
   | "MERCHANT_NOT_FOUND"
   | "OWNER_EKYC_REQUIRED"
   | "VERIFICATION_NOT_FOUND"
+  | "DOCUMENT_EVIDENCE_UNAVAILABLE"
   | "SUBMISSION_NOT_ALLOWED"
   | "REVIEW_NOT_ALLOWED"
   | "REGISTRATION_ALREADY_USED";
@@ -377,10 +379,9 @@ async function findVerifiedOwnerIdentity(
   ]);
 
   const verified =
-    owner?.accountStatus !==
+    Boolean(owner) && owner?.accountStatus !==
       "deleted" &&
-    owner?.kycStatus ===
-      "verified" &&
+    await currentEKYCStatus(ownerId) === "verified" &&
     ekycVerification?.status ===
       "VERIFIED";
 
@@ -982,6 +983,17 @@ export async function getAdminMerchantVerification(
         verification.documents,
 
       expiresInSeconds: 300,
+    }).catch((error: unknown) => {
+      console.error(
+        "MERCHANT VERIFICATION DOCUMENT EVIDENCE ERROR:",
+        error
+      );
+
+      throw new MerchantVerificationError(
+        "Private business documents are unavailable. Check the original DATA_ENCRYPTION_KEY and Cloudinary configuration before reviewing this merchant.",
+        503,
+        "DOCUMENT_EVIDENCE_UNAVAILABLE"
+      );
     }),
   ]);
 
@@ -1036,7 +1048,7 @@ export async function getAdminMerchantVerification(
         owner.email,
 
       kycStatus:
-        owner.kycStatus,
+        await currentEKYCStatus(owner._id.toString()),
     },
 
     documentReadUrls,

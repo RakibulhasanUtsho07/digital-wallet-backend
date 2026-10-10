@@ -55,6 +55,7 @@ async function verifyTransactionAmounts(): Promise<void> {
     let verified = 0;
     let missingEncryptedAmount = 0;
     let mismatch = 0;
+    let recoverableFromLegacy = 0;
     let failed = 0;
 
     /* =====================================================
@@ -145,14 +146,32 @@ async function verifyTransactionAmounts(): Promise<void> {
           `✅ Verified transaction: ${transaction._id}`
         );
       } catch (error) {
-        failed++;
+        const legacyAmount =
+          typeof transaction.amount === "number"
+            ? transaction.amount
+            : typeof transaction.amount === "string" && transaction.amount.trim()
+              ? Number(transaction.amount)
+              : Number.NaN;
 
-        console.error(
-          `❌ Verification failed ${transaction._id}:`,
-          error instanceof Error
-            ? error.message
-            : error
-        );
+        if (
+          Number.isFinite(legacyAmount) &&
+          legacyAmount >= 0
+        ) {
+          recoverableFromLegacy++;
+
+          console.warn(
+            `⚠️ Encrypted amount unreadable but legacy amount can repair ${transaction._id}`
+          );
+        } else {
+          failed++;
+
+          console.error(
+            `❌ Verification failed ${transaction._id}:`,
+            error instanceof Error
+              ? error.message
+              : error
+          );
+        }
       }
     }
 
@@ -181,7 +200,11 @@ async function verifyTransactionAmounts(): Promise<void> {
     );
 
     console.log(
-      `Failed: ${failed}`
+      `Recoverable from legacy plaintext: ${recoverableFromLegacy}`
+    );
+
+    console.log(
+      `Failed / unrecoverable with configured keys: ${failed}`
     );
 
     console.log(
@@ -191,6 +214,7 @@ async function verifyTransactionAmounts(): Promise<void> {
     if (
       missingEncryptedAmount === 0 &&
       mismatch === 0 &&
+      recoverableFromLegacy === 0 &&
       failed === 0
     ) {
       console.log(

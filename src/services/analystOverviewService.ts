@@ -8,6 +8,7 @@ import { Refund } from "../models/Refund.js";
 import { RevenueEvent } from "../models/RevenueEvent.js";
 import { Transaction } from "../models/Transaction.js";
 import { User } from "../models/User.js";
+import { countVerifiedBusinesses, countVerifiedPersonalUsers } from "./identityVerificationService.js";
 
 import {
   buildAnalystInsights,
@@ -901,21 +902,19 @@ export async function getAnalystOverview(
     loadTransactionSummary(filters, filters.previousFrom, filters.previousTo),
     loadDailyFactSummary(filters),
     loadRevenueLedger(filters),
-    User.countDocuments({ accountStatus: "active" }),
+    User.countDocuments({ role: "user", accountStatus: "active" }),
     User.countDocuments({
+      role: "user",
       accountStatus: "active",
       createdAt: {
         $gte: filters.from,
         $lt: filters.to,
       },
     }),
-    User.countDocuments({
-      accountStatus: "active",
-      kycStatus: "verified",
-    }),
+    countVerifiedPersonalUsers(),
     Merchant.countDocuments({}),
     Merchant.countDocuments({ status: "active" }),
-    Merchant.countDocuments({ verificationStatus: "verified" }),
+    countVerifiedBusinesses(),
     Merchant.countDocuments({
       status: "active",
       verificationStatus: "verified",

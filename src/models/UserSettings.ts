@@ -20,6 +20,7 @@ export interface IEncryptedSettingsValue {
 export type SettingsTheme =
   | "light"
   | "dark"
+  | "system"
   | "eye-care"
   | "ocean"
   | "forest";
@@ -37,6 +38,7 @@ export interface IUserSettings
     theme:
       | "light"
       | "dark"
+      | "system"
       | "eye-care"
       | "ocean"
       | "forest";
@@ -159,6 +161,7 @@ const userSettingsSchema =
           enum: [
             "light",
             "dark",
+            "system",
             "eye-care",
             "ocean",
             "forest",

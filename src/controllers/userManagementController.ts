@@ -15,7 +15,6 @@ import {
 import {
   bulkUserUpdateSchema,
   createAdminUserSchema,
-  kycUpdateSchema,
   roleUpdateSchema,
   suspendUserSchema,
   updateAdminUserSchema,
@@ -113,12 +112,7 @@ export async function changeUserRole(req: AuthenticatedRequest, res: Response, n
 }
 
 export async function changeUserKyc(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  try {
-    const input = kycUpdateSchema.parse(req.body);
-    res.status(200).json(await updateAdminUser(String(req.params.id), input, actorId(req)));
-  } catch (error) {
-    handleControllerError(error, res, next);
-  }
+  res.status(410).json({ message: "Legacy KYC review is retired. Review the user's e-KYC verification instead." });
 }
 
 export async function changeUserWallet(req: AuthenticatedRequest, res: Response, next: NextFunction) {
@@ -159,7 +153,7 @@ export async function userStats(_req: Request, res: Response, next: NextFunction
 export async function exportUsers(req: Request, res: Response, next: NextFunction) {
   try {
     const parsed = userListQuerySchema.parse({ ...req.query, page: 1, pageSize: 100 });
-    const { users } = await listAdminUsers({ ...(parsed as UserListQuery), page: 1, pageSize: 5000 });
+    const { users } = await listAdminUsers({ ...(parsed as UserListQuery), page: 1, pageSize: Number.MAX_SAFE_INTEGER });
     const headers = ["id", "name", "email", "phone", "role", "status", "kycStatus", "walletStatus", "riskLevel", "riskScore", "lastActive", "joinedAt"] as const;
     const csv = [
       headers.join(","),

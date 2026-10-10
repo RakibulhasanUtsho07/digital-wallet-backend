@@ -42,6 +42,11 @@ interface DecryptedTransaction {
   reference?: string;
 }
 
+interface ResolvedTransactionAmount {
+  amount: number;
+  source: "encrypted" | "legacy";
+}
+
 /* =========================================================
    CACHE
 ========================================================= */
@@ -60,6 +65,15 @@ const cache =
     OverviewRange,
     CacheEntry
   >();
+
+export class AdminOverviewIntegrityError extends Error {
+  readonly statusCode = 503;
+  readonly code = "ADMIN_OVERVIEW_AMOUNT_UNAVAILABLE";
+
+  constructor() {
+    super("Transaction totals are unavailable because a stored amount could not be decrypted. Verify the original encryption key or repair the affected record.");
+  }
+}
 
 /* =========================================================
    RANGE
@@ -139,7 +153,9 @@ export async function getAdminOverview(
     );
 
   const kycs =
-    db.collection("kycs");
+    db.collection("ekycverifications");
+
+  const merchantVerifications = db.collection("merchantverifications");
 
   const revenueEvents =
     db.collection(
@@ -168,6 +184,8 @@ export async function getAdminOverview(
   const [
     totalUsers,
     previousUsers,
+    verifiedUserRows,
+    verifiedMerchantRows,
     activeWallets,
     previousActiveWallets,
     revenueTotals,
@@ -201,28 +219,72 @@ export async function getAdminOverview(
       deletedAt: null,
     }),
 
+    kycs.aggregate<{ total: number; previous: number }>([
+      { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } },
+      { $group: { _id: "$userId", attempt: { $first: "$$ROOT" } } },
+      { $match: { "attempt.status": "VERIFIED" } },
+      { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "owner" } },
+      { $unwind: "$owner" },
+      { $match: { "owner.role": "user", "owner.accountStatus": { $ne: "deleted" }, "owner.deletedAt": null } },
+      { $group: {
+        _id: null,
+        total: { $sum: 1 },
+        previous: { $sum: { $cond: [{ $and: [
+          { $lt: ["$attempt.decidedAt", start] }, { $lt: ["$owner.createdAt", start] },
+        ] }, 1, 0] } },
+      } },
+    ]).toArray(),
+
+    merchantVerifications.aggregate<{ total: number; previous: number }>([
+      { $match: { status: "verified", "documents.0": { $exists: true } } },
+      { $lookup: { from: "merchants", localField: "merchantId", foreignField: "_id", as: "merchant" } },
+      { $unwind: "$merchant" },
+      { $match: { "merchant.verificationStatus": "verified" } },
+      { $lookup: { from: "users", localField: "ownerId", foreignField: "_id", as: "owner" } },
+      { $unwind: "$owner" },
+      { $match: { "owner.accountStatus": { $ne: "deleted" }, "owner.deletedAt": null } },
+      { $lookup: { from: "ekycverifications", let: { ownerId: "$ownerId" }, pipeline: [
+        { $match: { $expr: { $eq: ["$userId", "$$ownerId"] } } },
+        { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } }, { $limit: 1 },
+      ], as: "identity" } },
+      { $unwind: "$identity" },
+      { $match: { "identity.status": "VERIFIED" } },
+      { $group: { _id: "$merchantId", reviewedAt: { $first: "$reviewedAt" },
+        createdAt: { $first: "$merchant.createdAt" }, identityDecidedAt: { $first: "$identity.decidedAt" } } },
+      { $group: { _id: null, total: { $sum: 1 }, previous: { $sum: { $cond: [{ $and: [
+        { $lt: ["$reviewedAt", start] }, { $lt: ["$createdAt", start] },
+        { $lt: ["$identityDecidedAt", start] },
+      ] }, 1, 0] } } } },
+    ]).toArray(),
+
     /* Active wallets */
-    wallets.countDocuments({
-      status: {
-        $in: [
-          "active",
-          "ACTIVE",
-        ],
-      },
-    }),
+    wallets.aggregate<{ total: number }>([
+      { $match: { status: { $in: ["active", "ACTIVE"] } } },
+      { $lookup: { from: "ekycverifications", let: { ownerId: "$userId" }, pipeline: [
+        { $match: { $expr: { $eq: ["$userId", "$$ownerId"] } } },
+        { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } }, { $limit: 1 },
+      ], as: "identity" } },
+      { $unwind: "$identity" },
+      { $match: { "identity.status": "VERIFIED" } },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "owner" } },
+      { $unwind: "$owner" },
+      { $match: { "owner.accountStatus": { $ne: "deleted" }, "owner.deletedAt": null } },
+      { $count: "total" },
+    ]).toArray(),
 
-    wallets.countDocuments({
-      createdAt: {
-        $lt: start,
-      },
-
-      status: {
-        $in: [
-          "active",
-          "ACTIVE",
-        ],
-      },
-    }),
+    wallets.aggregate<{ total: number }>([
+      { $match: { status: { $in: ["active", "ACTIVE"] }, createdAt: { $lt: start } } },
+      { $lookup: { from: "ekycverifications", let: { ownerId: "$userId" }, pipeline: [
+        { $match: { $expr: { $eq: ["$userId", "$$ownerId"] } } },
+        { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } }, { $limit: 1 },
+      ], as: "identity" } },
+      { $unwind: "$identity" },
+      { $match: { "identity.status": "VERIFIED", "identity.decidedAt": { $lt: start } } },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "owner" } },
+      { $unwind: "$owner" },
+      { $match: { "owner.accountStatus": { $ne: "deleted" }, "owner.deletedAt": null } },
+      { $count: "total" },
+    ]).toArray(),
 
     /* Revenue */
     periodMoneyTotals(
@@ -247,29 +309,19 @@ export async function getAdminOverview(
     ),
 
     /* KYC */
-    kycs.countDocuments({
-      status: {
-        $in: [
-          "pending",
-          "under_review",
-          "submitted",
-        ],
-      },
-    }),
+    kycs.aggregate<{ total: number }>([
+      { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } },
+      { $group: { _id: "$userId", status: { $first: "$status" } } },
+      { $match: { status: "PENDING_MANUAL_REVIEW" } },
+      { $count: "total" },
+    ]).toArray().then((rows) => rows[0]?.total ?? 0),
 
-    kycs.countDocuments({
-      createdAt: {
-        $lt: start,
-      },
-
-      status: {
-        $in: [
-          "pending",
-          "under_review",
-          "submitted",
-        ],
-      },
-    }),
+    kycs.aggregate<{ total: number }>([
+      { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } },
+      { $group: { _id: "$userId", status: { $first: "$status" }, submittedAt: { $first: "$submittedAt" } } },
+      { $match: { status: "PENDING_MANUAL_REVIEW", submittedAt: { $lt: start } } },
+      { $count: "total" },
+    ]).toArray().then((rows) => rows[0]?.total ?? 0),
 
     /* Risk */
     securityEvents.countDocuments({
@@ -398,6 +450,13 @@ export async function getAdminOverview(
         senderId: 1,
         receiverId: 1,
         amountEncrypted: 1,
+        /*
+         * Temporary legacy fallback. Some older records may still contain
+         * plaintext `amount`. It is used only when encrypted data cannot be
+         * read, so one historical bad record does not take down the admin
+         * dashboard. New transactions continue to store encrypted amounts.
+         */
+        amount: 1,
         referenceEncrypted: 1,
         currency: 1,
         type: 1,
@@ -496,20 +555,76 @@ export async function getAdminOverview(
   const decryptedTransactions: DecryptedTransaction[] =
     [];
 
+  const unreadableTransactionIds: string[] =
+    [];
+
+  let legacyAmountFallbackCount =
+    0;
+
   for (
     const row of transactionRows
   ) {
-    const decrypted =
-      decryptTransaction(
-        row,
-        userNameMap
+    const resolvedAmount =
+      resolveTransactionAmount(
+        row
       );
 
-    if (decrypted) {
-      decryptedTransactions.push(
-        decrypted
+    if (!resolvedAmount) {
+      unreadableTransactionIds.push(
+        stringValue(
+          row._id,
+          "unknown"
+        )
       );
+
+      continue;
     }
+
+    if (
+      resolvedAmount.source ===
+      "legacy"
+    ) {
+      legacyAmountFallbackCount +=
+        1;
+    }
+
+    decryptedTransactions.push(
+      decryptTransaction(
+        row,
+        userNameMap,
+        resolvedAmount.amount
+      )
+    );
+  }
+
+  if (
+    unreadableTransactionIds.length >
+    0
+  ) {
+    console.error(
+      "ADMIN OVERVIEW DATA INTEGRITY WARNING:",
+      {
+        unreadableCount:
+          unreadableTransactionIds.length,
+        unreadableTransactionIds:
+          unreadableTransactionIds.slice(
+            0,
+            25
+          ),
+        legacyAmountFallbackCount,
+      }
+    );
+  } else if (
+    legacyAmountFallbackCount >
+    0
+  ) {
+    console.warn(
+      "ADMIN OVERVIEW LEGACY AMOUNT FALLBACK:",
+      {
+        count:
+          legacyAmountFallbackCount,
+      }
+    );
   }
 
   /* =======================================================
@@ -621,6 +736,61 @@ export async function getAdminOverview(
     );
 
   /* =======================================================
+     DATA INTEGRITY / HEALTH
+  ======================================================= */
+
+  const unreadableTransactions =
+    unreadableTransactionIds.length;
+
+  const attentionQueue =
+    buildAttentionQueue({
+      pendingKyc,
+      riskAlerts,
+      openSupport,
+      failedTransactions,
+      unreadableTransactions,
+    });
+
+  const serviceHealth =
+    buildServiceHealth(
+      healthRows
+    );
+
+  if (
+    unreadableTransactions >
+    0
+  ) {
+    const readableCount =
+      Math.max(
+        0,
+        transactionRows.length -
+          unreadableTransactions
+      );
+
+    const integrityPercent =
+      transactionRows.length
+        ? round(
+            (readableCount /
+              transactionRows.length) *
+              100
+          )
+        : 100;
+
+    serviceHealth.unshift({
+      id:
+        "transaction-data-integrity",
+      name:
+        "Transaction data integrity",
+      status:
+        "degraded",
+      uptimePercent:
+        integrityPercent,
+      latencyMs:
+        0,
+    });
+  }
+
+  /* =======================================================
      RESPONSE
   ======================================================= */
 
@@ -639,10 +809,13 @@ export async function getAdminOverview(
             previousUsers
           ),
 
+        verifiedUsers: metric(verifiedUserRows[0]?.total ?? 0, verifiedUserRows[0]?.previous ?? 0),
+        verifiedMerchants: metric(verifiedMerchantRows[0]?.total ?? 0, verifiedMerchantRows[0]?.previous ?? 0),
+
         activeWallets:
           metric(
-            activeWallets,
-            previousActiveWallets
+            activeWallets[0]?.total ?? 0,
+            previousActiveWallets[0]?.total ?? 0
           ),
 
         transactionVolume:
@@ -677,18 +850,9 @@ export async function getAdminOverview(
 
       recentTransactions,
 
-      attentionQueue:
-        buildAttentionQueue({
-          pendingKyc,
-          riskAlerts,
-          openSupport,
-          failedTransactions,
-        }),
+      attentionQueue,
 
-      serviceHealth:
-        buildServiceHealth(
-          healthRows
-        ),
+      serviceHealth,
     };
 
   /* =======================================================
@@ -872,22 +1036,9 @@ function decryptTransaction(
   userNameMap: Map<
     string,
     string
-  >
-): DecryptedTransaction | null {
-  const amount =
-    decryptAmount(
-      row.amountEncrypted
-    );
-
-  if (
-    amount === null
-  ) {
-    /*
-     * Do not break the whole dashboard because
-     * one corrupted/legacy transaction cannot decrypt.
-     */
-    return null;
-  }
+  >,
+  amount: number
+): DecryptedTransaction {
 
   const senderId =
     getObjectIdString(
@@ -958,6 +1109,95 @@ function decryptTransaction(
         }
       : {}),
   };
+}
+
+/* =========================================================
+   RESOLVE TRANSACTION AMOUNT
+
+   Priority:
+   1. Encrypted minor-units amount
+   2. Legacy plaintext major-units amount (temporary recovery path)
+
+   We never invent a value. If neither source is trustworthy, the
+   transaction is omitted from amount-dependent totals and surfaced as
+   a data-integrity item instead of crashing the entire overview.
+========================================================= */
+
+function resolveTransactionAmount(
+  row: AnyDoc
+): ResolvedTransactionAmount | null {
+  const encryptedAmount =
+    decryptAmount(
+      row.amountEncrypted
+    );
+
+  if (
+    encryptedAmount !== null
+  ) {
+    return {
+      amount:
+        encryptedAmount,
+      source:
+        "encrypted",
+    };
+  }
+
+  const legacyAmount =
+    legacyAmountMajor(
+      row.amount
+    );
+
+  if (
+    legacyAmount !== null
+  ) {
+    return {
+      amount:
+        legacyAmount,
+      source:
+        "legacy",
+    };
+  }
+
+  return null;
+}
+
+function legacyAmountMajor(
+  value: unknown
+): number | null {
+  const amount =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" &&
+          value.trim()
+        ? Number(
+            value
+          )
+        : Number.NaN;
+
+  if (
+    !Number.isFinite(
+      amount
+    ) ||
+    amount < 0
+  ) {
+    return null;
+  }
+
+  const minorUnits =
+    Math.round(
+      amount * 100
+    );
+
+  if (
+    !Number.isSafeInteger(
+      minorUnits
+    ) ||
+    minorUnits < 0
+  ) {
+    return null;
+  }
+
+  return minorUnits / 100;
 }
 
 /* =========================================================
@@ -1658,6 +1898,7 @@ function buildAttentionQueue(
     riskAlerts: number;
     openSupport: number;
     failedTransactions: number;
+    unreadableTransactions: number;
   }
 ): AttentionQueueItem[] {
   return [
@@ -1667,7 +1908,7 @@ function buildAttentionQueue(
       type: "kyc",
 
       title:
-        "Pending KYC",
+        "Manual e-KYC review",
 
       description:
         "Identity reviews waiting for a decision",
@@ -1722,6 +1963,29 @@ function buildAttentionQueue(
 
       severity:
         "medium",
+    },
+
+    {
+      id:
+        "transaction-integrity",
+
+      type:
+        "transaction",
+
+      title:
+        "Transaction data integrity",
+
+      description:
+        "Stored transaction amounts that require encryption-key recovery or record repair",
+
+      count:
+        input.unreadableTransactions,
+
+      href:
+        "/dashboard/all-transactions",
+
+      severity:
+        "high",
     },
 
     {

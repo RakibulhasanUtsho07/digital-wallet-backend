@@ -116,7 +116,7 @@ describe(
   "advanced e-KYC decision engine",
   () => {
     it(
-      "auto-approves a complete strong match",
+      "routes a complete strong match to mandatory admin review",
       () => {
         const result =
           decideEKYC(
@@ -125,9 +125,9 @@ describe(
           );
 
         expect(result).toMatchObject({
-          status: "VERIFIED",
+          status: "PENDING_MANUAL_REVIEW",
           reasons: [
-            "AUTO_APPROVED",
+            "AUTOMATED_CHECKS_COMPLETED",
           ],
           faceScore: 90,
           faceQualityScore: 94,
@@ -180,7 +180,7 @@ describe(
     );
 
     it(
-      "rejects weak face matches and failed liveness",
+      "flags weak face matches and failed liveness for admin review",
       () => {
         const weakFace =
           createInput();
@@ -194,7 +194,7 @@ describe(
             config
           )
         ).toMatchObject({
-          status: "REJECTED",
+          status: "PENDING_MANUAL_REVIEW",
           reasons: [
             "FACE_SCORE_REJECTED",
           ],
@@ -218,7 +218,7 @@ describe(
             config
           )
         ).toMatchObject({
-          status: "REJECTED",
+          status: "PENDING_MANUAL_REVIEW",
           reasons: [
             "LIVENESS_FAILED",
           ],
@@ -227,7 +227,7 @@ describe(
     );
 
     it(
-      "rejects mismatch and reviews inconclusive fingerprint results",
+      "flags mismatch and inconclusive legacy fingerprint signals for admin review",
       () => {
         const mismatch =
           createInput();
@@ -244,7 +244,7 @@ describe(
             config
           )
         ).toMatchObject({
-          status: "REJECTED",
+          status: "PENDING_MANUAL_REVIEW",
           reasons: [
             "FINGERPRINT_MISMATCH",
           ],

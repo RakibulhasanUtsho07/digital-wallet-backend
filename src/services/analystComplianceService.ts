@@ -2,9 +2,7 @@ import {
   AuditLog,
 } from "../models/AuditLog.js";
 
-import {
-  KYC,
-} from "../models/KYC.js";
+import { EKYCVerification } from "../modules/ekyc/models/EKYCVerification.js";
 
 import {
   KYCAIReview,
@@ -401,7 +399,7 @@ async function loadPeriodData(
     systemErrorCount,
   ] =
     await Promise.all([
-      KYC.countDocuments({
+      EKYCVerification.countDocuments({
         submittedAt: {
           $gte:
             from,
@@ -411,8 +409,9 @@ async function loadPeriodData(
         },
       }),
 
-      KYC.countDocuments({
-        verifiedAt: {
+      EKYCVerification.countDocuments({
+        status: "VERIFIED",
+        decidedAt: {
           $gte:
             from,
 
@@ -571,12 +570,26 @@ function normalizeBreakdown(
    KYC STATUS BREAKDOWN
 ========================================================= */
 
+async function countEKYCAccounts(): Promise<number> {
+  const rows = await EKYCVerification.aggregate<{ total: number }>([
+    { $group: { _id: "$userId" } },
+    { $count: "total" },
+  ]);
+  return rows[0]?.total ?? 0;
+}
+
 async function loadKycStatusBreakdown(): Promise<
   BreakdownItem[]
 > {
   const rows =
-    await KYC.aggregate<AggregateCountRow>(
+    await EKYCVerification.aggregate<AggregateCountRow>(
       [
+        { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } },
+        { $group: { _id: "$userId", status: { $first: "$status" } } },
+        { $project: { status: { $switch: { branches: [
+          { case: { $in: ["$status", ["QUEUED", "PROCESSING"]] }, then: "pending" },
+          { case: { $eq: ["$status", "PENDING_MANUAL_REVIEW"] }, then: "under_review" },
+        ], default: { $toLower: "$status" } } } } },
         {
           $group: {
             _id: {
@@ -932,7 +945,7 @@ async function loadSubmittedKycTrend(
   >
 > {
   const rows =
-    await KYC.aggregate<TimelineAggregateRow>(
+    await EKYCVerification.aggregate<TimelineAggregateRow>(
       [
         {
           $match: {
@@ -996,11 +1009,12 @@ async function loadVerifiedKycTrend(
   >
 > {
   const rows =
-    await KYC.aggregate<TimelineAggregateRow>(
+    await EKYCVerification.aggregate<TimelineAggregateRow>(
       [
         {
           $match: {
-            verifiedAt: {
+            status: "VERIFIED",
+            decidedAt: {
               $gte:
                 filters.from,
 
@@ -1015,7 +1029,7 @@ async function loadVerifiedKycTrend(
             _id: {
               $dateTrunc: {
                 date:
-                  "$verifiedAt",
+                  "$decidedAt",
 
                 unit:
                   filters.bucket,
@@ -1649,7 +1663,7 @@ export async function getAnalystCompliance(
         filters.previousTo
       ),
 
-      KYC.countDocuments(),
+      countEKYCAccounts(),
 
       loadKycStatusBreakdown(),
 

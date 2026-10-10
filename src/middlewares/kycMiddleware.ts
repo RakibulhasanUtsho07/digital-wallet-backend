@@ -1,6 +1,7 @@
 import { Response, NextFunction } from "express";
 import { AuthRequest } from "./authMiddleware.js";
 import { User } from "../models/User.js";
+import { syncWalletWithEKYC } from "../services/identityVerificationService.js";
 
 export const requireVerifiedKYC = async (
   req: AuthRequest,
@@ -18,7 +19,7 @@ export const requireVerifiedKYC = async (
 
     const user = await User.findById(
       req.user._id
-    ).select("kycStatus");
+    ).select("_id accountStatus deletedAt");
 
     if (!user) {
       res.status(404).json({
@@ -28,12 +29,13 @@ export const requireVerifiedKYC = async (
       return;
     }
 
-    if (user.kycStatus !== "verified") {
+    const kycStatus = await syncWalletWithEKYC(String(user._id));
+    if (user.accountStatus === "deleted" || user.deletedAt || kycStatus !== "verified") {
       res.status(403).json({
         success: false,
         message:
           "KYC verification is required for this action.",
-        kycStatus: user.kycStatus,
+        kycStatus,
       });
       return;
     }

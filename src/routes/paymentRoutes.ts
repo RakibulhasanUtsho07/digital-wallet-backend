@@ -19,6 +19,9 @@ import {
   securityReadLimiter,
   securitySensitiveLimiter,
 } from "../middlewares/securityRateLimiters.js";
+import {
+  requireWalletNotFrozen,
+} from "../middlewares/walletSecurityMiddleware.js";
 
 const router =
   Router();
@@ -33,6 +36,8 @@ router.post(
   "/validate-source",
 
   protect,
+
+  requireWalletNotFrozen,
 
   securityReadLimiter,
 
@@ -51,6 +56,8 @@ router.post(
   protect,
 
   requireVerifiedKYC,
+
+  requireWalletNotFrozen,
 
   securitySensitiveLimiter,
 

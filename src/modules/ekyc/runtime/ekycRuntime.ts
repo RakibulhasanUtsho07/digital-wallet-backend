@@ -1,6 +1,7 @@
 import type { Worker } from "bullmq";
 import type Redis from "ioredis";
 import { ActiveLivenessService } from "../biometrics/activeLivenessService.js";
+import { DeviceBiometricService } from "../biometrics/deviceBiometricService.js";
 import { HttpComplianceScreeningProvider } from "../compliance/HttpComplianceScreeningProvider.js";
 import {
   MockComplianceScreeningProvider,
@@ -16,6 +17,7 @@ import {
 } from "../queue/ekycQueue.js";
 import { EKYCRateLimiter } from "../rate-limit/EKYCRateLimiter.js";
 import { EKYCOrchestrator } from "../services/EKYCOrchestrator.js";
+import { NIDDocumentValidationService } from "../services/nidDocumentValidationService.js";
 import { projectEKYCStatusToUser } from "../services/statusProjectionService.js";
 import { InMemoryFaceVectorStore } from "../vector/InMemoryFaceVectorStore.js";
 import {
@@ -39,6 +41,8 @@ export interface EKYCRuntime {
   mediaStore: CloudinaryPrivateMediaStore;
   screeningProvider: IComplianceScreeningProvider;
   activeLiveness: ActiveLivenessService;
+  deviceBiometric: DeviceBiometricService;
+  documentValidator: NIDDocumentValidationService;
   orchestrator: EKYCOrchestrator;
 }
 
@@ -82,6 +86,8 @@ async function buildRuntime(): Promise<EKYCRuntime> {
   const mediaStore = new CloudinaryPrivateMediaStore();
   const screeningProvider = createScreeningProvider(configSnapshot.useMockProvider);
   const activeLiveness = new ActiveLivenessService(redis);
+  const deviceBiometric = new DeviceBiometricService(redis);
+  const documentValidator = new NIDDocumentValidationService(redis);
   const limiter = new EKYCRateLimiter(
     redis,
     configSnapshot.rateLimit.attempts,
@@ -103,6 +109,8 @@ async function buildRuntime(): Promise<EKYCRuntime> {
     mediaStore,
     screeningProvider,
     activeLiveness,
+    deviceBiometric,
+    documentValidator,
     orchestrator,
   };
 }

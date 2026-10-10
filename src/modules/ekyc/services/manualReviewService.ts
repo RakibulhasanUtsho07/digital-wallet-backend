@@ -1,10 +1,12 @@
 import type { Queue } from "bullmq";
 import mongoose from "mongoose";
 import { EKYCVerification } from "../models/EKYCVerification.js";
-import { encryptField, keyedLookupHash } from "../security/fieldEncryption.js";
+import { decryptField, encryptField, keyedLookupHash } from "../security/fieldEncryption.js";
 import type { EKYCReasonCode } from "../types.js";
+import type { IFaceVectorStore } from "../vector/QdrantFaceVectorStore.js";
 import { enqueueStatusWebhook, type EKYCWebhookJobData } from "../webhooks/webhookService.js";
 import { appendAuditEvent } from "./auditService.js";
+import type { EKYCStatusProjector } from "./statusProjectionService.js";
 
 /* =========================================================
    TYPES & ERRORS
@@ -72,8 +74,8 @@ export async function applyManualReviewDecision(
   input: ManualReviewInput,
   dependencies: {
     webhookQueue: Queue<EKYCWebhookJobData>;
-    vectorStore?: any;
-    projectStatus?: any;
+    vectorStore: IFaceVectorStore;
+    projectStatus: EKYCStatusProjector;
   }
 ): Promise<ManualReviewResult> {
   if (!mongoose.Types.ObjectId.isValid(input.verificationId)) {
@@ -85,7 +87,38 @@ export async function applyManualReviewDecision(
   }
 
   const reason = normalizeReviewReason(input.reason);
-  const reasonCodes: EKYCReasonCode[] = ["ADMIN_OVERRIDE"];
+  const current = await EKYCVerification.findById(input.verificationId)
+    .select("+faceEmbeddingEncrypted status reasonCodes userId correlationId");
+  if (!current) throw new Error("e-KYC verification was not found.");
+  if (current.status !== "PENDING_MANUAL_REVIEW") {
+    throw new ManualReviewConflictError("This verification is no longer awaiting manual review.");
+  }
+
+  const reasonCodes: EKYCReasonCode[] = [
+    ...new Set<EKYCReasonCode>([...(current.reasonCodes || []), "ADMIN_OVERRIDE"]),
+  ];
+  let vectorSaved = false;
+
+  if (input.decision === "VERIFIED") {
+    if (!current.faceEmbeddingEncrypted) {
+      throw new ManualReviewRequiresRerunError(
+        "Approval requires a successful face embedding. Re-run automated checks first."
+      );
+    }
+    const embedding = JSON.parse(decryptField(current.faceEmbeddingEncrypted)) as number[];
+    try {
+      await dependencies.vectorStore.saveVerifiedTemplate(
+        current.userId.toString(),
+        current.id,
+        embedding
+      );
+      vectorSaved = true;
+    } catch {
+      throw new ManualReviewDependencyError(
+        "The biometric duplicate store is unavailable; approval was not saved."
+      );
+    }
+  }
 
   /*
    * Atomic status condition prevents two admins
@@ -102,6 +135,7 @@ export async function applyManualReviewDecision(
       {
         $set: {
           status: input.decision,
+          activeAttempt: false,
           reasonCodes,
           decidedAt: new Date(),
         },
@@ -112,6 +146,9 @@ export async function applyManualReviewDecision(
       }
     );
   } catch (error) {
+    if (vectorSaved) {
+      await dependencies.vectorStore.removeVerifiedTemplate(input.verificationId).catch(() => undefined);
+    }
     if (error instanceof mongoose.mongo.MongoServerError && error.code === 11000) {
       throw new ManualReviewConflictError("This NID or user already has a verified e-KYC record.");
     }
@@ -119,6 +156,9 @@ export async function applyManualReviewDecision(
   }
 
   if (!verification) {
+    if (vectorSaved) {
+      await dependencies.vectorStore.removeVerifiedTemplate(input.verificationId).catch(() => undefined);
+    }
     const exists = await EKYCVerification.exists({ _id: input.verificationId });
     if (!exists) {
       throw new Error("e-KYC verification was not found.");
@@ -143,6 +183,11 @@ export async function applyManualReviewDecision(
       reasonEncrypted: encryptField(reason),
     },
   });
+
+  await dependencies.projectStatus(
+    verification.userId.toString(),
+    input.decision
+  );
 
   /* =======================================================
      WEBHOOK DELIVERY

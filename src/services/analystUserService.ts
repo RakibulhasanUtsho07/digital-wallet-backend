@@ -27,6 +27,8 @@ import {
   AuthSession,
 } from "../models/AuthSession.js";
 
+import { currentEKYCStatuses } from "./identityVerificationService.js";
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -1242,73 +1244,13 @@ async function getTrend(
    BREAKDOWNS
 ========================================================= */
 
-async function getKycBreakdown(
-  totalUsers:
-    number
+function getKycBreakdown(
+  counts: Record<"verified" | "pending" | "rejected" | "not_started", number>,
+  totalUsers: number
 ) {
-  const rows =
-    await User.aggregate<{
-      _id:
-        string;
-
-      count:
-        number;
-    }>([
-      {
-        $match: {
-          role:
-            "user",
-
-          accountStatus: {
-            $ne:
-              "deleted",
-          },
-        },
-      },
-
-      {
-        $group: {
-          _id: {
-            $ifNull: [
-              "$kycStatus",
-              "not_started",
-            ],
-          },
-
-          count: {
-            $sum:
-              1,
-          },
-        },
-      },
-    ]);
-
-  return rows
-    .map(
-      (
-        row
-      ) => ({
-        status:
-          row._id,
-
-        count:
-          row.count,
-
-        percentage:
-          percentage(
-            row.count,
-            totalUsers
-          ),
-      })
-    )
-    .sort(
-      (
-        a,
-        b
-      ) =>
-        b.count -
-        a.count
-    );
+  return Object.entries(counts)
+    .map(([status, count]) => ({ status, count, percentage: percentage(count, totalUsers) }))
+    .sort((a, b) => b.count - a.count);
 }
 
 async function getWalletBreakdown(
@@ -1789,6 +1731,14 @@ export async function getAnalystUserAnalytics(
   const totalUsers =
     userIds.length;
 
+  const ekycStatuses = await currentEKYCStatuses(userIds);
+  const kycCounts = { verified: 0, pending: 0, rejected: 0, not_started: 0 };
+  const verifiedUserIds = userIds.filter((id) => {
+    const status = ekycStatuses.get(String(id)) ?? "not_started";
+    kycCounts[status === "under_review" ? "pending" : status]++;
+    return status === "verified";
+  });
+
   /* =======================================================
      POPULATION
   ======================================================= */
@@ -1804,63 +1754,16 @@ export async function getAnalystUserAnalytics(
     newUsersPrevious,
   ] =
     await Promise.all([
-      User.countDocuments({
-        role:
-          "user",
+      kycCounts.verified,
+      kycCounts.pending,
+      kycCounts.rejected,
+      kycCounts.not_started,
 
-        accountStatus: {
-          $ne:
-            "deleted",
-        },
-
-        kycStatus:
-          "verified",
-      }),
-
-      User.countDocuments({
-        role:
-          "user",
-
-        accountStatus: {
-          $ne:
-            "deleted",
-        },
-
-        kycStatus:
-          "pending",
-      }),
-
-      User.countDocuments({
-        role:
-          "user",
-
-        accountStatus: {
-          $ne:
-            "deleted",
-        },
-
-        kycStatus:
-          "rejected",
-      }),
-
-      User.countDocuments({
-        role:
-          "user",
-
-        accountStatus: {
-          $ne:
-            "deleted",
-        },
-
-        kycStatus:
-          "not_started",
-      }),
-
-      userIds.length
+      verifiedUserIds.length
         ? Wallet.countDocuments({
             userId: {
               $in:
-                userIds,
+                verifiedUserIds,
             },
 
             status: {
@@ -1948,9 +1851,7 @@ export async function getAnalystUserAnalytics(
         boundary
       ),
 
-      getKycBreakdown(
-        totalUsers
-      ),
+      getKycBreakdown(kycCounts, totalUsers),
 
       getWalletBreakdown(
         userIds

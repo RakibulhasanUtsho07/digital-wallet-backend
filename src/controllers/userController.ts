@@ -60,6 +60,7 @@ const safeDecrypt = (
 const VALID_THEMES: readonly ThemeMode[] = [
   "light",
   "dark",
+  "system",
   "eye-care",
   "ocean",
   "forest",
@@ -334,7 +335,7 @@ export const updateUserPreferences =
         res.status(400).json({
           success: false,
           message:
-            "Invalid theme. Allowed themes are light, dark, eye-care, ocean and forest.",
+            "Invalid theme. Allowed themes are light, dark, system, eye-care, ocean and forest.",
         });
 
         return;

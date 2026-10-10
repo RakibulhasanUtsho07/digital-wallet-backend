@@ -78,6 +78,14 @@ import {
 } from "../controllers/merchantRefundController.js";
 
 import {
+  cancelMerchantDashboardInvoiceController,
+  createMerchantDashboardInvoiceController,
+  getMerchantDashboardInvoiceController,
+  listMerchantDashboardInvoicesController,
+  sendMerchantDashboardInvoiceController,
+} from "../controllers/merchantInvoiceController.js";
+
+import {
   getMerchantTransactionController,
   listMerchantTransactionsController,
 } from "../controllers/merchantTransactionController.js";
@@ -306,6 +314,21 @@ router.get(
   securityReadLimiter,
   getMerchantDashboardRefundController
 );
+
+/* =========================================================
+   MERCHANT DASHBOARD INVOICES
+========================================================= */
+
+router.get("/invoices", protect, requireMerchant, securityReadLimiter,
+  listMerchantDashboardInvoicesController);
+router.post("/invoices", protect, requireMerchant, securitySensitiveLimiter,
+  createMerchantDashboardInvoiceController);
+router.get("/invoices/:invoiceId", protect, requireMerchant, securityReadLimiter,
+  getMerchantDashboardInvoiceController);
+router.post("/invoices/:invoiceId/send", protect, requireMerchant, securitySensitiveLimiter,
+  sendMerchantDashboardInvoiceController);
+router.post("/invoices/:invoiceId/cancel", protect, requireMerchant, securitySensitiveLimiter,
+  cancelMerchantDashboardInvoiceController);
 
 /* =========================================================
    TRANSACTIONS

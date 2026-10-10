@@ -16,6 +16,9 @@ import {
   securityReadLimiter,
   securitySensitiveLimiter,
 } from "../middlewares/securityRateLimiters.js";
+import {
+  requireWalletNotFrozen,
+} from "../middlewares/walletSecurityMiddleware.js";
 
 const router =
   express.Router();
@@ -40,6 +43,7 @@ router.get(
 router.post(
   "/add-money/initiate",
   protect,
+  requireWalletNotFrozen,
   securitySensitiveLimiter,
   initiateWalletAddMoney
 );
@@ -51,6 +55,7 @@ router.post(
 router.post(
   "/add-money/confirm",
   protect,
+  requireWalletNotFrozen,
   securitySensitiveLimiter,
   confirmWalletAddMoney
 );
