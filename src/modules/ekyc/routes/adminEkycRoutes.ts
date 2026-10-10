@@ -20,6 +20,7 @@ import {
   rerunEKYCVerification,
 } from "../services/rerunService.js";
 import { projectEKYCStatusToUser } from "../services/statusProjectionService.js";
+import { statusFromEKYC } from "../../../services/identityVerificationService.js";
 import type { EKYCStatus, PrivateMediaRefs } from "../types.js";
 
 const statusValues: EKYCStatus[] = [
@@ -67,19 +68,16 @@ function safeVerification(value: any) {
       id: String(user._id),
       name: String(user.name || "Unknown user"),
       role: String(user.role || "user"),
-      kycStatus: String(user.kycStatus || "pending"),
-    } : { id: String(value.userId), name: "Unknown user", role: "user", kycStatus: "pending" },
+      kycStatus: statusFromEKYC(value.status),
+    } : { id: String(value.userId), name: "Unknown user", role: "user", kycStatus: statusFromEKYC(value.status) },
     status: value.status,
     reasonCodes: Array.isArray(value.reasonCodes) ? value.reasonCodes : [],
     providerName: value.providerName,
     faceScore: typeof value.faceScore === "number" ? value.faceScore : null,
     nameScore: typeof value.nameScore === "number" ? value.nameScore : null,
     livenessPassed: typeof value.livenessPassed === "boolean" ? value.livenessPassed : null,
-    fingerprintMatched:
-      typeof value.fingerprintMatched === "boolean" ? value.fingerprintMatched : null,
-    fingerprintConclusive:
-      typeof value.fingerprintConclusive === "boolean" ? value.fingerprintConclusive : null,
-    fingerprintScore: typeof value.fingerprintScore === "number" ? value.fingerprintScore : null,
+    phoneVerifiedAt: value.phoneVerifiedAt,
+    deviceBiometricVerified: Boolean(value.deviceBiometricVerified),
     possibleDuplicateVectorId: value.possibleDuplicateVectorId,
     possibleDuplicateScore:
       typeof value.possibleDuplicateScore === "number" ? value.possibleDuplicateScore : null,
@@ -89,6 +87,15 @@ function safeVerification(value: any) {
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     hasReviewBiometricTemplate: Boolean(value.faceEmbeddingEncrypted),
+  };
+}
+
+function sensitiveIdentity(value: any) {
+  return {
+    claimedName: decryptField(value.claimedNameEncrypted),
+    nid: decryptField(value.nidEncrypted),
+    dateOfBirth: decryptField(value.dateOfBirthEncrypted),
+    verifiedPhone: decryptField(value.verifiedPhoneEncrypted),
   };
 }
 
@@ -129,14 +136,13 @@ export function createAdminEKYCRouter(): express.Router {
     try {
       const today = new Date();
       today.setUTCHours(0, 0, 0, 0);
-      const [queued, processing, manualReview, verified, rejected, submittedToday, decisions] =
-        await Promise.all([
-          EKYCVerification.countDocuments({ status: "QUEUED" }),
-          EKYCVerification.countDocuments({ status: "PROCESSING" }),
-          EKYCVerification.countDocuments({ status: "PENDING_MANUAL_REVIEW" }),
-          EKYCVerification.countDocuments({ status: "VERIFIED" }),
-          EKYCVerification.countDocuments({ status: "REJECTED" }),
-          EKYCVerification.countDocuments({ submittedAt: { $gte: today } }),
+      const [current, decisions] = await Promise.all([
+          EKYCVerification.aggregate<{ _id: string; count: number; submittedToday: number }>([
+            { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } },
+            { $group: { _id: "$userId", attempt: { $first: "$$ROOT" } } },
+            { $group: { _id: "$attempt.status", count: { $sum: 1 },
+              submittedToday: { $sum: { $cond: [{ $gte: ["$attempt.submittedAt", today] }, 1, 0] } } } },
+          ]),
           EKYCVerification.find({
             submittedAt: { $type: "date" },
             decidedAt: { $type: "date" },
@@ -147,6 +153,14 @@ export function createAdminEKYCRouter(): express.Router {
             .limit(250)
             .lean(),
         ]);
+
+      const count = (status: string) => current.find((row) => row._id === status)?.count ?? 0;
+      const queued = count("QUEUED");
+      const processing = count("PROCESSING");
+      const manualReview = count("PENDING_MANUAL_REVIEW");
+      const verified = count("VERIFIED");
+      const rejected = count("REJECTED");
+      const submittedToday = current.reduce((total, row) => total + row.submittedToday, 0);
 
       const minutes = decisions
         .map((item) => {
@@ -182,6 +196,12 @@ export function createAdminEKYCRouter(): express.Router {
     try {
       const query = listSchema.parse(request.query);
       const filter: Record<string, unknown> = {};
+      const latestIds = await EKYCVerification.aggregate<{ _id: mongoose.Types.ObjectId }>([
+        { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } },
+        { $group: { _id: "$userId", verificationId: { $first: "$_id" } } },
+        { $project: { _id: "$verificationId" } },
+      ]);
+      filter._id = { $in: latestIds.map((row) => row._id) };
       if (query.status) filter.status = query.status;
       if (query.search) {
         const users = await User.find({ name: new RegExp(escapeRegex(query.search), "i") })
@@ -221,7 +241,10 @@ export function createAdminEKYCRouter(): express.Router {
     try {
       const id = requireObjectId(String(request.params.id));
       const verification = await EKYCVerification.findById(id)
-        .select("+faceEmbeddingEncrypted")
+        .select(
+          "+faceEmbeddingEncrypted +claimedNameEncrypted +nidEncrypted " +
+          "+dateOfBirthEncrypted +verifiedPhoneEncrypted"
+        )
         .populate("userId", "name role kycStatus")
         .lean();
       if (!verification) {
@@ -233,9 +256,20 @@ export function createAdminEKYCRouter(): express.Router {
         .select("sequence eventType actorType createdAt")
         .sort({ sequence: 1 })
         .lean();
+      await appendAuditEvent({
+        verificationId: id,
+        eventType: "SENSITIVE_IDENTITY_VIEWED",
+        actorType: "ADMIN",
+        actorIdHash: keyedLookupHash(adminId(request), "vector-user"),
+        correlationId: verification.correlationId,
+        metadata: { fields: ["claimedName", "nid", "dateOfBirth", "verifiedPhone"] },
+      });
       response.status(200).json({
         success: true,
-        verification: safeVerification(verification),
+        verification: {
+          ...safeVerification(verification),
+          identity: sensitiveIdentity(verification),
+        },
         audit,
       });
     } catch (error) {

@@ -10,11 +10,40 @@ import type {
 import {
   WalletSecurityLock,
 } from "../models/WalletSecurityLock.js";
+import { Wallet } from "../models/Wallet.js";
+import { syncWalletWithEKYC } from "../services/identityVerificationService.js";
 
-/*
- * Add this middleware to outbound-money routes such as
- * Send Money and Withdraw. Deposits may remain allowed.
- */
+export async function getWalletSecurityState(
+  userId: string
+): Promise<{
+  frozen: boolean;
+  blocked: boolean;
+  frozenAt?: Date;
+  reason?: string;
+}> {
+  const [lock, wallet] = await Promise.all([
+    WalletSecurityLock.findOne({ userId })
+      .select("frozen reason frozenAt")
+      .lean(),
+    Wallet.findOne({ userId })
+      .select("status")
+      .lean(),
+  ]);
+
+  return {
+    frozen:
+      Boolean(lock?.frozen) ||
+      wallet?.status === "FROZEN",
+    blocked:
+      wallet?.status === "BLOCKED",
+    frozenAt:
+      lock?.frozenAt,
+    reason:
+      lock?.reason,
+  };
+}
+
+/* Use on every route that can create, move, debit, or credit money. */
 export const requireWalletNotFrozen =
   async (
     req: AuthRequest,
@@ -34,23 +63,42 @@ export const requireWalletNotFrozen =
         return;
       }
 
-      const lock =
-        await WalletSecurityLock.findOne({
-          userId,
-          frozen: true,
-        }).select(
-          "frozen reason frozenAt"
+      const identity = await syncWalletWithEKYC(String(userId));
+      if (identity !== "verified") {
+        res.status(403).json({
+          success: false,
+          code: "EKYC_REQUIRED",
+          message: "Complete e-KYC before using your wallet.",
+          kycStatus: identity,
+        });
+        return;
+      }
+
+      const state =
+        await getWalletSecurityState(
+          String(userId)
         );
 
-      if (lock?.frozen) {
+      if (state.blocked) {
         res.status(423).json({
           success: false,
-          code:
-            "WALLET_SECURITY_FROZEN",
+          code: "WALLET_BLOCKED",
           message:
-            "Outbound wallet activity is frozen from Security Center.",
+            "This wallet is blocked. Contact support before making a transaction.",
+        });
+        return;
+      }
+
+      if (state.frozen) {
+        res.status(423).json({
+          success: false,
+          code: "WALLET_FROZEN",
+          message:
+            "This wallet is frozen. Unfreeze it from Security Center before making any transaction.",
           frozenAt:
-            lock.frozenAt,
+            state.frozenAt,
+          reason:
+            state.reason,
         });
         return;
       }

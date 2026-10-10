@@ -13,9 +13,7 @@ import {
   User,
 } from "../models/User.js";
 
-import {
-  KYC,
-} from "../models/KYC.js";
+import { currentEKYCStatus } from "./identityVerificationService.js";
 
 import {
   CheckoutVerificationChallenge,
@@ -382,30 +380,16 @@ export async function assertLiveCustomerKyc(
   userId:
     string
 ): Promise<void> {
-  const [
-    user,
-    verifiedKyc,
-  ] =
-    await Promise.all([
-      User.findById(
-        userId
-      )
-        .select(
-          "accountStatus kycStatus"
-        )
-        .lean(),
-
-      KYC.exists({
-        userId,
-        status:
-          "verified",
-      }),
-    ]);
+  const [user, status] = await Promise.all([
+    User.findById(userId).select("accountStatus deletedAt").lean(),
+    currentEKYCStatus(userId),
+  ]);
 
   if (
     !user ||
     user.accountStatus !==
-      "active"
+      "active" ||
+    user.deletedAt
   ) {
     throw new CheckoutVerificationError(
       "This Coffer account is not available for payment.",
@@ -415,9 +399,7 @@ export async function assertLiveCustomerKyc(
   }
 
   if (
-    !verifiedKyc ||
-    user.kycStatus !==
-      "verified"
+    status !== "verified"
   ) {
     throw new CheckoutVerificationError(
       "Verified KYC is required before making a live Coffer payment.",

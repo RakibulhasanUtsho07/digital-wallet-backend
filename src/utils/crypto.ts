@@ -29,23 +29,25 @@ function getRequiredEnv(
 }
 
 /* =========================================================
-   GET ENCRYPTION KEY
+   ENCRYPTION KEYRING
+
+   DATA_ENCRYPTION_KEY
+   - current/primary key
+   - always used for new encryption
+
+   DATA_ENCRYPTION_PREVIOUS_KEYS
+   - optional comma/semicolon/space separated list of old keys
+   - used only while decrypting historical records
+   - lets a safe key rotation happen without breaking old data
 ========================================================= */
 
-function getEncryptionKey(): Buffer {
-  const rawKey =
-    getRequiredEnv(
-      "DATA_ENCRYPTION_KEY"
-    );
-
-  /*
-   * Must be exactly 32 bytes.
-   * 32 bytes = 64 hexadecimal characters.
-   */
-
+function parseEncryptionKey(
+  rawKey: string,
+  label: string
+): Buffer {
   if (!/^[a-fA-F0-9]{64}$/.test(rawKey)) {
     throw new Error(
-      "DATA_ENCRYPTION_KEY must be a 64-character hexadecimal string."
+      `${label} must be a 64-character hexadecimal string.`
     );
   }
 
@@ -56,11 +58,53 @@ function getEncryptionKey(): Buffer {
 
   if (key.length !== 32) {
     throw new Error(
-      "DATA_ENCRYPTION_KEY must decode to exactly 32 bytes."
+      `${label} must decode to exactly 32 bytes.`
     );
   }
 
   return key;
+}
+
+function getEncryptionKey(): Buffer {
+  return parseEncryptionKey(
+    getRequiredEnv(
+      "DATA_ENCRYPTION_KEY"
+    ),
+    "DATA_ENCRYPTION_KEY"
+  );
+}
+
+function getDecryptionKeys(): Buffer[] {
+  const currentRaw =
+    getRequiredEnv(
+      "DATA_ENCRYPTION_KEY"
+    );
+
+  const previousRaw =
+    process.env.DATA_ENCRYPTION_PREVIOUS_KEYS?.trim() ??
+    "";
+
+  const candidates = [
+    currentRaw,
+    ...previousRaw
+      .split(/[\s,;]+/)
+      .map((value) => value.trim())
+      .filter(Boolean),
+  ];
+
+  const unique = [
+    ...new Set(candidates),
+  ];
+
+  return unique.map(
+    (value, index) =>
+      parseEncryptionKey(
+        value,
+        index === 0
+          ? "DATA_ENCRYPTION_KEY"
+          : `DATA_ENCRYPTION_PREVIOUS_KEYS entry ${index}`
+      )
+  );
 }
 
 /* =========================================================
@@ -169,70 +213,97 @@ export function decryptData(
     );
   }
 
+  const encryptedHex =
+    typeof data.encrypted === "string"
+      ? data.encrypted.trim()
+      : "";
+
+  const ivHex =
+    typeof data.iv === "string"
+      ? data.iv.trim()
+      : "";
+
+  const authTagHex =
+    typeof data.authTag === "string"
+      ? data.authTag.trim()
+      : "";
+
+  /*
+   * Strict hex checks are important. Buffer.from(value, "hex") can
+   * otherwise accept/truncate malformed values and make diagnosis hard.
+   */
   if (
-    !data.encrypted ||
-    !data.iv ||
-    !data.authTag
+    !/^(?:[a-fA-F0-9]{2})+$/.test(encryptedHex) ||
+    !/^[a-fA-F0-9]{24}$/.test(ivHex) ||
+    !/^[a-fA-F0-9]{32}$/.test(authTagHex)
   ) {
     throw new Error(
-      "Invalid encrypted data."
+      "Invalid encrypted data format."
     );
   }
 
-  const key =
-    getEncryptionKey();
-
   const iv =
     Buffer.from(
-      data.iv,
+      ivHex,
       "hex"
     );
 
   const authTag =
     Buffer.from(
-      data.authTag,
+      authTagHex,
       "hex"
     );
 
   const encrypted =
     Buffer.from(
-      data.encrypted,
+      encryptedHex,
       "hex"
     );
 
-  if (iv.length !== 12) {
-    throw new Error(
-      "Invalid AES-GCM IV."
-    );
+  const keys =
+    getDecryptionKeys();
+
+  let lastError:
+    unknown = null;
+
+  for (const key of keys) {
+    try {
+      const decipher =
+        crypto.createDecipheriv(
+          "aes-256-gcm",
+          key,
+          iv
+        );
+
+      decipher.setAuthTag(
+        authTag
+      );
+
+      const decrypted =
+        Buffer.concat([
+          decipher.update(
+            encrypted
+          ),
+          decipher.final(),
+        ]);
+
+      return decrypted.toString(
+        "utf8"
+      );
+    } catch (error) {
+      lastError = error;
+    }
   }
 
-  if (authTag.length !== 16) {
-    throw new Error(
-      "Invalid AES-GCM authentication tag."
-    );
-  }
-
-  const decipher =
-    crypto.createDecipheriv(
-      "aes-256-gcm",
-      key,
-      iv
-    );
-
-  decipher.setAuthTag(
-    authTag
-  );
-
-  const decrypted =
-    Buffer.concat([
-      decipher.update(
-        encrypted
-      ),
-      decipher.final(),
-    ]);
-
-  return decrypted.toString(
-    "utf8"
+  /*
+   * Do not expose key material or low-level OpenSSL details to callers.
+   * The operational fix is either to provide the original key through
+   * DATA_ENCRYPTION_PREVIOUS_KEYS or repair the affected record.
+   */
+  throw new Error(
+    lastError
+      ? "Encrypted data could not be authenticated with the configured encryption keys."
+      : "No encryption key is available for decryption."
   );
 }
 

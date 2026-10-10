@@ -30,4 +30,27 @@ export const ekycEvidenceUpload = multer({
   { name: "livenessEvidence", maxCount: 1 },
 ]);
 
+export const ekycDocumentPreflightUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_request, file, callback) => {
+    if (
+      ["frontImage", "backImage"].includes(file.fieldname) &&
+      imageMimeTypes.has(file.mimetype)
+    ) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Document validation accepts NID front and back as JPG, PNG, or WEBP."));
+  },
+  limits: {
+    fileSize: 2 * 1024 * 1024,
+    files: 2,
+    fields: 2,
+    fieldSize: 200,
+  },
+}).fields([
+  { name: "frontImage", maxCount: 1 },
+  { name: "backImage", maxCount: 1 },
+]);
+
 export default ekycEvidenceUpload;

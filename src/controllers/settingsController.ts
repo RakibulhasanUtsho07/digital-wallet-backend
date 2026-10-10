@@ -51,6 +51,7 @@ interface EncryptedValue {
 export type ThemeMode =
   | "light"
   | "dark"
+  | "system"
   | "eye-care"
   | "ocean"
   | "forest";
@@ -136,6 +137,7 @@ const isTheme = (
   return (
     value === "light" ||
     value === "dark" ||
+    value === "system" ||
     value === "eye-care" ||
     value === "ocean" ||
     value === "forest"
@@ -602,7 +604,7 @@ export const updateUserPreferences =
             ).json({
               success: false,
               message:
-                "Invalid appearance theme. Allowed themes: light, dark, eye-care, ocean, forest.",
+                "Invalid appearance theme. Allowed themes: light, dark, system, eye-care, ocean, forest.",
             });
 
             return;

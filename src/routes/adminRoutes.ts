@@ -3,19 +3,28 @@ import express from "express";
 import {
   getAdminOverview,
   getAllUsers,
-  getAllTransactions,
   getPendingKYCs,
   getKYCDocuments,
   reviewKYC,
 } from "../controllers/adminController.js";
 
-import { protect } from "../middlewares/authMiddleware.js";
-import { adminOnly } from "../middlewares/adminMiddleware.js";
+import {
+  getAllAdminTransactions,
+} from "../controllers/adminTransactionController.js";
+
+import {
+  protect,
+} from "../middlewares/authMiddleware.js";
+
+import {
+  adminOnly,
+} from "../middlewares/adminMiddleware.js";
 
 const router = express.Router();
 
 /* =========================================================
    ADMIN OVERVIEW
+
    GET /api/admin/overview?period=30d
 ========================================================= */
 
@@ -28,6 +37,7 @@ router.get(
 
 /* =========================================================
    USERS
+
    GET /api/admin/users
 ========================================================= */
 
@@ -39,19 +49,29 @@ router.get(
 );
 
 /* =========================================================
-   ALL TRANSACTIONS
+   ALL TRANSACTIONS / UNIFIED LEDGER
+
    GET /api/admin/transactions
+
+   Includes:
+   - Wallet transfers
+   - Add money
+   - Merchant payments
+   - Merchant refunds
+   - Withdrawals
 ========================================================= */
 
 router.get(
   "/transactions",
   protect,
   adminOnly,
-  getAllTransactions
+  getAllAdminTransactions
 );
 
 /* =========================================================
-   KYC
+   KYC - PENDING REQUESTS
+
+   GET /api/admin/kyc/pending
 ========================================================= */
 
 router.get(
@@ -61,6 +81,12 @@ router.get(
   getPendingKYCs
 );
 
+/* =========================================================
+   KYC - DOCUMENTS
+
+   GET /api/admin/kyc/:id/documents
+========================================================= */
+
 router.get(
   "/kyc/:id/documents",
   protect,
@@ -68,11 +94,21 @@ router.get(
   getKYCDocuments
 );
 
+/* =========================================================
+   KYC - REVIEW
+
+   PATCH /api/admin/kyc/:id/review
+========================================================= */
+
 router.patch(
   "/kyc/:id/review",
   protect,
   adminOnly,
   reviewKYC
 );
+
+/* =========================================================
+   EXPORT
+========================================================= */
 
 export default router;

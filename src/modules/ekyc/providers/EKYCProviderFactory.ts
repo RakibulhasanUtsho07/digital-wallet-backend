@@ -8,6 +8,7 @@ export class EKYCProviderFactory {
 
   async create(): Promise<IEKYCProvider> {
     const config = await this.dynamicConfig.get();
+
     return config.useMockProvider
       ? new MockECProvider(config.mockLatencyMs)
       : new RealECEKYCProvider(config.provider);

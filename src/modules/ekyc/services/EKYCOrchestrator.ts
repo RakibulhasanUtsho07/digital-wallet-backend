@@ -64,15 +64,6 @@ export class EKYCOrchestrator {
 
     const attemptId = randomUUID();
 
-    const fingerprintMaterial = input.fingerprint
-      ? input.fingerprint.mode === "MOCK"
-        ? input.fingerprint.templateBase64
-        : input.fingerprint.providerCaptureReference
-      : undefined;
-
-    if (input.fingerprint && !fingerprintMaterial) {
-      throw new Error("The supplied fingerprint evidence is invalid.");
-    }
     await this.limiter.consume({
       userId: input.userId,
       ipAddress: input.ipAddress,
@@ -91,12 +82,17 @@ export class EKYCOrchestrator {
         nidEncrypted: encryptField(identity.normalizedNid),
         dateOfBirthEncrypted: encryptField(input.dateOfBirth),
         claimedNameEncrypted: encryptField(identity.claimedName),
+        verifiedPhoneEncrypted: encryptField(input.verifiedPhone),
+        verifiedPhoneLookupHash: keyedLookupHash(input.verifiedPhone, "phone"),
+        phoneVerifiedAt: new Date(),
         mediaRefsEncrypted: encryptField(JSON.stringify(input.media)),
         livenessEvidenceEncrypted: encryptField(JSON.stringify(input.liveness)),
-        ...(input.fingerprint && fingerprintMaterial
+        ...(input.deviceBiometric
           ? {
-              fingerprintEvidenceEncrypted: encryptField(JSON.stringify(input.fingerprint)),
-              fingerprintTemplateHash: keyedLookupHash(fingerprintMaterial, "fingerprint"),
+              deviceBiometricEvidenceEncrypted: encryptField(
+                JSON.stringify(input.deviceBiometric)
+              ),
+              deviceBiometricVerified: true,
             }
           : {}),
         correlationId: input.correlationId,
@@ -122,7 +118,8 @@ export class EKYCOrchestrator {
           status: "QUEUED",
           mediaReferenceCount: 4,
           livenessChallengeCount: input.liveness.challenges.length,
-          fingerprintMode: input.fingerprint?.mode ?? "NOT_COLLECTED",
+          phoneVerified: true,
+          deviceBiometricMode: input.deviceBiometric?.mode ?? "NOT_COLLECTED",
         },
       });
     } catch (error) {

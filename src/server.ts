@@ -25,6 +25,20 @@ import {
 } from "./services/webhookQueue.js";
 
 /* =========================================================
+   COFFER AI SUPPORT MONITORING
+========================================================= */
+
+import {
+  startSupportAlertMonitor,
+  stopSupportAlertMonitor,
+} from "./modules/coffer-ai/monitoring/supportAlertMonitor.js";
+
+import {
+  startSupportMaintenanceMonitor,
+  stopSupportMaintenanceMonitor,
+} from "./modules/coffer-ai/monitoring/supportMaintenanceMonitor.js";
+
+/* =========================================================
    CONFIGURATION
 ========================================================= */
 
@@ -44,6 +58,41 @@ let httpServer:
 
 let shuttingDown =
   false;
+
+/* =========================================================
+   ENV HELPERS
+========================================================= */
+
+function getPositiveIntegerEnv(
+  key: string,
+  fallback: number
+): number {
+  const raw =
+    process.env[
+      key
+    ];
+
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed =
+    Number.parseInt(
+      raw,
+      10
+    );
+
+  if (
+    !Number.isFinite(
+      parsed
+    ) ||
+    parsed <= 0
+  ) {
+    return fallback;
+  }
+
+  return parsed;
+}
 
 /* =========================================================
    CLOSE HTTP SERVER
@@ -86,13 +135,147 @@ async function closeHttpServer():
 }
 
 /* =========================================================
+   CLOSE COFFER AI MONITORS
+========================================================= */
+
+function closeCofferAiMonitors():
+  void {
+  try {
+    stopSupportAlertMonitor();
+
+    console.log(
+      "✅ Coffer AI Support alert monitor stopped."
+    );
+  } catch (
+    error
+  ) {
+    console.error(
+      "COFFER AI ALERT MONITOR SHUTDOWN ERROR:",
+      error instanceof Error
+        ? error.message
+        : error
+    );
+  }
+
+  try {
+    stopSupportMaintenanceMonitor();
+
+    console.log(
+      "✅ Coffer AI Support maintenance monitor stopped."
+    );
+  } catch (
+    error
+  ) {
+    console.error(
+      "COFFER AI MAINTENANCE MONITOR SHUTDOWN ERROR:",
+      error instanceof Error
+        ? error.message
+        : error
+    );
+  }
+}
+
+/* =========================================================
+   START COFFER AI SUPPORT MONITORS
+========================================================= */
+
+function startCofferAiMonitors():
+  void {
+  /* =====================================================
+     PROACTIVE ALERT MONITOR
+
+     Default:
+     - enabled
+     - every 5 minutes
+
+     Detects:
+     - payment failure spikes
+     - provider failure spikes
+     - repeated failure codes
+     - SLA pressure
+     - Support case inflow spikes
+     - critical incidents
+  ====================================================== */
+
+  const alertMonitorEnabled =
+    process.env
+      .AI_SUPPORT_ALERT_MONITOR_ENABLED !==
+    "false";
+
+  if (
+    alertMonitorEnabled
+  ) {
+    const intervalMinutes =
+      getPositiveIntegerEnv(
+        "AI_SUPPORT_ALERT_MONITOR_INTERVAL_MINUTES",
+        5
+      );
+
+    startSupportAlertMonitor({
+      intervalMinutes,
+      runImmediately:
+        true,
+    });
+
+    console.log(
+      `✅ Coffer AI Support alert monitor started (${intervalMinutes} minute interval).`
+    );
+  } else {
+    console.log(
+      "ℹ️ Coffer AI Support alert monitor is disabled."
+    );
+  }
+
+  /* =====================================================
+     MAINTENANCE MONITOR
+
+     Disabled by default because retention/deletion rules
+     should be enabled intentionally in production.
+  ====================================================== */
+
+  const maintenanceEnabled =
+    process.env
+      .AI_SUPPORT_MAINTENANCE_ENABLED ===
+    "true";
+
+  if (
+    maintenanceEnabled
+  ) {
+    const intervalHours =
+      getPositiveIntegerEnv(
+        "AI_SUPPORT_MAINTENANCE_INTERVAL_HOURS",
+        24
+      );
+
+    startSupportMaintenanceMonitor({
+      intervalHours,
+      runImmediately:
+        false,
+    });
+
+    console.log(
+      `✅ Coffer AI Support maintenance monitor started (${intervalHours} hour interval).`
+    );
+  } else {
+    console.log(
+      "ℹ️ Coffer AI Support maintenance monitor is disabled."
+    );
+  }
+}
+
+/* =========================================================
    CLOSE INFRASTRUCTURE
 ========================================================= */
 
 async function closeInfrastructure():
   Promise<void> {
   /*
-   * Stop accepting and processing e-KYC jobs first.
+   * Stop local Coffer AI monitoring timers first.
+   */
+  closeCofferAiMonitors();
+
+  /*
+   * Stop accepting and processing e-KYC jobs.
    */
   await stopEKYCRuntime()
     .catch(
@@ -109,9 +292,9 @@ async function closeInfrastructure():
     );
 
   /*
-   * Close the BullMQ Queue and its Redis connection.
+   * Close the BullMQ Queue and Redis connection.
    *
-   * Webhook delivery Worker runs in:
+   * Merchant webhook delivery Worker runs in:
    * src/webhookWorkerServer.ts
    */
   await closeWebhookQueue()
@@ -128,6 +311,9 @@ async function closeInfrastructure():
       }
     );
 
+  /*
+   * MongoDB shutdown.
+   */
   if (
     mongoose.connection
       .readyState !==
@@ -192,7 +378,8 @@ async function shutdown(
     await closeHttpServer();
 
     /*
-     * Close Redis, workers and MongoDB.
+     * Close AI monitors, Redis,
+     * e-KYC workers and MongoDB.
      */
     await closeInfrastructure();
 
@@ -245,6 +432,17 @@ async function startServer():
     console.log(
       "✅ MongoDB connected successfully."
     );
+
+    /* =====================================================
+       COFFER AI SUPPORT MONITORS
+
+       Start only after MongoDB is ready because:
+       - alert evaluator reads payment data
+       - incident detector reads Support data
+       - alert records are stored in MongoDB
+    ====================================================== */
+
+    startCofferAiMonitors();
 
     /* =====================================================
        DEMO PAYMENT SOURCES
@@ -303,6 +501,22 @@ async function startServer():
               "false"
               ? "ℹ️ e-KYC workers are disabled in this process."
               : "✅ Advanced e-KYC workers started."
+          );
+
+          console.log(
+            process.env
+              .AI_SUPPORT_ALERT_MONITOR_ENABLED ===
+              "false"
+              ? "ℹ️ Coffer AI Support alert monitor disabled."
+              : "✅ Coffer AI Support alert monitor active."
+          );
+
+          console.log(
+            process.env
+              .AI_SUPPORT_MAINTENANCE_ENABLED ===
+              "true"
+              ? "✅ Coffer AI Support maintenance monitor active."
+              : "ℹ️ Coffer AI Support maintenance monitor disabled."
           );
 
           console.log(

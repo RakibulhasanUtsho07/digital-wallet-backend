@@ -53,6 +53,8 @@ export interface AdminOverviewResponse {
   currency: string;
   kpis: {
     totalUsers: OverviewMetric;
+    verifiedUsers: OverviewMetric;
+    verifiedMerchants: OverviewMetric;
     activeWallets: OverviewMetric;
     transactionVolume: OverviewMetric;
     platformRevenue: OverviewMetric;

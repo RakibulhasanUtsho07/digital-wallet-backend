@@ -3,6 +3,7 @@ import type {
   AiActorContext,
   AiPolicyDecision,
   AiToolId,
+  AiToolResult,
 } from "../types/cofferAi.types.js";
 
 export interface AiToolDefinition {
@@ -10,7 +11,7 @@ export interface AiToolDefinition {
   execute(input: {
     actor: AiActorContext;
     payload: Record<string, unknown>;
-  }): Promise<unknown>;
+  }): Promise<AiToolResult>;
 }
 
 export class AiToolRegistry {
@@ -24,12 +25,16 @@ export class AiToolRegistry {
     this.definitions.set(definition.id, definition);
   }
 
-  async execute<T>(input: {
+  ids(): AiToolId[] {
+    return [...this.definitions.keys()];
+  }
+
+  async execute(input: {
     toolId: AiToolId;
     actor: AiActorContext;
     policy: AiPolicyDecision;
-    payload: Record<string, unknown>;
-  }): Promise<T> {
+    payload?: Record<string, unknown>;
+  }): Promise<AiToolResult> {
     if (
       !input.policy.allow ||
       !input.policy.allowedToolIds.includes(input.toolId)
@@ -53,7 +58,7 @@ export class AiToolRegistry {
 
     return definition.execute({
       actor: input.actor,
-      payload: input.payload,
-    }) as Promise<T>;
+      payload: input.payload ?? {},
+    });
   }
 }

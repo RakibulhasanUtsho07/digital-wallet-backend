@@ -32,6 +32,9 @@ export function decryptField(field: EncryptedField): string {
 
 export type LookupHashPurpose =
   | "nid"
+  | "phone"
+  | "document"
+  | "biometric"
   | "rate-limit"
   | "vector-user"
   | "media-owner"

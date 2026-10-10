@@ -1,14 +1,16 @@
 import { randomBytes } from "node:crypto";
-import { hash } from "bcryptjs";
 import { Types, type Model } from "mongoose";
+import { SecurityPreferences } from "../models/SecurityPreferences.js";
+import { createLookupHash, decryptData, encryptData, normalizeEmail, normalizePhone, type EncryptedData } from "../utils/crypto.js";
+import { hashPassword } from "../utils/password.js";
 import {
   AuditLogModel,
   AuthSessionModel,
-  KYCModel,
   TransactionModel,
   UserModel,
   WalletModel,
 } from "./userManagementModelRegistry";
+import { currentEKYCStatus, currentEKYCStatuses } from "./identityVerificationService.js";
 import type {
   AdminUserRecord,
   DbRecord,
@@ -32,22 +34,20 @@ export async function listAdminUsers(query: UserListQuery) {
   };
 
   const conditions = databaseFilter.$and as Array<Record<string, unknown>>;
-  if (query.search) {
-    const search = new RegExp(escapeRegExp(query.search), "i");
-    conditions.push({ $or: [{ name: search }, { email: search }, { phone: search }] });
-  }
-  if (query.status) conditions.push({ status: query.status });
+  // Email and phone are encrypted. Search after decrypting authorized records.
   if (query.role) conditions.push({ role: query.role });
-  if (query.riskLevel) conditions.push({ riskLevel: query.riskLevel });
 
   const sourceUsers = await UserModel.find(databaseFilter)
     .select(userPublicFields)
-    .limit(5000)
     .lean()
     .exec() as unknown as DbRecord[];
 
   let users = await decorateUsers(sourceUsers);
   users = users.filter((user) => {
+    if (query.search && ![user.name, user.email, user.phone].some((value) =>
+      value.toLocaleLowerCase().includes(query.search!.toLocaleLowerCase()))) return false;
+    if (query.status && user.status !== query.status) return false;
+    if (query.riskLevel && user.riskLevel !== query.riskLevel) return false;
     if (query.kycStatus && user.kycStatus !== query.kycStatus) return false;
     if (query.walletStatus && user.walletStatus !== query.walletStatus) return false;
     if (query.activity) {
@@ -88,32 +88,36 @@ export async function createAdminUser(input: {
   avatarUrl?: string;
 }, actorId?: string) {
   const existing = await UserModel.findOne({
-    $or: [{ email: input.email.toLowerCase() }, { phone: input.phone }],
+    $or: [
+      { emailLookup: createLookupHash(normalizeEmail(input.email)) },
+      { phoneLookup: createLookupHash(normalizePhone(input.phone)) },
+    ],
   }).lean().exec();
   if (existing) throw new ServiceError(409, "A user with this email or phone already exists.");
 
   const unusableSecret = randomBytes(32).toString("base64url");
-  const passwordHash = await hash(unusableSecret, 12);
+  const passwordHash = await hashPassword(unusableSecret);
   const created = await UserModel.create({
     name: input.name,
-    email: input.email.toLowerCase(),
-    phone: input.phone,
+    emailEncrypted: encryptData(normalizeEmail(input.email)),
+    emailLookup: createLookupHash(normalizeEmail(input.email)),
+    phoneEncrypted: encryptData(normalizePhone(input.phone)),
+    phoneLookup: createLookupHash(normalizePhone(input.phone)),
     role: input.role,
     avatarUrl: input.avatarUrl,
     status: "pending",
+    kycStatus: "not_started",
     riskLevel: "low",
     riskScore: 0,
     password: passwordHash,
-    passwordHash,
-    mustResetPassword: true,
-    lastActiveAt: new Date(),
+    emailVerified: false,
   });
 
   const userId = String(created._id);
   const walletFilter = userReferenceFilter(WalletModel, created._id);
   const walletInsert = knownModelFields(WalletModel, {
     ...walletFilter,
-    status: databaseWalletStatus(WalletModel, "active"),
+    status: "PENDING_KYC",
     balance: 0,
     pendingBalance: 0,
     availableBalanceMinor: 0,
@@ -137,17 +141,48 @@ export async function updateAdminUser(id: string, patch: Patch, actorId?: string
   const objectId = toObjectId(id);
   const before = await getAdminUserById(id);
   if (!before) throw new ServiceError(404, "User not found.");
+  const existing = await UserModel.findById(objectId).select("accountStatus deletedAt").lean().exec() as DbRecord | null;
+  if (!existing || existing.accountStatus === "deleted" || existing.deletedAt) {
+    throw new ServiceError(409, "A deleted account cannot be updated.");
+  }
+  if (patch.kycStatus !== undefined) {
+    throw new ServiceError(409, "e-KYC decisions must be made in the e-KYC review queue.");
+  }
+  if (patch.walletStatus === "active" && await currentEKYCStatus(id) !== "verified") {
+    throw new ServiceError(409, "A wallet cannot be activated before e-KYC is verified.");
+  }
+  if (patch.twoFactorEnabled !== undefined) {
+    throw new ServiceError(409, "Two-factor authentication must be changed through the account security flow.");
+  }
+  if (patch.walletStatus === "active" &&
+      (patch.status === "suspended" || (existing.accountStatus === "suspended" && patch.status !== "active"))) {
+    throw new ServiceError(409, "A suspended account cannot have an active wallet.");
+  }
 
   const userPatch = pickDefined(patch, [
-    "name", "email", "phone", "role", "status", "kycStatus", "riskLevel", "riskScore", "avatarUrl", "twoFactorEnabled",
+    "name", "role", "status", "riskLevel", "riskScore", "avatarUrl",
   ]);
-  if (typeof userPatch.email === "string") userPatch.email = userPatch.email.toLowerCase();
+  if (patch.email !== undefined) {
+    userPatch.emailEncrypted = encryptData(normalizeEmail(patch.email));
+    userPatch.emailLookup = createLookupHash(normalizeEmail(patch.email));
+  }
+  if (patch.phone !== undefined) {
+    userPatch.phoneEncrypted = encryptData(normalizePhone(patch.phone));
+    userPatch.phoneLookup = createLookupHash(normalizePhone(patch.phone));
+  }
+  if (patch.status === "suspended" || patch.status === "active") {
+    userPatch.accountStatus = patch.status;
+  }
 
   const tasks: Array<Promise<unknown>> = [];
   if (Object.keys(userPatch).length) {
-    tasks.push(UserModel.findByIdAndUpdate(objectId, { $set: userPatch }, { new: true, runValidators: true }).exec());
+    tasks.push(UserModel.findByIdAndUpdate(objectId, {
+      $set: userPatch,
+      ...(patch.status === "suspended" ? { $inc: { authVersion: 1 } } : {}),
+    }, { returnDocument: "after", runValidators: true }).exec());
   }
-  if (patch.walletStatus) {
+  const requestedWalletStatus = patch.status === "suspended" ? "frozen" : patch.walletStatus;
+  if (requestedWalletStatus) {
     const walletFilter = userReferenceFilter(WalletModel, objectId);
     const walletInsert = knownModelFields(WalletModel, {
       ...walletFilter,
@@ -160,28 +195,18 @@ export async function updateAdminUser(id: string, patch: Patch, actorId?: string
     tasks.push(WalletModel.findOneAndUpdate(
       walletFilter,
       {
-        $set: { status: databaseWalletStatus(WalletModel, patch.walletStatus) },
+        $set: { status: databaseWalletStatus(WalletModel, requestedWalletStatus) },
         $setOnInsert: walletInsert,
       },
       { upsert: true, new: true, runValidators: true },
     ).exec());
   }
-  if (patch.kycStatus) {
-    const kycUpdate = knownModelFields(KYCModel, {
-      status: databaseKycStatus(KYCModel, patch.kycStatus),
-      reviewedAt: new Date(),
-      reviewedBy: actorId ? objectIdValue(actorId) : undefined,
-      reason: patch.reason,
-    });
-
-    tasks.push(KYCModel.updateOne(
-      userReferenceFilter(KYCModel, objectId),
-      { $set: kycUpdate },
-      { runValidators: true },
-    ).exec());
-  }
 
   await Promise.all(tasks);
+  if (patch.status === "suspended") {
+    await AuthSessionModel.updateMany(userReferenceFilter(AuthSessionModel, objectId),
+      { $set: { revokedAt: new Date() } }).exec();
+  }
   const after = await getAdminUserById(id);
   await writeAudit({ actorId, targetUserId: id, action: "admin.user.updated", before, after, reason: patch.reason });
   return after;
@@ -193,7 +218,10 @@ export async function softDeleteAdminUser(id: string, actorId?: string, reason =
   if (!before) throw new ServiceError(404, "User not found.");
 
   await Promise.all([
-    UserModel.findByIdAndUpdate(objectId, { $set: { status: "suspended", deletedAt: new Date() } }, { new: true }).exec(),
+    UserModel.findByIdAndUpdate(objectId, {
+      $set: { status: "suspended", accountStatus: "deleted", deletedAt: new Date() },
+      $inc: { authVersion: 1 },
+    }, { returnDocument: "after" }).exec(),
     WalletModel.findOneAndUpdate(
       userReferenceFilter(WalletModel, objectId),
       { $set: { status: databaseWalletStatus(WalletModel, "frozen") } },
@@ -218,24 +246,28 @@ export async function getUserTransactions(id: string, page: number, pageSize: nu
   const user = await getAdminUserById(id);
   if (!user) throw new ServiceError(404, "User not found.");
   const userObjectId = toObjectId(id);
-  const walletObjectId = Types.ObjectId.isValid(user.walletId) ? new Types.ObjectId(user.walletId) : user.walletId;
-  const filter = {
-    $or: [
-      { userId: userObjectId }, { user: userObjectId },
-      { senderWalletId: walletObjectId }, { receiverWalletId: walletObjectId },
-      { sender: userObjectId }, { receiver: userObjectId },
-    ],
-  };
+  const filter = { $or: [{ senderId: userObjectId }, { receiverId: userObjectId }] };
   const [documents, total] = await Promise.all([
     TransactionModel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * pageSize).limit(pageSize).lean().exec(),
     TransactionModel.countDocuments(filter).exec(),
   ]);
-  return { transactions: (documents as unknown as DbRecord[]).map(normalizeTransaction), total, page, pageSize };
+  const rows = documents as unknown as DbRecord[];
+  const counterpartIds = [...new Set(rows.map((row) => String(
+    String(row.senderId) === id ? row.receiverId : row.senderId,
+  )))].filter((value) => Types.ObjectId.isValid(value));
+  const counterpartUsers = await UserModel.find({ _id: { $in: counterpartIds } })
+    .select("name").lean().exec() as unknown as DbRecord[];
+  const names = new Map(counterpartUsers.map((row) => [recordId(row), stringValue(row.name)]));
+  return { transactions: rows.map((row) => normalizeTransaction(row, id, names)), total, page, pageSize };
 }
 
 export async function getUserActivity(id: string, page: number, pageSize: number) {
   const objectId = toObjectId(id);
-  const filter = { $or: [{ targetUserId: objectId }, { targetUserId: id }, { userId: objectId }, { user: objectId }] };
+  const filter = { $or: [
+    { targetUserId: objectId },
+    { "metadata.targetUserId": id },
+    { actor: objectId },
+  ] };
   const [documents, total] = await Promise.all([
     AuditLogModel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * pageSize).limit(pageSize).lean().exec(),
     AuditLogModel.countDocuments(filter).exec(),
@@ -245,7 +277,7 @@ export async function getUserActivity(id: string, page: number, pageSize: number
       id: recordId(document),
       type: stringValue(document.type ?? document.category ?? "admin"),
       title: stringValue(document.title ?? document.action ?? "Account activity"),
-      description: stringValue(document.description ?? document.reason ?? "Account activity recorded."),
+      description: stringValue(document.description ?? (document.metadata as DbRecord | undefined)?.reason ?? "Account activity recorded."),
       createdAt: isoValue(document.createdAt),
       ipAddress: optionalString(document.ipAddress ?? document.ip),
     })),
@@ -254,14 +286,15 @@ export async function getUserActivity(id: string, page: number, pageSize: number
 }
 
 export async function getUserManagementStats() {
-  const result = await listAdminUsers({ page: 1, pageSize: 5000, sortField: "lastActive", sortDirection: "desc" });
+  const result = await listAdminUsers({ page: 1, pageSize: Number.MAX_SAFE_INTEGER, sortField: "lastActive", sortDirection: "desc" });
   const users = result.users;
   const weekAgo = Date.now() - 604_800_000;
   return {
     totalUsers: result.total,
+    verifiedUsers: users.filter((user) => user.role === "user" && user.kycStatus === "verified").length,
     activeUsers: users.filter((user) => user.status === "active").length,
     suspended: users.filter((user) => user.status === "suspended").length,
-    pendingKyc: users.filter((user) => ["pending", "under_review"].includes(user.kycStatus)).length,
+    pendingKyc: users.filter((user) => user.kycStatus === "under_review").length,
     highRisk: users.filter((user) => user.riskLevel === "high").length,
     newThisWeek: users.filter((user) => new Date(user.joinedAt).getTime() >= weekAgo).length,
   };
@@ -271,41 +304,46 @@ async function decorateUsers(users: DbRecord[]): Promise<AdminUserRecord[]> {
   const ids = users.map((user) => user._id).filter(Boolean);
   if (!ids.length) return [];
   const walletFilter = userReferenceManyFilter(WalletModel, ids);
-  const kycFilter = userReferenceManyFilter(KYCModel, ids);
   const sessionReference = userReferencePath(AuthSessionModel);
   const sessionFilter = userReferenceManyFilter(AuthSessionModel, ids);
-  const [wallets, kycCases, sessionCounts] = await Promise.all([
+  const securityUserIds = ids.map(String).filter((id) => Types.ObjectId.isValid(id))
+    .map((id) => new Types.ObjectId(id));
+  const [wallets, ekycStatuses, sessionCounts, securityPreferences] = await Promise.all([
     WalletModel.find(walletFilter).lean().exec() as unknown as Promise<DbRecord[]>,
-    KYCModel.find(kycFilter).lean().exec() as unknown as Promise<DbRecord[]>,
+    currentEKYCStatuses(ids),
     AuthSessionModel.aggregate([
       { $match: { ...sessionFilter, revokedAt: { $in: [null, undefined] }, expiresAt: { $gt: new Date() } } },
       { $group: { _id: `$${sessionReference}`, count: { $sum: 1 } } },
     ]).exec() as unknown as Promise<Array<{ _id: unknown; count: number }>>,
+    SecurityPreferences.find({ userId: { $in: securityUserIds } }).select("userId twoFactor.enabled").lean().exec(),
   ]);
 
   const walletByUser = indexByUser(wallets);
-  const kycByUser = indexByUser(kycCases);
   const sessionsByUser = new Map(sessionCounts.map((item) => [String(item._id), item.count]));
+  const twoFactorByUser = new Map(securityPreferences.map((item) => [String(item.userId), Boolean(item.twoFactor?.enabled)]));
   return users.map((user) => normalizeUser(
     user,
     walletByUser.get(recordId(user)),
-    kycByUser.get(recordId(user)),
+    ekycStatuses.get(recordId(user)) ?? "not_started",
     sessionsByUser.get(recordId(user)) ?? numberValue(user.activeSessions),
+    twoFactorByUser.get(recordId(user)) ?? false,
   ));
 }
 
-function normalizeUser(user: DbRecord, wallet?: DbRecord, kyc?: DbRecord, activeSessions = 0): AdminUserRecord {
-  const status = normalizeStatus(user.status, user.isBlocked);
+function normalizeUser(user: DbRecord, wallet?: DbRecord, kyc: KYCStatus = "not_started", activeSessions = 0, twoFactorEnabled = false): AdminUserRecord {
+  const status = user.accountStatus === "suspended" ? "suspended" : normalizeStatus(user.status, user.isBlocked);
   const riskScore = clamp(numberValue(user.riskScore), 0, 100);
   return {
     id: recordId(user),
     name: stringValue(user.name ?? [user.firstName, user.lastName].filter(Boolean).join(" ") ?? "Unknown user"),
-    email: stringValue(user.email),
-    phone: stringValue(user.phone),
+    email: decryptUserField(user.emailEncrypted, user.email),
+    phone: decryptUserField(user.phoneEncrypted, user.phone),
     role: normalizeRole(user.role),
     status,
-    kycStatus: normalizeKycStatus(kyc?.status ?? user.kycStatus),
-    walletStatus: normalizeWalletStatus(wallet?.status ?? user.walletStatus),
+    kycStatus: kyc,
+    walletStatus: kyc === "verified"
+      ? normalizeWalletStatus(wallet?.status ?? user.walletStatus)
+      : "restricted",
     riskLevel: normalizeRiskLevel(user.riskLevel, riskScore),
     riskScore,
     balance: moneyFromFields(wallet, ["balance", "availableBalance"], ["balanceMinor", "availableBalanceMinor"]),
@@ -317,7 +355,7 @@ function normalizeUser(user: DbRecord, wallet?: DbRecord, kyc?: DbRecord, active
     city: stringValue(user.city ?? user.addressCity ?? ""),
     country: stringValue(user.country ?? "Bangladesh"),
     walletId: wallet ? recordId(wallet) : "",
-    twoFactorEnabled: Boolean(user.twoFactorEnabled ?? user.isTwoFactorEnabled),
+    twoFactorEnabled,
     failedLoginCount: numberValue(user.failedLoginCount),
     activeSessions,
     avatarUrl: optionalString(user.avatarUrl ?? user.profileImage ?? user.photoURL),
@@ -348,15 +386,14 @@ async function writeAudit(entry: {
 
   const auditDocument = knownModelFields(AuditLogModel, {
     actor,
-    actorId: actor,
-    targetUser,
     targetUserId: targetUser,
-
     action: entry.action,
-    before: entry.before,
-    after: entry.after,
-    reason: entry.reason,
-    createdAt: new Date(),
+    metadata: {
+      targetUserId: entry.targetUserId,
+      reason: entry.reason,
+      before: auditSnapshot(entry.before),
+      after: auditSnapshot(entry.after),
+    },
   });
 
   await AuditLogModel.create(auditDocument);
@@ -371,15 +408,24 @@ function indexByUser(records: DbRecord[]) {
   return result;
 }
 
-function normalizeTransaction(transaction: DbRecord) {
+function normalizeTransaction(transaction: DbRecord, userId: string, names: Map<string, string>) {
+  let amount: number;
+  try {
+    const minor = Number(decryptData(transaction.amountEncrypted as EncryptedData));
+    if (!Number.isSafeInteger(minor) || minor < 0) throw new Error("Invalid amount");
+    amount = minor / 100;
+  } catch {
+    throw new ServiceError(503, "Transaction history is unavailable because a stored amount cannot be decrypted.");
+  }
+  const sender = String(transaction.senderId);
+  const counterpartId = sender === userId ? String(transaction.receiverId) : sender;
+  const kind = stringValue(transaction.type).toUpperCase();
   return {
     id: recordId(transaction),
-    type: stringValue(transaction.type ?? "send"),
-    amount: transaction.amount != null
-      ? numberValue(transaction.amount)
-      : numberValue(transaction.amountMinor) / 100,
-    status: stringValue(transaction.status ?? "pending"),
-    counterparty: stringValue(transaction.counterparty ?? transaction.reference ?? "Wallet transaction"),
+    type: kind === "DEPOSIT" ? "cash_in" : kind === "WITHDRAW" ? "cash_out" : sender === userId ? "send" : "receive",
+    amount,
+    status: stringValue(transaction.status ?? "PENDING").toLowerCase(),
+    counterparty: names.get(counterpartId) ?? "Wallet transaction",
     createdAt: isoValue(transaction.createdAt),
   };
 }
@@ -412,12 +458,27 @@ function moneyFromFields(record: DbRecord | undefined, majorFields: string[], mi
 }
 function isoValue(value: unknown) { const date = value ? new Date(value as string | number | Date) : new Date(0); return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString(); }
 function clamp(value: number, minimum: number, maximum: number) { return Math.min(maximum, Math.max(minimum, value)); }
-function escapeRegExp(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 function normalizeRole(value: unknown): UserRole {
   const role = stringValue(value).toLowerCase();
   if (role === "administrator") return "admin";
-  return ["admin", "support", "analyst"].includes(role) ? role as UserRole : "user";
+  return ["admin", "super_admin", "support", "analyst", "merchant"].includes(role) ? role as UserRole : "user";
+}
+
+function decryptUserField(encrypted: unknown, legacy: unknown): string {
+  if (!encrypted) return stringValue(legacy);
+  try {
+    return decryptData(encrypted as EncryptedData);
+  } catch {
+    throw new ServiceError(503, "User details are unavailable because a stored contact field cannot be decrypted.");
+  }
+}
+
+function auditSnapshot(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Partial<AdminUserRecord>;
+  return { role: record.role, status: record.status, kycStatus: record.kycStatus,
+    walletStatus: record.walletStatus, riskLevel: record.riskLevel, riskScore: record.riskScore };
 }
 function normalizeStatus(value: unknown, blocked: unknown): UserStatus {
   if (blocked === true) return "suspended";
@@ -425,15 +486,9 @@ function normalizeStatus(value: unknown, blocked: unknown): UserStatus {
   if (["blocked", "disabled", "inactive"].includes(status)) return "suspended";
   return ["active", "suspended", "restricted", "pending"].includes(status) ? status as UserStatus : "active";
 }
-function normalizeKycStatus(value: unknown): KYCStatus {
-  const status = stringValue(value).toLowerCase().replaceAll("-", "_");
-  if (status === "approved") return "verified";
-  if (["submitted", "awaiting_review"].includes(status)) return "pending";
-  if (["in_review", "reviewing"].includes(status)) return "under_review";
-  return ["not_started", "pending", "under_review", "verified", "rejected"].includes(status) ? status as KYCStatus : "not_started";
-}
 function normalizeWalletStatus(value: unknown): WalletStatus {
   const status = stringValue(value).toLowerCase();
+  if (status === "pending_kyc") return "restricted";
   if (["locked", "blocked"].includes(status)) return "frozen";
   if (["disabled", "inactive"].includes(status)) return "closed";
   return ["active", "frozen", "restricted", "closed"].includes(status) ? status as WalletStatus : "active";
@@ -526,21 +581,6 @@ function databaseWalletStatus(model: DbModel, status: WalletStatus): string {
   });
 }
 
-function databaseKycStatus(model: DbModel, status: KYCStatus): string {
-  return pickSupportedStatus(model, status, {
-    not_started: ["QUEUED"],
-    pending: ["QUEUED", "PROCESSING"],
-    under_review: ["PENDING_MANUAL_REVIEW"],
-    verified: ["VERIFIED", "approved", "APPROVED"],
-    rejected: ["REJECTED"],
-  });
-}
-
-function objectIdValue(value: string): Types.ObjectId | string {
-  return Types.ObjectId.isValid(value)
-    ? new Types.ObjectId(value)
-    : value;
-}
 
 export class ServiceError extends Error {
   constructor(public readonly statusCode: number, message: string) {

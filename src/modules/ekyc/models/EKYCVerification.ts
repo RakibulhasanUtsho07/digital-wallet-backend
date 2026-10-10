@@ -10,17 +10,19 @@ export interface IEKYCVerification extends Document {
   reasonCodes: EKYCReasonCode[];
   providerName?: string;
   providerReferenceEncrypted?: EncryptedField;
-  fingerprintProviderReferenceEncrypted?: EncryptedField;
   screeningReferenceEncrypted?: EncryptedField;
   faceEmbeddingEncrypted?: EncryptedField;
   nidLookupHash: string;
   nidEncrypted: EncryptedField;
   dateOfBirthEncrypted: EncryptedField;
   claimedNameEncrypted: EncryptedField;
+  verifiedPhoneEncrypted: EncryptedField;
+  verifiedPhoneLookupHash: string;
+  phoneVerifiedAt: Date;
   mediaRefsEncrypted: EncryptedField;
   livenessEvidenceEncrypted: EncryptedField;
-  fingerprintEvidenceEncrypted?: EncryptedField;
-  fingerprintTemplateHash?: string;
+  deviceBiometricEvidenceEncrypted?: EncryptedField;
+  deviceBiometricVerified: boolean;
   correlationId: string;
   attemptId: string;
   faceScore?: number;
@@ -32,9 +34,6 @@ export interface IEKYCVerification extends Document {
   faceOcclusionDetected?: boolean;
   nameScore?: number;
   livenessPassed?: boolean;
-  fingerprintMatched?: boolean;
-  fingerprintConclusive?: boolean;
-  fingerprintScore?: number;
   possibleDuplicateVectorId?: string;
   possibleDuplicateScore?: number;
   processingStartedAt?: Date;
@@ -64,17 +63,19 @@ const ekycVerificationSchema = new Schema<IEKYCVerification>({
   reasonCodes: { type: [String], default: [] },
   providerName: { type: String, maxlength: 80 },
   providerReferenceEncrypted: { type: encryptedFieldSchema },
-  fingerprintProviderReferenceEncrypted: { type: encryptedFieldSchema, select: false },
   screeningReferenceEncrypted: { type: encryptedFieldSchema, select: false },
   faceEmbeddingEncrypted: { type: encryptedFieldSchema, select: false },
   nidLookupHash: { type: String, required: true, select: false },
   nidEncrypted: { type: encryptedFieldSchema, required: true, select: false },
   dateOfBirthEncrypted: { type: encryptedFieldSchema, required: true, select: false },
   claimedNameEncrypted: { type: encryptedFieldSchema, required: true, select: false },
+  verifiedPhoneEncrypted: { type: encryptedFieldSchema, required: true, select: false },
+  verifiedPhoneLookupHash: { type: String, required: true, maxlength: 64, select: false },
+  phoneVerifiedAt: { type: Date, required: true },
   mediaRefsEncrypted: { type: encryptedFieldSchema, required: true, select: false },
   livenessEvidenceEncrypted: { type: encryptedFieldSchema, required: true, select: false },
-  fingerprintEvidenceEncrypted: { type: encryptedFieldSchema, select: false },
-  fingerprintTemplateHash: { type: String, maxlength: 64, select: false },
+  deviceBiometricEvidenceEncrypted: { type: encryptedFieldSchema, select: false },
+  deviceBiometricVerified: { type: Boolean, required: true, default: false },
   correlationId: { type: String, required: true, maxlength: 120, index: true },
   attemptId: { type: String, required: true, maxlength: 120, unique: true },
   faceScore: { type: Number, min: 0, max: 100 },
@@ -86,9 +87,6 @@ const ekycVerificationSchema = new Schema<IEKYCVerification>({
   faceOcclusionDetected: { type: Boolean },
   nameScore: { type: Number, min: 0, max: 100 },
   livenessPassed: { type: Boolean },
-  fingerprintMatched: { type: Boolean },
-  fingerprintConclusive: { type: Boolean },
-  fingerprintScore: { type: Number, min: 0, max: 100 },
   possibleDuplicateVectorId: { type: String, maxlength: 120 },
   possibleDuplicateScore: { type: Number, min: 0, max: 1 },
   processingStartedAt: { type: Date },

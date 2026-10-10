@@ -11,7 +11,10 @@ import {
 
 import {
   User,
+  type IUser,
 } from "../models/User.js";
+
+
 
 import {
   Wallet,
@@ -46,7 +49,7 @@ import {
 
 import {
   sendEmailVerificationOtp,
-  sendPasswordResetEmail,
+  sendPasswordResetOtpEmail,
 } from "../utils/email.js";
 
 import {
@@ -81,6 +84,10 @@ import {
 } from "../services/totpService.js";
 
 import {
+  requestTwoFactorOtp,
+} from "../services/twoFactorOtpService.js";
+
+import {
   dispatchSecurityAlert,
 } from "../services/securityAlertService.js";
 
@@ -93,6 +100,7 @@ import {
   hashOtp,
   safeEqualHash,
 } from "../utils/otp.js";
+import PasswordResetChallenge from "../models/PasswordResetChallenge.js";
 
 /* =========================================================
    TYPES
@@ -109,6 +117,12 @@ const REGISTRATION_OTP_TTL_MS =
 
 const OTP_RESEND_COOLDOWN_MS =
   60 * 1000;
+
+const PASSWORD_RESET_OTP_TTL_MS =
+  10 * 60 * 1000;
+
+const PASSWORD_RESET_TOKEN_TTL_MS =
+  15 * 60 * 1000;
 
 /* =========================================================
    HELPERS
@@ -1004,6 +1018,9 @@ export const verifyEmailOtp =
 
             balance:
               0,
+
+            status:
+              "PENDING_KYC",
           });
 
         createdWallet =
@@ -1362,8 +1379,10 @@ export const loginUser =
 
       if (
         !user ||
-        user.accountStatus ===
-          "deleted"
+        user.accountStatus === "deleted" ||
+        user.accountStatus === "suspended" ||
+        user.status === "suspended" ||
+        Boolean(user.deletedAt)
       ) {
         res.status(401).json({
           success: false,
@@ -1453,8 +1472,11 @@ export const loginUser =
       if (
         preferences?.twoFactor?.enabled
       ) {
+        /* Legacy authenticator users are migrated to email OTP. */
         const method =
-          preferences.twoFactor.method;
+          preferences.twoFactor.method === "sms"
+            ? "sms"
+            : "email";
 
         const availability =
           getTwoFactorDeliveryAvailability();
@@ -1504,9 +1526,12 @@ export const loginUser =
           );
 
         const challenge =
-          await createLoginChallenge({
+          await requestTwoFactorOtp({
             userId:
               user._id.toString(),
+
+            purpose:
+              "login",
 
             method,
 
@@ -1533,9 +1558,7 @@ export const loginUser =
             300,
 
           message:
-            method === "app"
-              ? "Enter the code from your authenticator app."
-              : "Enter the verification code that was sent to you.",
+            "Enter the verification code that was sent to you.",
         });
 
         return;
@@ -2241,17 +2264,23 @@ export const forgotPassword =
       }
 
       const genericMessage =
-        "If an account exists for this email, a password reset link has been sent.";
+        "If an account exists for this email, a 6-digit verification code has been sent.";
+
+      const emailLookup =
+        createLookupHash(
+          normalizedEmail
+        );
 
       const user =
         await User.findOne({
-          emailLookup:
-            createLookupHash(
-              normalizedEmail
-            ),
-        }).select(
-          "+resetPasswordTokenHash +resetPasswordExpires"
-        );
+          emailLookup,
+
+          accountStatus: {
+            $eq: "active",
+          },
+          deletedAt: null,
+          status: { $ne: "suspended" },
+        }).select("_id");
 
       if (!user) {
         res.status(200).json({
@@ -2264,60 +2293,93 @@ export const forgotPassword =
         return;
       }
 
-      const rawToken =
-        crypto
-          .randomBytes(32)
-          .toString("hex");
+      const previousChallenge =
+        await PasswordResetChallenge.findOne({
+          userId:
+            user._id,
+        })
+          .select("lastSentAt")
+          .lean();
 
-      const tokenHash =
-        crypto
-          .createHash(
-            "sha256"
-          )
-          .update(
-            rawToken
-          )
-          .digest("hex");
+      if (previousChallenge) {
+        const elapsed =
+          Date.now() -
+          previousChallenge.lastSentAt.getTime();
 
-      user.resetPasswordTokenHash =
-        tokenHash;
+        if (
+          elapsed <
+          OTP_RESEND_COOLDOWN_MS
+        ) {
+          res.status(200).json({
+            success: true,
+            message:
+              genericMessage,
+            resendAfterSeconds:
+              Math.ceil(
+                (OTP_RESEND_COOLDOWN_MS -
+                  elapsed) /
+                  1000
+              ),
+          });
 
-      user.resetPasswordExpires =
+          return;
+        }
+      }
+
+      const otp =
+        generateEmailOtp();
+
+      const expiresAt =
         new Date(
           Date.now() +
-            15 * 60 * 1000
+            PASSWORD_RESET_OTP_TTL_MS
         );
 
-      await user.save();
+      await PasswordResetChallenge.findOneAndUpdate(
+        {
+          userId:
+            user._id,
+        },
+        {
+          $set: {
+            emailLookup,
+            otpHash:
+              hashOtp(otp),
+            attempts: 0,
+            maxAttempts: 5,
+            expiresAt,
+            lastSentAt:
+              new Date(),
+          },
 
-      const frontendUrl =
-        process.env.FRONTEND_URL ||
-        "http://localhost:3000";
-
-      const resetUrl =
-        `${frontendUrl}/reset-password?token=${encodeURIComponent(
-          rawToken
-        )}&email=${encodeURIComponent(
-          normalizedEmail
-        )}`;
+          $unset: {
+            verifiedAt: 1,
+            resetTokenHash: 1,
+            resetTokenExpiresAt: 1,
+            consumedAt: 1,
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        }
+      );
 
       try {
-        await sendPasswordResetEmail({
+        await sendPasswordResetOtpEmail({
           email:
             normalizedEmail,
 
-          resetUrl,
+          otp,
         });
       } catch (
         error
       ) {
-        user.resetPasswordTokenHash =
-          undefined;
-
-        user.resetPasswordExpires =
-          undefined;
-
-        await user.save();
+        await PasswordResetChallenge.deleteOne({
+          userId:
+            user._id,
+        });
 
         throw error;
       }
@@ -2327,6 +2389,14 @@ export const forgotPassword =
 
         message:
           genericMessage,
+
+        expiresInSeconds:
+          PASSWORD_RESET_OTP_TTL_MS /
+          1000,
+
+        resendAfterSeconds:
+          OTP_RESEND_COOLDOWN_MS /
+          1000,
       });
     } catch (
       error
@@ -2341,6 +2411,185 @@ export const forgotPassword =
 
         message:
           "Unable to process the password reset request.",
+      });
+    }
+  };
+
+/* =========================================================
+   VERIFY PASSWORD RESET OTP
+========================================================= */
+
+export const verifyPasswordResetOtp =
+  async (
+    req: Request,
+    res: Response
+  ): Promise<void> => {
+    try {
+      const normalizedEmail =
+        normalizeEmail(
+          toStringValue(
+            req.body?.email
+          )
+        );
+
+      const otp =
+        toStringValue(
+          req.body?.otp
+        ).trim();
+
+      if (
+        !normalizedEmail ||
+        !/^\d{6}$/.test(otp)
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            "Email and a valid 6-digit code are required.",
+        });
+
+        return;
+      }
+
+      const emailLookup =
+        createLookupHash(
+          normalizedEmail
+        );
+
+      const user =
+        await User.findOne({
+          emailLookup,
+
+          accountStatus: {
+            $eq: "active",
+          },
+          deletedAt: null,
+          status: { $ne: "suspended" },
+        }).select("_id");
+
+      if (!user) {
+        res.status(400).json({
+          success: false,
+          message:
+            "The verification code is invalid or expired.",
+        });
+
+        return;
+      }
+
+      const challenge =
+        await PasswordResetChallenge.findOne({
+          userId:
+            user._id,
+          emailLookup,
+          consumedAt: {
+            $exists:
+              false,
+          },
+        }).select(
+          "+otpHash attempts maxAttempts expiresAt"
+        );
+
+      if (
+        !challenge ||
+        challenge.expiresAt.getTime() <=
+          Date.now()
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            "The verification code is invalid or expired.",
+        });
+
+        return;
+      }
+
+      if (
+        challenge.attempts >=
+        challenge.maxAttempts
+      ) {
+        res.status(429).json({
+          success: false,
+          message:
+            "Too many incorrect attempts. Request a new code.",
+        });
+
+        return;
+      }
+
+      if (
+        !safeEqualHash(
+          hashOtp(otp),
+          challenge.otpHash
+        )
+      ) {
+        challenge.attempts += 1;
+        await challenge.save();
+
+        res.status(400).json({
+          success: false,
+          message:
+            "The verification code is incorrect.",
+        });
+
+        return;
+      }
+
+      const resetToken =
+        crypto
+          .randomBytes(32)
+          .toString("base64url");
+
+      const resetTokenHash =
+        crypto
+          .createHash(
+            "sha256"
+          )
+          .update(resetToken)
+          .digest("hex");
+
+      const verifiedAt =
+        new Date();
+
+      const resetTokenExpiresAt =
+        new Date(
+          Date.now() +
+            PASSWORD_RESET_TOKEN_TTL_MS
+        );
+
+      challenge.verifiedAt =
+        verifiedAt;
+
+      challenge.resetTokenHash =
+        resetTokenHash;
+
+      challenge.resetTokenExpiresAt =
+        resetTokenExpiresAt;
+
+      /* Keep the document alive while its reset token is valid. */
+      challenge.expiresAt =
+        resetTokenExpiresAt;
+
+      await challenge.save();
+
+      res.status(200).json({
+        success: true,
+        message:
+          "Email verified. You can now choose a new password.",
+        resetToken,
+        expiresInSeconds:
+          PASSWORD_RESET_TOKEN_TTL_MS /
+          1000,
+      });
+    } catch (error) {
+      console.error(
+        "VERIFY PASSWORD RESET OTP ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Unable to verify the password reset code.",
       });
     }
   };
@@ -2362,10 +2611,19 @@ export const resetPassword =
           )
         );
 
-      const normalizedToken =
+      const otpResetToken =
+        toStringValue(
+          req.body?.resetToken
+        ).trim();
+
+      const legacyResetToken =
         toStringValue(
           req.body?.token
         ).trim();
+
+      const normalizedToken =
+        otpResetToken ||
+        legacyResetToken;
 
       const normalizedPassword =
         toStringValue(
@@ -2373,7 +2631,6 @@ export const resetPassword =
         );
 
       if (
-        !normalizedEmail ||
         !normalizedToken ||
         !normalizedPassword
       ) {
@@ -2381,21 +2638,22 @@ export const resetPassword =
           success: false,
 
           message:
-            "Email, reset token and new password are required.",
+            "Reset token and new password are required.",
         });
 
         return;
       }
 
       if (
-        normalizedPassword.length <
-        6
+        !isStrongSecurityPassword(
+          normalizedPassword
+        )
       ) {
         res.status(400).json({
           success: false,
 
           message:
-            "Password must be at least 6 characters.",
+            "Password must be 8-128 characters and include uppercase, lowercase and a number.",
         });
 
         return;
@@ -2411,39 +2669,163 @@ export const resetPassword =
           )
           .digest("hex");
 
-      const user =
-        await User.findOne({
-          emailLookup:
-            createLookupHash(
-              normalizedEmail
-            ),
+      let challengeId:
+        string | null =
+        null;
 
-          resetPasswordTokenHash:
-            tokenHash,
+      let user:
+        IUser | null =
+        null;
 
-          resetPasswordExpires: {
-            $gt:
-              new Date(),
-          },
-        }).select(
-          "+password +resetPasswordTokenHash +resetPasswordExpires"
-        );
+      if (otpResetToken) {
+        const challenge =
+          await PasswordResetChallenge.findOne({
+            resetTokenHash:
+              tokenHash,
+
+            verifiedAt: {
+              $type:
+                "date",
+            },
+
+            resetTokenExpiresAt: {
+              $gt:
+                new Date(),
+            },
+
+            consumedAt: {
+              $exists:
+                false,
+            },
+          }).select(
+            "+resetTokenHash userId"
+          );
+
+        if (challenge) {
+          challengeId =
+            challenge._id.toString();
+
+          user =
+            await User.findOne({
+              _id:
+                challenge.userId,
+
+              accountStatus: {
+                $eq: "active",
+              },
+              deletedAt: null,
+              status: { $ne: "suspended" },
+            }).select(
+              "+password +resetPasswordTokenHash +resetPasswordExpires"
+            );
+        }
+      } else if (
+        normalizedEmail &&
+        legacyResetToken
+      ) {
+        /* Backward compatibility for reset links issued before this update. */
+        user =
+          await User.findOne({
+            emailLookup:
+              createLookupHash(
+                normalizedEmail
+              ),
+
+            resetPasswordTokenHash:
+              tokenHash,
+
+            resetPasswordExpires: {
+              $gt:
+                new Date(),
+            },
+
+            accountStatus: {
+              $eq: "active",
+            },
+            deletedAt: null,
+            status: { $ne: "suspended" },
+          }).select(
+            "+password +resetPasswordTokenHash +resetPasswordExpires"
+          );
+      }
 
       if (!user) {
         res.status(400).json({
           success: false,
 
           message:
-            "Invalid or expired password reset link.",
+            "Invalid or expired password reset authorization.",
         });
 
         return;
+      }
+
+      if (
+        await verifyPassword(
+          user.password,
+          normalizedPassword
+        )
+      ) {
+        res.status(400).json({
+          success: false,
+          message:
+            "Choose a password different from your current password.",
+        });
+
+        return;
+      }
+
+      /*
+       * Consume the OTP-issued authorization atomically before changing
+       * the password. This prevents two simultaneous requests from using
+       * the same reset token with different passwords.
+       */
+      if (challengeId) {
+        const consumed =
+          await PasswordResetChallenge.updateOne(
+            {
+              _id:
+                challengeId,
+
+              consumedAt: {
+                $exists:
+                  false,
+              },
+            },
+            {
+              $set: {
+                consumedAt:
+                  new Date(),
+              },
+            }
+          );
+
+        if (
+          consumed.modifiedCount !==
+          1
+        ) {
+          res.status(400).json({
+            success: false,
+            message:
+              "This password reset authorization was already used.",
+          });
+
+          return;
+        }
       }
 
       user.password =
         await hashPassword(
           normalizedPassword
         );
+
+      // An administrator-created pending account proves email ownership
+      // through this verified OTP before it can be activated.
+      if (challengeId && user.status === "pending" && !user.emailVerified) {
+        user.emailVerified = true;
+        user.emailVerifiedAt = new Date();
+        user.status = "active";
+      }
 
       user.passwordPolicyVersion =
         isStrongSecurityPassword(
@@ -2466,7 +2848,6 @@ export const resetPassword =
         undefined;
 
       await user.save();
-
       await revokeAllSessions(
         user._id.toString()
       );

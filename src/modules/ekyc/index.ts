@@ -1,6 +1,6 @@
 export * from "./config/ekycConfig.js";
 export * from "./biometrics/activeLivenessService.js";
-export * from "./biometrics/mockFingerprintService.js";
+export * from "./biometrics/deviceBiometricService.js";
 export * from "./compliance/screening.js";
 export * from "./compliance/HttpComplianceScreeningProvider.js";
 export * from "./media/CloudinaryPrivateMediaStore.js";

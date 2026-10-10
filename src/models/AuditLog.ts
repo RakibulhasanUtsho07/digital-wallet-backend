@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from "mongoose";
 
 export interface IAuditLog extends Document {
   actor: mongoose.Types.ObjectId; // User or Admin ID who performed the action
+  targetUserId?: mongoose.Types.ObjectId;
   action: string; // e.g., "TRANSFER_FUNDS", "LOGIN", "KYC_APPROVED"
   resource?: string; // e.g., "Transaction ID", "KYC ID"
   metadata?: any; // Additional context
@@ -12,6 +13,7 @@ export interface IAuditLog extends Document {
 const auditLogSchema = new Schema<IAuditLog>(
   {
     actor: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    targetUserId: { type: Schema.Types.ObjectId, ref: "User", index: true },
     action: { type: String, required: true },
     resource: { type: String },
     metadata: { type: Schema.Types.Mixed },

@@ -5,6 +5,7 @@ import type {
   Response,
 } from "express";
 
+import { AdminOverviewIntegrityError } from "../../../services/adminOverviewService.js";
 import type { CofferAiConfig } from "../config/cofferAiConfig.js";
 import {
   CofferAiError,
@@ -173,13 +174,20 @@ export function createAiChatController(dependencies: {
       } catch (error) {
         const safeError = isCofferAiError(error)
           ? error
-          : new CofferAiError({
-              code: "AI_INTERNAL_ERROR",
-              message:
-                "Coffer AI could not complete the request. Please try again.",
-              statusCode: 500,
-              expose: true,
-            });
+          : error instanceof AdminOverviewIntegrityError
+            ? new CofferAiError({
+                code: error.code,
+                message: error.message,
+                statusCode: error.statusCode,
+                expose: true,
+              })
+            : new CofferAiError({
+                code: "AI_INTERNAL_ERROR",
+                message:
+                  "Coffer AI could not complete the request. Please try again.",
+                statusCode: 500,
+                expose: true,
+              });
 
         response.status(safeError.statusCode).json({
           success: false,

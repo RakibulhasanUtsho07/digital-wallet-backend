@@ -6,7 +6,10 @@ export type EKYCStatus =
   | "REJECTED";
 
 export type EKYCReasonCode =
-  | "AUTO_APPROVED"
+  | "AUTOMATED_CHECKS_COMPLETED"
+  | "PHONE_NOT_VERIFIED"
+  | "DOCUMENT_NOT_RECOGNIZED"
+  | "DEVICE_BIOMETRIC_UNAVAILABLE"
   | "AGE_UNDER_18"
   | "INVALID_IDENTITY_INPUT"
   | "NID_MISMATCH"
@@ -70,6 +73,15 @@ export interface ActiveLivenessEvidence {
   completedAt: string;
 }
 
+export interface DeviceBiometricEvidence {
+  mode: "WEBAUTHN";
+  credentialId: string;
+  deviceType: "singleDevice" | "multiDevice";
+  backedUp: boolean;
+  verifiedAt: string;
+}
+
+/** @deprecated Browser e-KYC no longer accepts fingerprint templates. */
 export interface FingerprintEvidence {
   captureId: string;
   mode: "MOCK" | "PROVIDER";
@@ -84,9 +96,11 @@ export interface EKYCSubmission {
   nid: string;
   dateOfBirth: string;
   claimedName: string;
+  verifiedPhone: string;
+  phoneChallengeId: string;
   media: PrivateMediaRefs;
   liveness: ActiveLivenessEvidence;
-  fingerprint?: FingerprintEvidence;
+  deviceBiometric?: DeviceBiometricEvidence;
   ipAddress: string;
   deviceId: string;
   correlationId: string;
@@ -98,6 +112,7 @@ export interface ProviderVerificationRequest {
   claimedName: string;
   media: SignedMediaUrls;
   liveness: ActiveLivenessEvidence;
+  /** @deprecated Provider adapter compatibility only; user routes never populate this. */
   fingerprint?: FingerprintEvidence;
   correlationId: string;
 }

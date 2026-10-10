@@ -9,6 +9,9 @@ export interface IAiFeedback extends Document {
   conversationId: string;
   messageId: string;
   rating: "helpful" | "not_helpful";
+  actorType?: "user" | "merchant" | "support" | "analyst" | "admin" | "super_admin";
+  intent?: string;
+  reason?: "too_long" | "too_short" | "unclear" | "incorrect" | "irrelevant" | "other" | null;
   comment?: string;
   createdAt?: Date;
   updatedAt?: Date;
@@ -40,6 +43,17 @@ const aiFeedbackSchema =
         enum: ["helpful", "not_helpful"],
         required: true,
       },
+      actorType: {
+        type: String,
+        enum: ["user", "merchant", "support", "analyst", "admin", "super_admin"],
+        index: true,
+      },
+      intent: { type: String, maxlength: 80 },
+      reason: {
+        type: String,
+        enum: ["too_long", "too_short", "unclear", "incorrect", "irrelevant", "other"],
+        default: null,
+      },
       comment: {
         type: String,
         required: false,
@@ -61,6 +75,7 @@ aiFeedbackSchema.index(
     unique: true,
   },
 );
+aiFeedbackSchema.index({ ownerId: 1, actorType: 1, updatedAt: -1 });
 
 export const AiFeedback =
   (mongoose.models

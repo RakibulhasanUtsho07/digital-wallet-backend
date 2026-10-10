@@ -23,6 +23,8 @@ import {
 import {
   WalletSecurityLock,
 } from "../models/WalletSecurityLock.js";
+import { Wallet } from "../models/Wallet.js";
+import { currentEKYCStatus } from "../services/identityVerificationService.js";
 
 import {
   encryptData,
@@ -114,7 +116,7 @@ const verifyCurrentPassword =
       await User.findById(
         userId
       ).select(
-        "+password role authVersion emailEncrypted phoneEncrypted"
+        "+password +emailEncrypted +phoneEncrypted +emailVerified +emailVerifiedAt +accountStatus"
       );
 
     if (!user) {
@@ -297,7 +299,9 @@ export const getSecurityOverview =
           enabled:
             preferences.twoFactor.enabled,
           method:
-            preferences.twoFactor.method,
+            preferences.twoFactor.method === "sms"
+              ? "sms"
+              : "email",
           deliveryAvailability:
             delivery,
         },
@@ -1759,6 +1763,30 @@ export const freezeWallet =
         return;
       }
 
+      const wallet =
+        await Wallet.findOne({ userId });
+
+      if (!wallet) {
+        res.status(404).json({
+          success: false,
+          message: "Wallet was not found.",
+        });
+        return;
+      }
+
+      if (wallet.status === "BLOCKED") {
+        res.status(409).json({
+          success: false,
+          code: "WALLET_BLOCKED",
+          message:
+            "A blocked wallet cannot be changed from Security Center.",
+        });
+        return;
+      }
+
+      wallet.status = "FROZEN";
+      await wallet.save();
+
       const lock =
         await WalletSecurityLock.findOneAndUpdate(
           {
@@ -1798,7 +1826,7 @@ export const freezeWallet =
         status:
           "warning",
         detail:
-          "Outbound wallet actions are blocked until the security freeze is removed.",
+          "All wallet transactions are blocked until the security freeze is removed.",
         sessionId:
           req.user?.sessionId,
         req,
@@ -1866,6 +1894,27 @@ export const unfreezeWallet =
         return;
       }
 
+      const wallet =
+        await Wallet.findOne({ userId });
+
+      if (!wallet) {
+        res.status(404).json({
+          success: false,
+          message: "Wallet was not found.",
+        });
+        return;
+      }
+
+      if (wallet.status === "BLOCKED") {
+        res.status(409).json({
+          success: false,
+          code: "WALLET_BLOCKED",
+          message:
+            "A blocked wallet can only be restored by an administrator.",
+        });
+        return;
+      }
+
       const lock =
         await WalletSecurityLock.findOne({
           userId,
@@ -1889,6 +1938,12 @@ export const unfreezeWallet =
         req.user?.sessionId;
 
       await lock.save();
+
+      if (wallet.status === "FROZEN") {
+        wallet.status = await currentEKYCStatus(String(userId)) === "verified"
+          ? "ACTIVE" : "PENDING_KYC";
+        await wallet.save();
+      }
 
       await recordSecurityEvent({
         userId,
